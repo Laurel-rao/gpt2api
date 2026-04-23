@@ -381,15 +381,10 @@ function stopText2Img() {
   t2iAbort.value?.abort()
 }
 
-// 预览 viewer
-const previewVisible = ref(false)
-const previewList = ref<string[]>([])
-const previewIndex = ref(0)
-function openPreview(urls: string[], idx: number) {
-  previewList.value = urls
-  previewIndex.value = idx
-  previewVisible.value = true
+function openInNewWindow(url: string) {
+  window.open(url, '_blank', 'noopener,noreferrer')
 }
+
 function downloadUrl(url: string) {
   const a = document.createElement('a')
   a.href = url
@@ -838,19 +833,20 @@ watch(activeTab, (v) => {
             </div>
             <div v-else class="result-wrap">
               <div class="result-grid">
-                <div
-                  v-for="(img, idx) in t2iResult"
-                  :key="idx"
-                  class="img-cell"
-                  @click="openPreview(t2iResult.map((x) => x.url), idx)"
-                >
-                  <img :src="img.url" :alt="`result-${idx}`" loading="lazy" />
-                  <div class="img-actions" @click.stop>
-                    <button class="iact" @click="openPreview(t2iResult.map((x) => x.url), idx)">
-                      <el-icon><ZoomIn /></el-icon>
+                <div v-for="(img, idx) in t2iResult" :key="idx" class="img-cell">
+                  <img
+                    :src="img.url"
+                    :alt="`result-${idx}`"
+                    loading="lazy"
+                    class="img-thumb"
+                    @click="openInNewWindow(img.url)"
+                  />
+                  <div class="img-btns">
+                    <button class="img-btn" @click="openInNewWindow(img.url)">
+                      <el-icon><ZoomIn /></el-icon> 预览
                     </button>
-                    <button class="iact" @click="downloadUrl(img.url)">
-                      <el-icon><Download /></el-icon>
+                    <button class="img-btn" @click="downloadUrl(img.url)">
+                      <el-icon><Download /></el-icon> 下载
                     </button>
                   </div>
                 </div>
@@ -982,19 +978,19 @@ watch(activeTab, (v) => {
             </div>
             <div v-else class="result-wrap">
               <div class="result-grid">
-                <div
-                  v-for="(img, idx) in i2iResult"
-                  :key="idx"
-                  class="img-cell"
-                  @click="openPreview(i2iResult.map((x) => x.url), idx)"
-                >
-                  <img :src="img.url" :alt="`result-${idx}`" />
-                  <div class="img-actions" @click.stop>
-                    <button class="iact" @click="openPreview(i2iResult.map((x) => x.url), idx)">
-                      <el-icon><ZoomIn /></el-icon>
+                <div v-for="(img, idx) in i2iResult" :key="idx" class="img-cell">
+                  <img
+                    :src="img.url"
+                    :alt="`result-${idx}`"
+                    class="img-thumb"
+                    @click="openInNewWindow(img.url)"
+                  />
+                  <div class="img-btns">
+                    <button class="img-btn" @click="openInNewWindow(img.url)">
+                      <el-icon><ZoomIn /></el-icon> 预览
                     </button>
-                    <button class="iact" @click="downloadUrl(img.url)">
-                      <el-icon><Download /></el-icon>
+                    <button class="img-btn" @click="downloadUrl(img.url)">
+                      <el-icon><Download /></el-icon> 下载
                     </button>
                   </div>
                 </div>
@@ -1005,14 +1001,6 @@ watch(activeTab, (v) => {
       </el-tab-pane>
     </el-tabs>
 
-    <!-- ============ 图片预览(全屏 viewer) ============ -->
-    <el-image-viewer
-      v-if="previewVisible"
-      :url-list="previewList"
-      :initial-index="previewIndex"
-      @close="previewVisible = false"
-      teleported
-    />
   </div>
 </template>
 
@@ -1486,39 +1474,47 @@ watch(activeTab, (v) => {
   align-items: start;
 }
 .img-cell {
-  position: relative;
   border-radius: 12px;
   overflow: hidden;
-  cursor: zoom-in;
   background: var(--el-fill-color-light);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-  transition: all 0.2s;
-  /* 不再强制 aspect-ratio:1,让图片以原始宽高比自然撑开 */
-  img {
-    width: 100%;
-    height: auto;
-    display: block;
-    transition: transform 0.4s;
-  }
-  &:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.12);
-    img { transform: scale(1.03); }
-    .img-actions { opacity: 1; }
-  }
+  transition: box-shadow 0.2s;
+  &:hover { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.13); }
 }
-.img-actions {
-  position: absolute; top: 8px; right: 8px;
-  display: flex; gap: 6px;
-  opacity: 0; transition: opacity 0.2s;
-  .iact {
-    width: 30px; height: 30px; border-radius: 50%;
-    background: rgba(0,0,0,0.55); color: #fff;
-    border: none; cursor: pointer;
-    display: inline-flex; align-items: center; justify-content: center;
-    font-size: 14px;
-    &:hover { background: var(--el-color-primary); }
+.img-thumb {
+  width: 100%;
+  height: auto;
+  display: block;
+  cursor: pointer;
+  transition: opacity 0.2s;
+  &:hover { opacity: 0.93; }
+}
+/* 图片下方固定按钮条 */
+.img-btns {
+  display: flex;
+  gap: 1px;
+  background: var(--el-border-color-lighter);
+}
+.img-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 8px 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--el-text-color-regular);
+  background: var(--el-bg-color);
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  &:hover {
+    background: var(--el-color-primary-light-9);
+    color: var(--el-color-primary);
   }
+  &:first-child { border-radius: 0 0 0 12px; }
+  &:last-child  { border-radius: 0 0 12px 0; }
 }
 
 .result-wrap {
