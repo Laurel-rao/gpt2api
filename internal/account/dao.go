@@ -179,7 +179,8 @@ type QuotaSummary struct {
 	ActiveAccounts int64 `db:"active_accounts" json:"active_accounts"` // 健康账号数
 }
 
-// SumQuota 汇总所有健康未软删账号的额度(仅统计已探测过的,image_quota_updated_at NOT NULL)。
+// SumQuota 汇总所有健康未软删账号的额度。
+// 未经探测的账号 image_quota_remaining=0,参与求和但不会虚增,账号数量统计始终准确。
 func (d *DAO) SumQuota(ctx context.Context) (*QuotaSummary, error) {
 	var s QuotaSummary
 	err := d.db.GetContext(ctx, &s, `
@@ -189,8 +190,7 @@ SELECT
   COUNT(*)                                AS active_accounts
 FROM oai_accounts
 WHERE deleted_at IS NULL
-  AND status NOT IN ('dead', 'suspicious')
-  AND image_quota_updated_at IS NOT NULL`)
+  AND status NOT IN ('dead', 'suspicious')`)
 	return &s, err
 }
 
