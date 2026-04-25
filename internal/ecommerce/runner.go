@@ -567,11 +567,26 @@ func (r *Runner) buildImagePrompt(platform Platform, prompt PromptTemplate, styl
 	assetText := map[string]string{
 		AssetTitle:  "店标题图，突出商品名称和核心价值",
 		AssetMain:   "电商主图，商品主体清晰，适合列表和首屏",
-		AssetWhite:  "白底图，纯净背景，商品完整居中",
+		AssetWhite:  "商品白底图，只展示商品本体",
 		AssetDetail: "详情页长图模块，展示卖点、场景和参数",
 		AssetPrice:  "价格促销图，突出优惠和行动号召",
 	}[assetType]
 	spec := out.ImageSpecs[assetType]
+	if assetType == AssetWhite {
+		src := `平台：{{.Platform.Name}}
+图片类型：白底图
+目标：干净的商品白底图，只展示商品本体，商品完整居中，边缘清晰，适合电商平台商品主图审核。
+商品标题：{{.Output.ProductTitle}}
+描述：{{.Output.Description}}
+原始需求：{{.Requirement}}
+图片参数：尺寸 ` + spec.Size + `，长宽比 ` + spec.AspectRatio + `，清晰度 ` + spec.Clarity + `
+严格要求：纯白或接近纯白背景；无标题、无卖点文字、无价格、无促销标签、无图标、无贴纸、无边框、无水印、无品牌标志、无场景道具、无人物手部；商品真实、清晰、完整、单独呈现。`
+		return renderTemplate(src, renderData{
+			Requirement: requirement,
+			Platform:    platform,
+			Output:      out,
+		})
+	}
 	src := `{{.Prompt.ImagePrompt}}
 {{.Style.StylePrompt}}
 平台：{{.Platform.Name}}
