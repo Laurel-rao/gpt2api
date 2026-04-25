@@ -25,6 +25,7 @@ const canceling = ref(false)
 const retryingAssetID = ref(0)
 const exporting = ref(false)
 const polling = ref<number | null>(null)
+const pollingTaskID = ref('')
 const ticker = ref<number | null>(null)
 const nowTs = ref(Date.now())
 const previewVisible = ref(false)
@@ -266,6 +267,7 @@ async function submit() {
 }
 
 async function openTask(task: EcommerceTask) {
+  stopPolling()
   try {
     const fresh = await getEcommerceTask(task.task_id)
     activeTask.value = fresh
@@ -320,10 +322,14 @@ async function retryAsset(asset: EcommerceAsset) {
 
 function startPolling(taskID: string) {
   stopPolling()
+  pollingTaskID.value = taskID
   polling.value = window.setInterval(async () => {
     try {
       const fresh = await getEcommerceTask(taskID)
-      activeTask.value = fresh
+      if (pollingTaskID.value !== taskID) return
+      if (activeTask.value?.task_id === taskID) {
+        activeTask.value = fresh
+      }
       if (!isAssetWorking(fresh.status)) {
         stopPolling()
         await loadTasks()
@@ -337,6 +343,7 @@ function startPolling(taskID: string) {
 function stopPolling() {
   if (polling.value) window.clearInterval(polling.value)
   polling.value = null
+  pollingTaskID.value = ''
 }
 
 function openAssetPreview(asset: EcommerceAsset) {

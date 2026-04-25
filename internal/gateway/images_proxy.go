@@ -78,7 +78,7 @@ func (h *ImagesHandler) ImageProxy(c *gin.Context) {
 		return
 	}
 	thumbKB, err := strconv.Atoi(c.DefaultQuery("thumb_kb", "0"))
-	if err != nil || thumbKB < 0 || thumbKB > 64 {
+	if err != nil || thumbKB < 0 || thumbKB > 500 {
 		c.AbortWithStatus(http.StatusBadRequest)
 		return
 	}

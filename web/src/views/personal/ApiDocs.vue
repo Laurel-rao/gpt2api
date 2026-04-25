@@ -264,14 +264,14 @@ function statusTag(s: string): 'success' | 'warning' | 'danger' | 'info' {
   return 'info'
 }
 
-function thumbURL(url: string): string {
+function thumbURL(url: string, kb = 20): string {
   if (!url) return url
-  return url.includes('?') ? `${url}&thumb_kb=10` : `${url}?thumb_kb=10`
+  return url.includes('?') ? `${url}&thumb_kb=${kb}` : `${url}?thumb_kb=${kb}`
 }
 
 function previewImage(url: string, title = '') {
   if (!url) return
-  previewImageURL.value = url
+  previewImageURL.value = thumbURL(url, 500)
   previewImageTitle.value = title
   previewDialogVisible.value = true
 }
