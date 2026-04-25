@@ -628,6 +628,7 @@ func (r *Runner) buildImagePrompt(platform Platform, prompt PromptTemplate, styl
 描述：{{.Output.Description}}
 原始需求：{{.Requirement}}
 图片参数：尺寸 ` + spec.Size + `，长宽比 ` + spec.AspectRatio + `，清晰度 ` + spec.Clarity + `
+形态保真：必须严格保持原始需求和参考图中的商品品类、结构、可折叠/可收纳/便携等关键形态；如有参考图，以参考图商品外观、比例、颜色、部件和结构为最高优先级；不得改成同类普通款、传统款或不可收纳形态；例如可折叠/可收纳钢琴必须是便携折叠电子琴/键盘类商品，不得生成传统立式钢琴、三角钢琴、柜式电钢琴或固定琴架款。
 严格要求：纯白或接近纯白背景；无标题、无卖点文字、无价格、无促销标签、无图标、无贴纸、无边框、无水印、无品牌标志、无场景道具、无人物手部；商品真实、清晰、完整、单独呈现。`
 		return renderTemplate(src, renderData{
 			Requirement: requirement,
