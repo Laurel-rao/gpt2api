@@ -26,6 +26,7 @@ BUNDLE_ITEMS=(
   "deploy/Dockerfile"
   "deploy/docker-compose.yml"
   "deploy/entrypoint.sh"
+  "deploy/nginx.conf"
   "sql"
   "web/dist"
 )
@@ -290,6 +291,7 @@ backup_runtime() {
     deploy/Dockerfile \
     deploy/docker-compose.yml \
     deploy/entrypoint.sh \
+    deploy/nginx.conf \
     deploy/bin \
     configs \
     sql \
@@ -425,6 +427,7 @@ backup_current() {
     deploy/Dockerfile \
     deploy/docker-compose.yml \
     deploy/entrypoint.sh \
+    deploy/nginx.conf \
     deploy/bin \
     configs \
     sql \
