@@ -736,7 +736,7 @@ onBeforeUnmount(() => {
 
     <el-dialog v-model="previewVisible" width="920px" append-to-body :title="previewAsset ? (assetText[previewAsset.asset_type] || previewAsset.asset_type) : '图片预览'" class="asset-dialog">
       <div v-if="previewAsset" class="asset-dialog-body">
-        <img :src="thumbURL(previewAsset.url)" :alt="previewAsset.asset_type" />
+        <img :src="thumbURL(previewAsset.url, 500)" :alt="previewAsset.asset_type" />
       </div>
       <template #footer>
         <el-button v-if="previewAsset" @click="downloadAsset(previewAsset)"><el-icon><Download /></el-icon> 下载</el-button>
