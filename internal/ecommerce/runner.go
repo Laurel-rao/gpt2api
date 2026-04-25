@@ -34,17 +34,32 @@ type AccountSecretResolver interface {
 }
 
 type Runner struct {
-	dao       *DAO
-	models    *modelpkg.Registry
-	scheduler *scheduler.Scheduler
-	acc       AccountSecretResolver
-	channels  *channel.Router
-	imageDAO  *imgpkg.DAO
-	imageRun  *imgpkg.Runner
+	dao              *DAO
+	models           *modelpkg.Registry
+	scheduler        *scheduler.Scheduler
+	acc              AccountSecretResolver
+	channels         *channel.Router
+	imageDAO         *imgpkg.DAO
+	imageRun         *imgpkg.Runner
+	imageConcurrency int
+	imageSem         chan struct{}
 }
 
-func NewRunner(dao *DAO, models *modelpkg.Registry, sched *scheduler.Scheduler, acc AccountSecretResolver, channels *channel.Router, imageDAO *imgpkg.DAO, imageRun *imgpkg.Runner) *Runner {
-	return &Runner{dao: dao, models: models, scheduler: sched, acc: acc, channels: channels, imageDAO: imageDAO, imageRun: imageRun}
+func NewRunner(dao *DAO, models *modelpkg.Registry, sched *scheduler.Scheduler, acc AccountSecretResolver, channels *channel.Router, imageDAO *imgpkg.DAO, imageRun *imgpkg.Runner, imageConcurrency int) *Runner {
+	if imageConcurrency <= 0 {
+		imageConcurrency = 1
+	}
+	return &Runner{
+		dao:              dao,
+		models:           models,
+		scheduler:        sched,
+		acc:              acc,
+		channels:         channels,
+		imageDAO:         imageDAO,
+		imageRun:         imageRun,
+		imageConcurrency: imageConcurrency,
+		imageSem:         make(chan struct{}, imageConcurrency),
+	}
 }
 
 func (r *Runner) Enqueue(taskID string) {
@@ -121,7 +136,7 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 		assetPrompt := r.buildImagePrompt(*platform, *prompt, *style, out, task.Requirement, assetType)
 		spec := out.ImageSpecs[assetType]
 		imgTaskID := imgpkg.GenerateTaskID()
-		asset := &Asset{TaskID: taskID, AssetType: assetType, ImageTaskID: imgTaskID, Prompt: assetPrompt, Status: StatusRunning}
+		asset := &Asset{TaskID: taskID, AssetType: assetType, ImageTaskID: imgTaskID, Prompt: assetPrompt, Status: StatusQueued}
 		if err := r.dao.CreateAsset(ctx, asset); err != nil {
 			return err
 		}
@@ -139,6 +154,20 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 		wg.Add(1)
 		go func(assetID uint64, assetType, imgTaskID, assetPrompt string) {
 			defer wg.Done()
+			release, err := r.acquireImageSlot(ctx)
+			if err != nil {
+				errCode := err.Error()
+				_ = r.dao.UpdateAssetResult(context.Background(), assetID, StatusFailed, imgTaskID, "", "", errCode)
+				mu.Lock()
+				assetErrors = append(assetErrors, fmt.Sprintf("%s:%s", assetType, errCode))
+				completed++
+				progress := 35 + completed*10
+				mu.Unlock()
+				_ = r.dao.UpdateTaskProgress(context.Background(), taskID, progress)
+				return
+			}
+			defer release()
+			_ = r.dao.UpdateAssetResult(context.Background(), assetID, StatusRunning, imgTaskID, "", "", "")
 			res := r.imageRun.Run(ctx, imgpkg.RunOptions{
 				TaskID:        imgTaskID,
 				UserID:        task.UserID,
@@ -243,9 +272,6 @@ func (r *Runner) RetryAsset(ctx context.Context, taskID string, assetID uint64) 
 	if err := r.dao.MarkTaskRetrying(ctx, taskID); err != nil {
 		return err
 	}
-	if err := r.dao.MarkAssetRetrying(ctx, assetID, imgTaskID, assetPrompt); err != nil {
-		return err
-	}
 	if r.imageDAO != nil {
 		_ = r.imageDAO.Create(ctx, &imgpkg.Task{
 			TaskID:  imgTaskID,
@@ -256,6 +282,16 @@ func (r *Runner) RetryAsset(ctx context.Context, taskID string, assetID uint64) 
 			Size:    spec.Size,
 			Status:  imgpkg.StatusDispatched,
 		})
+	}
+	release, err := r.acquireImageSlot(ctx)
+	if err != nil {
+		errCode := err.Error()
+		_ = r.dao.UpdateAssetResult(context.Background(), assetID, StatusFailed, imgTaskID, "", "", errCode)
+		return r.finalizeTaskAfterRetry(context.Background(), taskID, out, "图片重试失败: "+asset.AssetType+":"+errCode)
+	}
+	defer release()
+	if err := r.dao.MarkAssetRetrying(ctx, assetID, imgTaskID, assetPrompt); err != nil {
+		return err
 	}
 	res := r.imageRun.Run(ctx, imgpkg.RunOptions{
 		TaskID:        imgTaskID,
@@ -284,6 +320,18 @@ func (r *Runner) RetryAsset(ctx context.Context, taskID string, assetID uint64) 
 		return err
 	}
 	return r.finalizeTaskAfterRetry(context.Background(), taskID, out, "")
+}
+
+func (r *Runner) acquireImageSlot(ctx context.Context) (func(), error) {
+	if r.imageSem == nil {
+		return func() {}, nil
+	}
+	select {
+	case r.imageSem <- struct{}{}:
+		return func() { <-r.imageSem }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func outputFromTask(task *TaskRow) Output {

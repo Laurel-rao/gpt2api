@@ -53,6 +53,10 @@ upstream:
   request_timeout_sec: 60
   sse_read_timeout_sec: 300
 
+# 电商生成
+ecommerce:
+  image_concurrency: 1             # 电商图片全局并发数;默认 1,可用 GPT2API_ECOMMERCE_IMAGE_CONCURRENCY 覆盖
+
 # 支付(易支付)
 epay:
   gateway_url: ""

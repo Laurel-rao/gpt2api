@@ -60,6 +60,26 @@ func TestBuildHTML(t *testing.T) {
 	}
 }
 
+func TestRunnerImageConcurrencyDefault(t *testing.T) {
+	r := NewRunner(nil, nil, nil, nil, nil, nil, nil, 0)
+	if r.imageConcurrency != 1 {
+		t.Fatalf("image concurrency default = %d", r.imageConcurrency)
+	}
+	if cap(r.imageSem) != 1 {
+		t.Fatalf("image semaphore cap = %d", cap(r.imageSem))
+	}
+}
+
+func TestRunnerImageConcurrencyCustom(t *testing.T) {
+	r := NewRunner(nil, nil, nil, nil, nil, nil, nil, 3)
+	if r.imageConcurrency != 3 {
+		t.Fatalf("image concurrency custom = %d", r.imageConcurrency)
+	}
+	if cap(r.imageSem) != 3 {
+		t.Fatalf("image semaphore cap = %d", cap(r.imageSem))
+	}
+}
+
 func mustJSON(v interface{}) string {
 	b, _ := json.Marshal(v)
 	return string(b)

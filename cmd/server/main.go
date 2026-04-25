@@ -183,7 +183,7 @@ func main() {
 	meImageH := image.NewMeHandler(imageDAO)
 	adminImageH := image.NewAdminHandler(imageDAO)
 	ecommerceDAO := ecommerce.NewDAO(sqldb)
-	ecommerceRunner := ecommerce.NewRunner(ecommerceDAO, modelReg, sched, accSvc, channelRouter, imageDAO, imageRunner)
+	ecommerceRunner := ecommerce.NewRunner(ecommerceDAO, modelReg, sched, accSvc, channelRouter, imageDAO, imageRunner, cfg.Ecommerce.ImageConcurrency)
 	ecommerceH := ecommerce.NewHandler(ecommerceDAO, ecommerceRunner, auditDAO)
 
 	mailSvc := mailer.New(mailer.Config{
