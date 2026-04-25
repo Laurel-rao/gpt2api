@@ -12,6 +12,7 @@ import (
 	"github.com/432539/gpt2api/internal/backup"
 	"github.com/432539/gpt2api/internal/channel"
 	"github.com/432539/gpt2api/internal/config"
+	"github.com/432539/gpt2api/internal/ecommerce"
 	"github.com/432539/gpt2api/internal/gateway"
 	"github.com/432539/gpt2api/internal/image"
 	"github.com/432539/gpt2api/internal/middleware"
@@ -58,6 +59,7 @@ type Deps struct {
 	MeImageH *image.MeHandler
 
 	AdminImageH *image.AdminHandler
+	EcommerceH  *ecommerce.Handler
 
 	RechargeH      *recharge.Handler
 	AdminRechargeH *recharge.AdminHandler
@@ -138,6 +140,15 @@ func New(d *Deps) *gin.Engine {
 			if d.AdminModelH != nil {
 				// 普通用户视角的 enabled 模型列表(用于面板下拉)
 				authed.GET("/me/models", d.AdminModelH.ListEnabledForMe)
+			}
+			if d.EcommerceH != nil {
+				eg := authed.Group("/me/ecommerce", middleware.RequirePerm(rbac.PermSelfEcommerce))
+				{
+					eg.GET("/options", d.EcommerceH.Options)
+					eg.POST("/tasks", d.EcommerceH.CreateTask)
+					eg.GET("/tasks", d.EcommerceH.ListTasks)
+					eg.GET("/tasks/:id", d.EcommerceH.GetTask)
+				}
 			}
 
 			// ---- 在线体验:复用 /v1 handler,但入口是 JWT 鉴权 + 自动映射内部 key ----
@@ -258,6 +269,32 @@ func New(d *Deps) *gin.Engine {
 			// 生成记录(管理员全局视图)
 			if d.AdminImageH != nil {
 				admin.GET("/image-tasks", middleware.RequirePerm(rbac.PermUsageReadAll), d.AdminImageH.List)
+			}
+			if d.EcommerceH != nil {
+				eg := admin.Group("/ecommerce", middleware.RequirePerm(rbac.PermEcommerceManage))
+				{
+					pg := eg.Group("/platforms")
+					{
+						pg.GET("", d.EcommerceH.AdminListPlatforms)
+						pg.POST("", d.EcommerceH.AdminCreatePlatform)
+						pg.PUT("/:id", d.EcommerceH.AdminUpdatePlatform)
+						pg.DELETE("/:id", d.EcommerceH.AdminDeletePlatform)
+					}
+					ptg := eg.Group("/prompt-templates")
+					{
+						ptg.GET("", d.EcommerceH.AdminListPrompts)
+						ptg.POST("", d.EcommerceH.AdminCreatePrompt)
+						ptg.PUT("/:id", d.EcommerceH.AdminUpdatePrompt)
+						ptg.DELETE("/:id", d.EcommerceH.AdminDeletePrompt)
+					}
+					stg := eg.Group("/style-templates")
+					{
+						stg.GET("", d.EcommerceH.AdminListStyles)
+						stg.POST("", d.EcommerceH.AdminCreateStyle)
+						stg.PUT("/:id", d.EcommerceH.AdminUpdateStyle)
+						stg.DELETE("/:id", d.EcommerceH.AdminDeleteStyle)
+					}
+				}
 			}
 
 			// ---- 上游渠道(OpenAI/Gemini 兼容) ----

@@ -21,6 +21,7 @@ import (
 	"github.com/432539/gpt2api/internal/channel"
 	"github.com/432539/gpt2api/internal/config"
 	"github.com/432539/gpt2api/internal/db"
+	"github.com/432539/gpt2api/internal/ecommerce"
 	"github.com/432539/gpt2api/internal/gateway"
 	"github.com/432539/gpt2api/internal/image"
 	modelpkg "github.com/432539/gpt2api/internal/model"
@@ -181,6 +182,9 @@ func main() {
 	meUsageH := usage.NewMeHandler(usageQDAO)
 	meImageH := image.NewMeHandler(imageDAO)
 	adminImageH := image.NewAdminHandler(imageDAO)
+	ecommerceDAO := ecommerce.NewDAO(sqldb)
+	ecommerceRunner := ecommerce.NewRunner(ecommerceDAO, modelReg, sched, accSvc, channelRouter, imageDAO, imageRunner)
+	ecommerceH := ecommerce.NewHandler(ecommerceDAO, ecommerceRunner, auditDAO)
 
 	mailSvc := mailer.New(mailer.Config{
 		Host:     cfg.SMTP.Host,
@@ -293,6 +297,7 @@ func main() {
 		MeUsageH:    meUsageH,
 		MeImageH:    meImageH,
 		AdminImageH: adminImageH,
+		EcommerceH:  ecommerceH,
 
 		RechargeH:      rechargeH,
 		AdminRechargeH: adminRechargeH,

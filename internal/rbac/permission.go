@@ -28,11 +28,12 @@ type Permission string
 
 const (
 	// --- 普通用户(self) ---
-	PermSelfProfile = Permission("self:profile")       // 看/改自己资料
-	PermSelfKey     = Permission("self:key")           // 管自己 API Key
-	PermSelfUsage   = Permission("self:usage")         // 查自己 usage/账单
-	PermSelfRecharge = Permission("self:recharge")     // 充值/查自己订单
-	PermSelfImage    = Permission("self:image")        // 自己生图任务
+	PermSelfProfile   = Permission("self:profile")   // 看/改自己资料
+	PermSelfKey       = Permission("self:key")       // 管自己 API Key
+	PermSelfUsage     = Permission("self:usage")     // 查自己 usage/账单
+	PermSelfRecharge  = Permission("self:recharge")  // 充值/查自己订单
+	PermSelfImage     = Permission("self:image")     // 自己生图任务
+	PermSelfEcommerce = Permission("self:ecommerce") // 自己电商生成任务
 
 	// --- 管理员(admin) ---
 	// 用户管理
@@ -66,8 +67,9 @@ const (
 	PermAuditRead    = Permission("audit:read")
 
 	// 系统
-	PermSystemSetting = Permission("system:setting") // 改系统配置
-	PermSystemBackup  = Permission("system:backup")  // 数据库备份/恢复(超高危)
+	PermSystemSetting   = Permission("system:setting")   // 改系统配置
+	PermSystemBackup    = Permission("system:backup")    // 数据库备份/恢复(超高危)
+	PermEcommerceManage = Permission("ecommerce:manage") // 电商平台/模板/风格配置
 )
 
 // rolePermissions 是角色到权限集合的静态映射。
@@ -79,10 +81,11 @@ var rolePermissions = map[string][]Permission{
 		PermSelfUsage,
 		PermSelfRecharge,
 		PermSelfImage,
+		PermSelfEcommerce,
 	},
 	RoleAdmin: {
 		// admin 继承 user 所有 self 权限(admin 自己也有 api key 等)
-		PermSelfProfile, PermSelfKey, PermSelfUsage, PermSelfRecharge, PermSelfImage,
+		PermSelfProfile, PermSelfKey, PermSelfUsage, PermSelfRecharge, PermSelfImage, PermSelfEcommerce,
 
 		PermUserRead, PermUserWrite, PermUserCredit,
 		PermKeyReadAll, PermKeyWriteAll,
@@ -92,7 +95,7 @@ var rolePermissions = map[string][]Permission{
 		PermChannelRead, PermChannelWrite,
 		PermGroupWrite, PermRechargeManage,
 		PermUsageReadAll, PermStatsReadAll, PermAuditRead,
-		PermSystemSetting, PermSystemBackup,
+		PermSystemSetting, PermSystemBackup, PermEcommerceManage,
 	},
 }
 
