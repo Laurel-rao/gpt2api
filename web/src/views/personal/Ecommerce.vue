@@ -85,6 +85,7 @@ const activeLanguage = computed(() => activePlatform.value?.language || '自动'
 const visibleAssets = computed(() => [...assets.value].sort((a, b) => assetRank(a.asset_type) - assetRank(b.asset_type)))
 const doneAssetCount = computed(() => assets.value.filter((asset) => asset.status === 'success' && asset.url && !brokenAssetIDs.value.has(asset.id)).length)
 const totalAssetCount = computed(() => Math.max(assets.value.length, 5))
+const assetMetricText = computed(() => activeTask.value ? `${doneAssetCount.value}/${totalAssetCount.value}` : '--')
 const activePercent = computed(() => activeTask.value?.progress || 0)
 const taskElapsed = computed(() => activeTask.value ? generationElapsed(activeTask.value.started_at, activeTask.value.finished_at, running.value) : '0秒')
 const taskQueueElapsed = computed(() => activeTask.value ? queueElapsed(activeTask.value.created_at, activeTask.value.started_at, activeTask.value.finished_at, running.value) : '0秒')
@@ -174,7 +175,6 @@ async function loadOptions() {
 async function loadTasks() {
   const data = await listEcommerceTasks({ limit: 12, offset: 0 })
   tasks.value = data.items || []
-  if (!activeTask.value && tasks.value[0]) activeTask.value = tasks.value[0]
 }
 
 async function initialize() {
@@ -496,7 +496,7 @@ onBeforeUnmount(() => {
           <span>平台语言</span>
         </div>
         <div>
-          <b>{{ doneAssetCount }}/{{ totalAssetCount }}</b>
+          <b>{{ assetMetricText }}</b>
           <span>资产完成</span>
         </div>
       </div>
@@ -592,21 +592,27 @@ onBeforeUnmount(() => {
 
       <main class="result-stage reveal-c">
         <div class="panel result-shell">
-          <div class="result-top">
-            <div>
+          <template v-if="!activeTask">
+            <div class="blank-output">
               <span class="eyebrow">03 / Output</span>
-              <h2>{{ heroTitle }}</h2>
+              <h2>等待新任务</h2>
+              <p>这里默认保持空白。提交新生成任务后会展示实时结果；点击左侧历史记录后才会载入历史生成信息。</p>
             </div>
-            <div v-if="activeTask" class="result-controls">
-              <button v-if="running" class="ghost-danger" type="button" :disabled="canceling" @click="cancelTask">
-                {{ canceling ? '中断中' : '中断生成' }}
-              </button>
-              <span :class="['state-pill', statusTone[activeTask.status] || 'muted']">{{ statusText[activeTask.status] || activeTask.status }}</span>
-            </div>
-          </div>
-
-          <el-empty v-if="!activeTask" description="提交任务后在这里查看完整结果" />
+          </template>
           <template v-else>
+            <div class="result-top">
+              <div>
+                <span class="eyebrow">03 / Output</span>
+                <h2>{{ heroTitle }}</h2>
+              </div>
+              <div class="result-controls">
+                <button v-if="running" class="ghost-danger" type="button" :disabled="canceling" @click="cancelTask">
+                  {{ canceling ? '中断中' : '中断生成' }}
+                </button>
+                <span :class="['state-pill', statusTone[activeTask.status] || 'muted']">{{ statusText[activeTask.status] || activeTask.status }}</span>
+              </div>
+            </div>
+
             <div class="progress-band">
               <el-progress :percentage="activePercent" :stroke-width="10" :show-text="false" />
               <span>{{ activePercent }}%</span>
@@ -939,6 +945,22 @@ h2 { font-size: 25px; }
 .bad { color: #fff; background: rgba(255,255,255,.16); border-color: rgba(255,255,255,.52); }
 .muted { color: rgba(255,255,255,.58); background: rgba(255,255,255,.07); }
 .result-shell { min-height: calc(100vh - 150px); }
+.blank-output {
+  min-height: calc(100vh - 210px);
+  display: grid;
+  place-content: center;
+  text-align: center;
+  color: rgba(255,255,255,.56);
+}
+.blank-output h2 {
+  margin: 0;
+  font-size: clamp(30px, 4vw, 56px);
+}
+.blank-output p {
+  max-width: 520px;
+  margin: 14px auto 0;
+  line-height: 1.8;
+}
 .result-top h2 { max-width: 720px; font-size: clamp(26px, 3vw, 46px); }
 .result-controls { display: flex; align-items: center; gap: 10px; }
 .ghost-danger, .lab-toolbar button, .retry-btn {
