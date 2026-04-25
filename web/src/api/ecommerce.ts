@@ -105,9 +105,9 @@ export function getEcommerceTask(taskID: string): Promise<EcommerceTask> {
   return http.get(`/api/me/ecommerce/tasks/${taskID}`)
 }
 
-export function retryEcommerceAsset(taskID: string, assetID: number):
+export function retryEcommerceAsset(taskID: string, assetID: number, prompt = ''):
   Promise<{ task_id: string; asset_id: number; status: string }> {
-  return http.post(`/api/me/ecommerce/tasks/${taskID}/assets/${assetID}/retry`, {})
+  return http.post(`/api/me/ecommerce/tasks/${taskID}/assets/${assetID}/retry`, { prompt })
 }
 
 export function cancelEcommerceTask(taskID: string): Promise<EcommerceTask> {

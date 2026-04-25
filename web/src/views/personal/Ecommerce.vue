@@ -30,6 +30,8 @@ const nowTs = ref(Date.now())
 const previewVisible = ref(false)
 const previewAsset = ref<EcommerceAsset | null>(null)
 const brokenAssetIDs = ref<Set<number>>(new Set())
+const retryPrompts = ref<Record<number, string>>({})
+const previewThumbKB = 20
 
 const platforms = ref<EcommercePlatform[]>([])
 const prompts = ref<EcommercePromptTemplate[]>([])
@@ -94,7 +96,7 @@ const heroDescription = computed(() => output.value?.description || '生成完�
 const marketingCopy = computed<string[]>(() => Array.isArray(output.value?.marketing_copy) ? output.value.marketing_copy : [])
 const detailDoc = computed(() => {
   if (!activeTask.value?.output_html) return ''
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>*{box-sizing:border-box}html,body{margin:0;max-width:100%;overflow-x:hidden;background:#fff;color:#151515;font-family:Georgia,'Songti SC',serif}.stage{width:100%;max-width:860px;margin:0 auto;padding:24px;overflow-x:hidden}.ecommerce-detail-preview{width:100%;max-width:100%;overflow-x:hidden}.ecommerce-detail-preview img{display:block;width:100%;max-width:100%;height:auto;object-fit:contain}.copy-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.detail-head,.detail-section{max-width:100%;overflow-wrap:anywhere}</style></head><body><main class="stage">${activeTask.value.output_html}</main></body></html>`
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>*{box-sizing:border-box}html,body{margin:0;max-width:100%;overflow-x:hidden;background:#fff;color:#151515;font-family:Georgia,'Songti SC',serif}.stage{width:100%;max-width:860px;margin:0 auto;padding:24px;overflow-x:hidden}.ecommerce-detail-preview{width:100%;max-width:100%;overflow-x:hidden}.ecommerce-detail-preview img{display:block;width:100%;max-width:100%;height:auto;object-fit:contain}.copy-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.detail-head,.detail-section{max-width:100%;overflow-wrap:anywhere}</style></head><body><main class="stage">${withThumbImages(activeTask.value.output_html)}</main></body></html>`
 })
 const flowSteps = computed(() => {
   const status = activeTask.value?.status || ''
@@ -160,6 +162,22 @@ function assetGenerateElapsed(asset: EcommerceAsset) {
 
 function assetQueueElapsed(asset: EcommerceAsset) {
   return queueElapsed(asset.created_at, asset.started_at, asset.finished_at, asset.status === 'queued')
+}
+
+function thumbURL(url: string, kb = previewThumbKB) {
+  if (!url) return url
+  const hashAt = url.indexOf('#')
+  const main = hashAt >= 0 ? url.slice(0, hashAt) : url
+  const hash = hashAt >= 0 ? url.slice(hashAt) : ''
+  if (/(\?|&|&amp;)thumb_kb=\d+/.test(main)) {
+    return main.replace(/((?:\?|&|&amp;)thumb_kb=)\d+/, `$1${kb}`) + hash
+  }
+  const sep = main.includes('&amp;') ? '&amp;' : '&'
+  return `${main}${main.includes('?') ? sep : '?'}thumb_kb=${kb}${hash}`
+}
+
+function withThumbImages(html: string) {
+  return html.replace(/(<img\b[^>]*\bsrc=["'])([^"']+)(["'])/gi, (_match, prefix, url, suffix) => `${prefix}${thumbURL(url)}${suffix}`)
 }
 
 async function loadOptions() {
@@ -284,12 +302,13 @@ async function retryAsset(asset: EcommerceAsset) {
   if (!activeTask.value) return
   retryingAssetID.value = asset.id
   try {
-    await retryEcommerceAsset(activeTask.value.task_id, asset.id)
+    await retryEcommerceAsset(activeTask.value.task_id, asset.id, retryPrompts.value[asset.id] || '')
     const fresh = await getEcommerceTask(activeTask.value.task_id)
     activeTask.value = fresh
     const next = new Set(brokenAssetIDs.value)
     next.delete(asset.id)
     brokenAssetIDs.value = next
+    retryPrompts.value = { ...retryPrompts.value, [asset.id]: '' }
     startPolling(fresh.task_id)
     ElMessage.success('已重新提交图片生成')
   } catch (err) {
@@ -663,7 +682,7 @@ onBeforeUnmount(() => {
                 </header>
 
                 <div v-if="assetHasImage(asset)" class="asset-image" @dblclick="openAssetPreview(asset)">
-                  <img :src="asset.url" :alt="asset.asset_type" @error="markBrokenAsset(asset)" />
+                  <img :src="thumbURL(asset.url)" :alt="asset.asset_type" @error="markBrokenAsset(asset)" />
                   <div class="asset-tools">
                     <button type="button" @click.stop="openAssetPreview(asset)"><el-icon><ZoomIn /></el-icon></button>
                     <button type="button" @click.stop="downloadAsset(asset)"><el-icon><Download /></el-icon></button>
@@ -674,8 +693,16 @@ onBeforeUnmount(() => {
                   <span>{{ isAssetWorking(asset.status) ? '图片生成中' : (asset.error || '暂无图片') }}</span>
                 </div>
 
-                <button v-if="asset.status === 'failed'" class="retry-btn" type="button" :disabled="retryingAssetID === asset.id" @click="retryAsset(asset)">
-                  {{ retryingAssetID === asset.id ? '重试中' : '重试生成' }}
+                <textarea
+                  v-if="!isAssetWorking(asset.status)"
+                  v-model="retryPrompts[asset.id]"
+                  class="retry-prompt"
+                  rows="3"
+                  maxlength="500"
+                  placeholder="可选：追加描述词，用当前商品参考图进行图生图，例如：加入雷军代言发布会氛围、背景改成科技蓝..."
+                />
+                <button v-if="!isAssetWorking(asset.status)" class="retry-btn" type="button" :disabled="retryingAssetID === asset.id" @click="retryAsset(asset)">
+                  {{ retryingAssetID === asset.id ? '重试中' : (asset.status === 'success' ? '再生成' : '重试生成') }}
                 </button>
                 <details v-if="asset.prompt" class="asset-prompt">
                   <summary>生成提示词</summary>
@@ -709,7 +736,7 @@ onBeforeUnmount(() => {
 
     <el-dialog v-model="previewVisible" width="920px" append-to-body :title="previewAsset ? (assetText[previewAsset.asset_type] || previewAsset.asset_type) : '图片预览'" class="asset-dialog">
       <div v-if="previewAsset" class="asset-dialog-body">
-        <img :src="previewAsset.url" :alt="previewAsset.asset_type" />
+        <img :src="thumbURL(previewAsset.url)" :alt="previewAsset.asset_type" />
       </div>
       <template #footer>
         <el-button v-if="previewAsset" @click="downloadAsset(previewAsset)"><el-icon><Download /></el-icon> 下载</el-button>
@@ -1042,6 +1069,21 @@ h2 { font-size: 25px; }
 .asset-card header b { min-width: 0; font-size: 15px; color: #fff; }
 .asset-card header > span, .asset-card header > em { color: rgba(255,255,255,.46); font-size: 12px; font-style: normal; }
 .asset-card header > em { color: rgba(255,255,255,.34); }
+.retry-prompt {
+  width: 100%;
+  margin-top: 10px;
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 14px;
+  padding: 10px 11px;
+  resize: vertical;
+  color: #fff;
+  background: rgba(0,0,0,.34);
+  outline: none;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.retry-prompt::placeholder { color: rgba(255,255,255,.34); }
+.retry-prompt:focus { border-color: rgba(255,255,255,.62); }
 .asset-prompt {
   margin-top: 10px;
   border: 1px solid rgba(255,255,255,.12);
