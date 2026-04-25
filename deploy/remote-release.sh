@@ -336,6 +336,7 @@ rebuild_and_up() {
   cd "$REMOTE_DIR/deploy"
   docker compose build server
   docker compose up -d server nginx
+  docker compose restart nginx
 }
 
 prune_old_backups() {
@@ -480,6 +481,7 @@ rebuild_and_up() {
   cd "$REMOTE_DIR/deploy"
   docker compose build server
   docker compose up -d server nginx
+  docker compose restart nginx
 }
 
 backup_current
