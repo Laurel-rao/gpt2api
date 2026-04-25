@@ -113,6 +113,20 @@ const router = createRouter({
   routes,
 })
 
+router.onError((err, to) => {
+  const msg = String(err?.message || err || '')
+  const isChunkLoadError = /dynamically imported module|Failed to fetch|Importing a module script failed|Loading chunk/i.test(msg)
+  if (!isChunkLoadError) return
+  const key = 'gpt2api.route-reload'
+  if (sessionStorage.getItem(key) === to.fullPath) return
+  sessionStorage.setItem(key, to.fullPath)
+  window.location.assign(to.fullPath)
+})
+
+router.afterEach(() => {
+  sessionStorage.removeItem('gpt2api.route-reload')
+})
+
 router.beforeEach(async (to) => {
   const store = useUserStore()
   const title = (to.meta.title as string) || 'GPT2API 控制台'

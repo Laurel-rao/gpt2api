@@ -30,6 +30,7 @@ const isStyle = computed(() => props.kind === 'style-templates')
 const form = reactive<any>({
   code: '',
   name: '',
+  language: 'zh-CN',
   field_schema_text: '',
   content_prompt: '',
   image_prompt: '',
@@ -43,6 +44,7 @@ function resetForm() {
   Object.assign(form, {
     code: '',
     name: '',
+    language: 'zh-CN',
     field_schema_text: '',
     content_prompt: '',
     image_prompt: '',
@@ -74,6 +76,7 @@ function openEdit(row: any) {
   editingID.value = row.id
   form.code = row.code
   form.name = row.name
+  form.language = row.language || 'zh-CN'
   form.remark = row.remark
   form.enabled = row.enabled
   form.field_schema_text = row.field_schema ? JSON.stringify(row.field_schema, null, 2) : ''
@@ -102,6 +105,7 @@ function buildPayload() {
     enabled: form.enabled,
   }
   if (isPlatform.value) {
+    base.language = form.language || 'zh-CN'
     base.field_schema = parseJSON(form.field_schema_text, '字段配置')
   } else if (isPrompt.value) {
     base.content_prompt = form.content_prompt.trim()
@@ -180,6 +184,9 @@ watch(() => props.kind, () => load(), { immediate: true })
           <el-table-column prop="code" label="编码" min-width="150">
             <template #default="{ row }"><code>{{ row.code }}</code></template>
           </el-table-column>
+          <el-table-column v-if="isPlatform" label="生成语言" width="120">
+            <template #default="{ row }">{{ row.language === 'en-US' ? '英文' : '中文' }}</template>
+          </el-table-column>
           <el-table-column v-if="isPrompt" label="内容提示词" min-width="240" show-overflow-tooltip>
             <template #default="{ row }">{{ row.content_prompt }}</template>
           </el-table-column>
@@ -215,7 +222,11 @@ watch(() => props.kind, () => load(), { immediate: true })
             <el-input v-model="form.name" placeholder="显示名称" />
           </el-form-item>
         </div>
-        <el-form-item v-if="isPlatform" label="字段配置 JSON">
+        <el-form-item v-if="isPlatform" label="生成语言 / 字段配置 JSON">
+          <el-select v-model="form.language" style="margin-bottom:10px" placeholder="选择生成语言">
+            <el-option label="中文（适合淘宝/京东/抖音等）" value="zh-CN" />
+            <el-option label="英文（适合 Amazon/Shopee/Shopify 等）" value="en-US" />
+          </el-select>
           <el-input v-model="form.field_schema_text" type="textarea" :rows="5" placeholder='{"title_max":60}' />
         </el-form-item>
         <template v-if="isPrompt">

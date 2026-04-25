@@ -4,6 +4,7 @@ export interface EcommercePlatform {
   id: number
   code: string
   name: string
+  language: string
   field_schema?: any
   remark: string
   enabled: boolean
@@ -105,6 +106,10 @@ export function getEcommerceTask(taskID: string): Promise<EcommerceTask> {
 export function retryEcommerceAsset(taskID: string, assetID: number):
   Promise<{ task_id: string; asset_id: number; status: string }> {
   return http.post(`/api/me/ecommerce/tasks/${taskID}/assets/${assetID}/retry`, {})
+}
+
+export function cancelEcommerceTask(taskID: string): Promise<EcommerceTask> {
+  return http.post(`/api/me/ecommerce/tasks/${taskID}/cancel`, {})
 }
 
 export type ConfigKind = 'platforms' | 'prompt-templates' | 'style-templates'

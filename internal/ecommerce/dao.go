@@ -27,7 +27,7 @@ func (d *DAO) ListPlatforms(ctx context.Context, f ListFilter) ([]Platform, erro
 	where, args := buildConfigWhere(f)
 	var out []Platform
 	err := d.db.SelectContext(ctx, &out, `
-SELECT id, code, name, field_schema, remark, enabled, created_at, updated_at, deleted_at
+SELECT id, code, name, language, field_schema, remark, enabled, created_at, updated_at, deleted_at
   FROM ecommerce_platforms
  WHERE `+where+`
  ORDER BY id DESC`, args...)
@@ -37,7 +37,7 @@ SELECT id, code, name, field_schema, remark, enabled, created_at, updated_at, de
 func (d *DAO) GetPlatform(ctx context.Context, id uint64) (*Platform, error) {
 	var p Platform
 	err := d.db.GetContext(ctx, &p, `
-SELECT id, code, name, field_schema, remark, enabled, created_at, updated_at, deleted_at
+SELECT id, code, name, language, field_schema, remark, enabled, created_at, updated_at, deleted_at
   FROM ecommerce_platforms
  WHERE id=? AND deleted_at IS NULL`, id)
 	return platformOrErr(&p, err)
@@ -45,8 +45,8 @@ SELECT id, code, name, field_schema, remark, enabled, created_at, updated_at, de
 
 func (d *DAO) CreatePlatform(ctx context.Context, p *Platform) error {
 	res, err := d.db.ExecContext(ctx, `
-INSERT INTO ecommerce_platforms (code, name, field_schema, remark, enabled)
-VALUES (?, ?, ?, ?, ?)`, p.Code, p.Name, nullJSON(p.FieldSchema.RawMessage()), p.Remark, p.Enabled)
+INSERT INTO ecommerce_platforms (code, name, language, field_schema, remark, enabled)
+VALUES (?, ?, ?, ?, ?, ?)`, p.Code, p.Name, nullEmpty(p.Language, "zh-CN"), nullJSON(p.FieldSchema.RawMessage()), p.Remark, p.Enabled)
 	if err != nil {
 		return err
 	}
@@ -58,8 +58,8 @@ VALUES (?, ?, ?, ?, ?)`, p.Code, p.Name, nullJSON(p.FieldSchema.RawMessage()), p
 func (d *DAO) UpdatePlatform(ctx context.Context, p *Platform) error {
 	res, err := d.db.ExecContext(ctx, `
 UPDATE ecommerce_platforms
-   SET code=?, name=?, field_schema=?, remark=?, enabled=?
- WHERE id=? AND deleted_at IS NULL`, p.Code, p.Name, nullJSON(p.FieldSchema.RawMessage()), p.Remark, p.Enabled, p.ID)
+   SET code=?, name=?, language=?, field_schema=?, remark=?, enabled=?
+ WHERE id=? AND deleted_at IS NULL`, p.Code, p.Name, nullEmpty(p.Language, "zh-CN"), nullJSON(p.FieldSchema.RawMessage()), p.Remark, p.Enabled, p.ID)
 	return checkRows(res, err)
 }
 
@@ -221,17 +221,17 @@ SELECT COUNT(*)
 }
 
 func (d *DAO) MarkTaskRunning(ctx context.Context, taskID string) error {
-	_, err := d.db.ExecContext(ctx, `UPDATE ecommerce_tasks SET status='running', progress=10, started_at=NOW() WHERE task_id=?`, taskID)
-	return err
+	res, err := d.db.ExecContext(ctx, `UPDATE ecommerce_tasks SET status='running', progress=10, started_at=NOW() WHERE task_id=? AND status='queued'`, taskID)
+	return checkRows(res, err)
 }
 
 func (d *DAO) UpdateTaskProgress(ctx context.Context, taskID string, progress int) error {
-	_, err := d.db.ExecContext(ctx, `UPDATE ecommerce_tasks SET progress=? WHERE task_id=?`, progress, taskID)
+	_, err := d.db.ExecContext(ctx, `UPDATE ecommerce_tasks SET progress=? WHERE task_id=? AND status<>'canceled'`, progress, taskID)
 	return err
 }
 
 func (d *DAO) MarkTaskRetrying(ctx context.Context, taskID string) error {
-	_, err := d.db.ExecContext(ctx, `UPDATE ecommerce_tasks SET status='running', error='', finished_at=NULL WHERE task_id=?`, taskID)
+	_, err := d.db.ExecContext(ctx, `UPDATE ecommerce_tasks SET status='running', error='', finished_at=NULL WHERE task_id=? AND status<>'canceled'`, taskID)
 	return err
 }
 
@@ -239,7 +239,7 @@ func (d *DAO) MarkTaskSuccess(ctx context.Context, taskID string, output json.Ra
 	_, err := d.db.ExecContext(ctx, `
 UPDATE ecommerce_tasks
    SET status='success', progress=100, output_json=?, output_html=?, error='', finished_at=NOW()
- WHERE task_id=?`, nullJSON(output), html, taskID)
+ WHERE task_id=? AND status<>'canceled'`, nullJSON(output), html, taskID)
 	return err
 }
 
@@ -247,7 +247,7 @@ func (d *DAO) MarkTaskFailed(ctx context.Context, taskID, msg string) error {
 	_, err := d.db.ExecContext(ctx, `
 UPDATE ecommerce_tasks
    SET status='failed', error=?, finished_at=NOW()
- WHERE task_id=?`, truncate(msg, 1000), taskID)
+ WHERE task_id=? AND status<>'canceled'`, truncate(msg, 1000), taskID)
 	return err
 }
 
@@ -255,8 +255,16 @@ func (d *DAO) MarkTaskFailedWithOutput(ctx context.Context, taskID, msg string, 
 	_, err := d.db.ExecContext(ctx, `
 UPDATE ecommerce_tasks
    SET status='failed', output_json=?, output_html=?, error=?, finished_at=NOW()
- WHERE task_id=?`, nullJSON(output), html, truncate(msg, 1000), taskID)
+ WHERE task_id=? AND status<>'canceled'`, nullJSON(output), html, truncate(msg, 1000), taskID)
 	return err
+}
+
+func (d *DAO) MarkTaskCanceled(ctx context.Context, taskID string) error {
+	res, err := d.db.ExecContext(ctx, `
+UPDATE ecommerce_tasks
+   SET status='canceled', error='用户已中断生成', finished_at=NOW()
+ WHERE task_id=? AND status IN ('queued','running')`, taskID)
+	return checkRows(res, err)
 }
 
 func (d *DAO) CreateAsset(ctx context.Context, a *Asset) error {
@@ -275,7 +283,7 @@ func (d *DAO) UpdateAssetResult(ctx context.Context, id uint64, status, imageTas
 	res, err := d.db.ExecContext(ctx, `
 UPDATE ecommerce_assets
    SET status=?, image_task_id=?, url=?, file_id=?, error=?
- WHERE id=?`, status, imageTaskID, url, fileID, truncate(errMsg, 500), id)
+ WHERE id=? AND status<>'canceled'`, status, imageTaskID, url, fileID, truncate(errMsg, 500), id)
 	return checkRows(res, err)
 }
 
@@ -295,8 +303,16 @@ func (d *DAO) MarkAssetRetrying(ctx context.Context, id uint64, imageTaskID, pro
 	res, err := d.db.ExecContext(ctx, `
 UPDATE ecommerce_assets
    SET status='running', image_task_id=?, url='', file_id='', prompt=?, error=''
- WHERE id=?`, imageTaskID, prompt, id)
+ WHERE id=? AND status<>'canceled'`, imageTaskID, prompt, id)
 	return checkRows(res, err)
+}
+
+func (d *DAO) MarkTaskAssetsCanceled(ctx context.Context, taskID string) error {
+	_, err := d.db.ExecContext(ctx, `
+UPDATE ecommerce_assets
+   SET status='canceled', error='用户已中断生成'
+ WHERE task_id=? AND status IN ('queued','running')`, taskID)
+	return err
 }
 
 func (d *DAO) ListAssets(ctx context.Context, taskID string) ([]Asset, error) {

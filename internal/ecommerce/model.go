@@ -10,10 +10,11 @@ import (
 )
 
 const (
-	StatusQueued  = "queued"
-	StatusRunning = "running"
-	StatusSuccess = "success"
-	StatusFailed  = "failed"
+	StatusQueued   = "queued"
+	StatusRunning  = "running"
+	StatusSuccess  = "success"
+	StatusFailed   = "failed"
+	StatusCanceled = "canceled"
 )
 
 const (
@@ -30,6 +31,7 @@ type Platform struct {
 	ID          uint64       `db:"id" json:"id"`
 	Code        string       `db:"code" json:"code"`
 	Name        string       `db:"name" json:"name"`
+	Language    string       `db:"language" json:"language"`
 	FieldSchema RawJSON      `db:"field_schema" json:"field_schema,omitempty"`
 	Remark      string       `db:"remark" json:"remark"`
 	Enabled     bool         `db:"enabled" json:"enabled"`

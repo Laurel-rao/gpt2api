@@ -20,6 +20,9 @@ type renderData struct {
 	AssetType     string
 	UnifiedInfo   string
 	ImageTextPlan string
+	LanguageCode  string
+	LanguageName  string
+	LanguageRule  string
 }
 
 func renderTemplate(src string, data renderData) string {
@@ -32,6 +35,59 @@ func renderTemplate(src string, data renderData) string {
 		return src
 	}
 	return b.String()
+}
+
+func newRenderData(requirement string, platform Platform, prompt PromptTemplate, style StyleTemplate, out Output) renderData {
+	code := platformLanguageCode(platform)
+	return renderData{
+		Requirement:  requirement,
+		Platform:     platform,
+		Prompt:       prompt,
+		Style:        style,
+		Output:       out,
+		LanguageCode: code,
+		LanguageName: platformLanguageName(code),
+		LanguageRule: platformLanguageRule(code),
+	}
+}
+
+func platformLanguageCode(platform Platform) string {
+	if s := strings.TrimSpace(platform.Language); s != "" {
+		return normalizeLanguageCode(s)
+	}
+	var cfg struct {
+		Locale string `json:"locale"`
+	}
+	_ = json.Unmarshal(platform.FieldSchema.RawMessage(), &cfg)
+	return normalizeLanguageCode(cfg.Locale)
+}
+
+func normalizeLanguageCode(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "en", "en-us", "english":
+		return "en-US"
+	case "zh", "zh-cn", "cn", "chinese", "中文":
+		return "zh-CN"
+	default:
+		if strings.TrimSpace(s) == "" {
+			return "zh-CN"
+		}
+		return strings.TrimSpace(s)
+	}
+}
+
+func platformLanguageName(code string) string {
+	if strings.HasPrefix(strings.ToLower(code), "en") {
+		return "English"
+	}
+	return "简体中文"
+}
+
+func platformLanguageRule(code string) string {
+	if strings.HasPrefix(strings.ToLower(code), "en") {
+		return "All user-facing copy, platform fields, detail page text and image text plans must be written in English. Preserve user-provided brand names, model numbers, dimensions, prices and SKUs exactly; do not output Chinese unless it is a brand/model/spec explicitly provided by the user."
+	}
+	return "所有面向用户的文案、平台字段、详情页文字和图片文字计划必须使用简体中文。用户提供的品牌名、型号、尺寸、价格和 SKU 必须逐字保留。"
 }
 
 func parseOutput(raw, requirement string) Output {
@@ -269,6 +325,25 @@ func allImageSpecsSame(specs map[string]ImageSpec) bool {
 }
 
 func formatUnifiedInfo(out Output) string {
+	return formatUnifiedInfoForLanguage(out, "zh-CN")
+}
+
+func formatUnifiedInfoForLanguage(out Output, languageCode string) string {
+	if strings.HasPrefix(strings.ToLower(languageCode), "en") {
+		lines := []string{
+			"Canonical product title: " + firstNonEmpty(out.ProductInfo.CanonicalTitle, out.ProductTitle),
+			"Short title: " + firstNonEmpty(out.ProductInfo.ShortTitle, out.ProductTitle),
+			"Category: " + out.ProductInfo.Category,
+			"Core value: " + out.ProductInfo.CoreValue,
+			"Price text: " + out.PriceInfo.PriceText,
+			"Original price: " + out.PriceInfo.OriginalPrice,
+			"Promotion text: " + out.PriceInfo.PromotionText,
+			"Call to action: " + out.PriceInfo.CTA,
+			"Key specs: " + strings.Join(out.ProductInfo.KeySpecs, "; "),
+			"Selling points: " + strings.Join(out.ProductInfo.SellingPoints, "; "),
+		}
+		return strings.Join(nonEmptyLines(lines), "\n")
+	}
 	lines := []string{
 		"统一商品标题：" + firstNonEmpty(out.ProductInfo.CanonicalTitle, out.ProductTitle),
 		"统一短标题：" + firstNonEmpty(out.ProductInfo.ShortTitle, out.ProductTitle),
@@ -285,6 +360,24 @@ func formatUnifiedInfo(out Output) string {
 }
 
 func formatImageTextPlan(plan ImageTextPlan) string {
+	return formatImageTextPlanForLanguage(plan, "zh-CN")
+}
+
+func formatImageTextPlanForLanguage(plan ImageTextPlan, languageCode string) string {
+	if strings.HasPrefix(strings.ToLower(languageCode), "en") {
+		lines := []string{
+			"Title: " + plan.Title,
+			"Subtitle: " + plan.Subtitle,
+			"Price: " + plan.PriceText,
+			"Promotion: " + plan.PromotionText,
+			"Call to action: " + plan.CTA,
+			"Badges: " + strings.Join(plan.Badges, "; "),
+			"Selling points: " + strings.Join(plan.SellingPoints, "; "),
+			"Specs: " + strings.Join(plan.Specs, "; "),
+			"Notes: " + strings.Join(plan.Notes, "; "),
+		}
+		return strings.Join(nonEmptyLines(lines), "\n")
+	}
 	lines := []string{
 		"标题：" + plan.Title,
 		"副标题：" + plan.Subtitle,
@@ -307,6 +400,9 @@ func nonEmptyLines(lines []string) []string {
 			continue
 		}
 		if idx := strings.LastIndex(line, "："); idx >= 0 && strings.TrimSpace(line[idx+len("："):]) == "" {
+			continue
+		}
+		if idx := strings.LastIndex(line, ":"); idx >= 0 && strings.TrimSpace(line[idx+1:]) == "" {
 			continue
 		}
 		out = append(out, line)

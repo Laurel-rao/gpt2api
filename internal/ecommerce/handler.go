@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/432539/gpt2api/internal/audit"
+	imgpkg "github.com/432539/gpt2api/internal/image"
 	"github.com/432539/gpt2api/internal/middleware"
 	"github.com/432539/gpt2api/pkg/resp"
 )
@@ -27,6 +28,7 @@ func NewHandler(dao *DAO, runner *Runner, auditDAO *audit.DAO) *Handler {
 type platformReq struct {
 	Code        string          `json:"code"`
 	Name        string          `json:"name"`
+	Language    string          `json:"language"`
 	FieldSchema json.RawMessage `json:"field_schema"`
 	Remark      string          `json:"remark"`
 	Enabled     *bool           `json:"enabled"`
@@ -227,6 +229,34 @@ func (h *Handler) RetryAsset(c *gin.Context) {
 	resp.OK(c, gin.H{"task_id": taskID, "asset_id": assetID, "status": StatusQueued})
 }
 
+func (h *Handler) CancelTask(c *gin.Context) {
+	uid := middleware.UserID(c)
+	if uid == 0 {
+		resp.Unauthorized(c, "not logged in")
+		return
+	}
+	taskID := c.Param("id")
+	row, err := h.dao.GetTask(c.Request.Context(), taskID)
+	if err != nil {
+		writeErr(c, err)
+		return
+	}
+	if row.UserID != uid {
+		resp.NotFound(c, "任务不存在")
+		return
+	}
+	if err := h.runner.CancelTask(c.Request.Context(), taskID); err != nil {
+		if strings.Contains(err.Error(), "不能中断") {
+			resp.BadRequest(c, err.Error())
+			return
+		}
+		writeErr(c, err)
+		return
+	}
+	v, _ := h.taskView(c.Request.Context(), taskID, true)
+	resp.OK(c, v)
+}
+
 func (h *Handler) taskView(ctx context.Context, taskID string, includeRefs bool) (gin.H, error) {
 	row, err := h.dao.GetTask(ctx, taskID)
 	if err != nil {
@@ -239,6 +269,11 @@ func (h *Handler) taskViewFromRow(ctx context.Context, row *TaskRow, includeRefs
 	assets, err := h.dao.ListAssets(ctx, row.TaskID)
 	if err != nil {
 		return nil, err
+	}
+	refreshAssetProxyURLs(assets)
+	outputHTML := row.OutputHTML
+	if out := outputFromTask(row); out.ProductTitle != "" {
+		outputHTML = buildHTML(out, assets)
 	}
 	refCount := 0
 	if len(row.ReferenceImages) > 0 {
@@ -261,7 +296,7 @@ func (h *Handler) taskViewFromRow(ctx context.Context, row *TaskRow, includeRefs
 		"status":                row.Status,
 		"progress":              row.Progress,
 		"output_json":           row.OutputJSON,
-		"output_html":           row.OutputHTML,
+		"output_html":           outputHTML,
 		"assets":                assets,
 		"error":                 row.Error,
 		"created_at":            row.CreatedAt,
@@ -272,6 +307,15 @@ func (h *Handler) taskViewFromRow(ctx context.Context, row *TaskRow, includeRefs
 		out["reference_images"] = row.ReferenceImages
 	}
 	return out, nil
+}
+
+func refreshAssetProxyURLs(assets []Asset) {
+	for i := range assets {
+		if assets[i].ImageTaskID == "" {
+			continue
+		}
+		assets[i].URL = imgpkg.BuildProxyURL(assets[i].ImageTaskID, 0, 0)
+	}
 }
 
 func (h *Handler) AdminListPlatforms(c *gin.Context) {
@@ -289,7 +333,7 @@ func (h *Handler) AdminCreatePlatform(c *gin.Context) {
 		return
 	}
 	enabled := boolDefault(req.Enabled, true)
-	row := &Platform{Code: cleanCode(req.Code), Name: strings.TrimSpace(req.Name), FieldSchema: RawJSON(req.FieldSchema), Remark: req.Remark, Enabled: enabled}
+	row := &Platform{Code: cleanCode(req.Code), Name: strings.TrimSpace(req.Name), Language: cleanLanguage(req.Language, req.FieldSchema), FieldSchema: RawJSON(req.FieldSchema), Remark: req.Remark, Enabled: enabled}
 	if row.Code == "" || row.Name == "" {
 		resp.BadRequest(c, "code 和 name 必填")
 		return
@@ -315,7 +359,7 @@ func (h *Handler) AdminUpdatePlatform(c *gin.Context) {
 		resp.BadRequest(c, err.Error())
 		return
 	}
-	row := &Platform{ID: id, Code: cleanCode(req.Code), Name: strings.TrimSpace(req.Name), FieldSchema: RawJSON(req.FieldSchema), Remark: req.Remark, Enabled: boolDefault(req.Enabled, true)}
+	row := &Platform{ID: id, Code: cleanCode(req.Code), Name: strings.TrimSpace(req.Name), Language: cleanLanguage(req.Language, req.FieldSchema), FieldSchema: RawJSON(req.FieldSchema), Remark: req.Remark, Enabled: boolDefault(req.Enabled, true)}
 	if row.Code == "" || row.Name == "" {
 		resp.BadRequest(c, "code 和 name 必填")
 		return
@@ -495,6 +539,28 @@ func cleanCode(s string) string {
 	s = strings.TrimSpace(strings.ToLower(s))
 	s = strings.ReplaceAll(s, " ", "-")
 	return s
+}
+
+func cleanLanguage(s string, fieldSchema json.RawMessage) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		var cfg struct {
+			Locale string `json:"locale"`
+		}
+		_ = json.Unmarshal(fieldSchema, &cfg)
+		s = strings.TrimSpace(cfg.Locale)
+	}
+	switch strings.ToLower(s) {
+	case "en", "en-us", "english":
+		return "en-US"
+	case "zh", "zh-cn", "cn", "chinese", "中文":
+		return "zh-CN"
+	default:
+		if s == "" {
+			return "zh-CN"
+		}
+		return s
+	}
 }
 
 func queryInt(c *gin.Context, key string, fallback int) int {

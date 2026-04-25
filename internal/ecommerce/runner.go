@@ -43,6 +43,8 @@ type Runner struct {
 	imageRun         *imgpkg.Runner
 	imageConcurrency int
 	imageSem         chan struct{}
+	activeMu         sync.Mutex
+	activeCancels    map[string]context.CancelFunc
 }
 
 func NewRunner(dao *DAO, models *modelpkg.Registry, sched *scheduler.Scheduler, acc AccountSecretResolver, channels *channel.Router, imageDAO *imgpkg.DAO, imageRun *imgpkg.Runner, imageConcurrency int) *Runner {
@@ -59,14 +61,19 @@ func NewRunner(dao *DAO, models *modelpkg.Registry, sched *scheduler.Scheduler, 
 		imageRun:         imageRun,
 		imageConcurrency: imageConcurrency,
 		imageSem:         make(chan struct{}, imageConcurrency),
+		activeCancels:    map[string]context.CancelFunc{},
 	}
 }
 
 func (r *Runner) Enqueue(taskID string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-		defer cancel()
+		ctx, cancel = r.trackTaskContext(taskID, ctx, cancel)
+		defer r.untrackTaskContext(taskID, cancel)
 		if err := r.Run(ctx, taskID); err != nil {
+			if r.isCanceled(context.Background(), taskID) {
+				return
+			}
 			logger.L().Warn("ecommerce task failed", zap.String("task_id", taskID), zap.Error(err))
 			_ = r.dao.MarkTaskFailed(context.Background(), taskID, err.Error())
 		}
@@ -82,6 +89,53 @@ func (r *Runner) EnqueueAssetRetry(taskID string, assetID uint64) {
 				zap.String("task_id", taskID), zap.Uint64("asset_id", assetID), zap.Error(err))
 		}
 	}()
+}
+
+func (r *Runner) CancelTask(ctx context.Context, taskID string) error {
+	task, err := r.dao.GetTask(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	if task.Status != StatusQueued && task.Status != StatusRunning {
+		return errors.New("任务已结束，不能中断")
+	}
+	if err := r.dao.MarkTaskCanceled(ctx, taskID); err != nil {
+		return err
+	}
+	_ = r.dao.MarkTaskAssetsCanceled(ctx, taskID)
+	r.activeMu.Lock()
+	cancel := r.activeCancels[taskID]
+	r.activeMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	return nil
+}
+
+func (r *Runner) trackTaskContext(taskID string, parent context.Context, parentCancel context.CancelFunc) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(parent)
+	r.activeMu.Lock()
+	r.activeCancels[taskID] = func() {
+		cancel()
+		parentCancel()
+	}
+	r.activeMu.Unlock()
+	return ctx, func() {
+		cancel()
+		parentCancel()
+	}
+}
+
+func (r *Runner) untrackTaskContext(taskID string, cancel context.CancelFunc) {
+	cancel()
+	r.activeMu.Lock()
+	delete(r.activeCancels, taskID)
+	r.activeMu.Unlock()
+}
+
+func (r *Runner) isCanceled(ctx context.Context, taskID string) bool {
+	task, err := r.dao.GetTask(ctx, taskID)
+	return err == nil && task.Status == StatusCanceled
 }
 
 func (r *Runner) Run(ctx context.Context, taskID string) error {
@@ -117,6 +171,9 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 	} else {
 		out = parseOutput(rawText, task.Requirement)
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	normalizeOutput(&out, task.Requirement)
 	outBytes, _ := json.Marshal(out)
 	_ = r.dao.UpdateTaskProgress(ctx, taskID, 35)
@@ -134,6 +191,9 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 	var completed int
 	assetErrors := make([]string, 0)
 	for _, assetType := range assetTypes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		assetPrompt := r.buildImagePrompt(*platform, *prompt, *style, out, task.Requirement, assetType)
 		spec := out.ImageSpecs[assetType]
 		imgTaskID := imgpkg.GenerateTaskID()
@@ -532,8 +592,9 @@ func (r *Runner) generateTextByChannel(ctx context.Context, chatModel *modelpkg.
 }
 
 func (r *Runner) buildContentMessages(platform Platform, prompt PromptTemplate, style StyleTemplate, requirement string) []chatgpt.ChatMessage {
+	langRule := platformLanguageRule(platformLanguageCode(platform))
 	return []chatgpt.ChatMessage{
-		{Role: "system", Content: "你是资深电商详情页策划。先解析统一商品信息和价格信息，再生成页面文案与图片文字计划。只输出 JSON，不要输出 Markdown。"},
+		{Role: "system", Content: "你是资深电商详情页策划。先解析统一商品信息和价格信息，再生成页面文案与图片文字计划。只输出 JSON，不要输出 Markdown。 " + langRule},
 		{Role: "user", Content: r.buildContentPrompt(platform, prompt, style, requirement)},
 	}
 }
@@ -551,6 +612,44 @@ func localDraftOutput(platform Platform, style StyleTemplate, requirement string
 	name := compactRequirement(requirement, 34)
 	if name == "" {
 		name = "精选商品"
+	}
+	if strings.HasPrefix(strings.ToLower(platformLanguageCode(platform)), "en") {
+		if name == "精选商品" {
+			name = "Selected Product"
+		}
+		desc := compactRequirement(requirement, 120)
+		if desc == "" {
+			desc = "An ecommerce detail-page draft focused on product benefits, use cases and purchase reasons."
+		}
+		return Output{
+			ShopTitle:    name + " Store",
+			ProductTitle: name,
+			Description:  desc,
+			PriceCopy:    "Limited-time offer, better value today",
+			ProductInfo: ProductInfo{
+				CanonicalTitle: name,
+				ShortTitle:     name,
+				CoreValue:      desc,
+			},
+			PriceInfo: PriceInfo{
+				Currency:      "USD",
+				PromotionText: "Limited-time offer",
+				CTA:           "Shop Now",
+			},
+			MarketingCopy: []string{"Clear core benefits", "Ready for multiple ecommerce platforms", "Reduce purchase hesitation"},
+			DetailSections: []DetailSection{
+				{Title: "Key Benefits", Body: "Highlight the product advantages customers care about most."},
+				{Title: "Use Cases", Body: "Connect the product with everyday use, gifting and repeat-purchase scenarios."},
+				{Title: "Specifications", Body: "Organize size, material, function and audience details to reduce pre-sale questions."},
+				{Title: "Why Buy Now", Body: "Use concise copy to connect price, quality and service assurance."},
+			},
+			PlatformFields: map[string]string{
+				"platform": platform.Name,
+				"title":    name,
+				"style":    style.Name,
+			},
+			ImageSpecs: defaultImageSpecs(),
+		}
 	}
 	desc := compactRequirement(requirement, 120)
 	if desc == "" {
@@ -591,6 +690,8 @@ func (r *Runner) buildContentPrompt(platform Platform, prompt PromptTemplate, st
 {{.Requirement}}
 
 目标平台：{{.Platform.Name}}
+生成语言：{{.LanguageName}}（{{.LanguageCode}}）
+语言要求：{{.LanguageRule}}
 内容策略：{{.Prompt.ContentPrompt}}
 视觉风格：{{.Style.StylePrompt}}
 
@@ -643,10 +744,14 @@ func (r *Runner) buildContentPrompt(platform Platform, prompt PromptTemplate, st
 4. 白底图 image_text_plans 必须为空文字，只保留无文字备注。
 5. 商品标题和价格在 JSON 内只允许出现一个统一版本。
 6. image_specs 只能使用 1024x1024、1792x1024、1024x1792 三种尺寸；店标题图优先横版 1792x1024，电商大图和白底图优先方图 1024x1024，详情图和价格图优先竖版 1024x1792；不得把所有图片都设置成同一尺寸。`
-	return renderTemplate(tpl, renderData{Requirement: requirement, Platform: platform, Prompt: prompt, Style: style})
+	return renderTemplate(tpl, newRenderData(requirement, platform, prompt, style, Output{}))
 }
 
 func (r *Runner) buildImagePrompt(platform Platform, prompt PromptTemplate, style StyleTemplate, out Output, requirement, assetType string) string {
+	langCode := platformLanguageCode(platform)
+	if strings.HasPrefix(strings.ToLower(langCode), "en") {
+		return r.buildEnglishImagePrompt(platform, prompt, style, out, requirement, assetType, langCode)
+	}
 	assetText := map[string]string{
 		AssetTitle:  "店标题图，突出商品名称和核心价值",
 		AssetMain:   "电商主图，商品主体清晰，适合列表和首屏",
@@ -668,10 +773,13 @@ func (r *Runner) buildImagePrompt(platform Platform, prompt PromptTemplate, styl
 形态保真：必须严格保持原始需求和参考图中的商品品类、结构、可折叠/可收纳/便携等关键形态；如有参考图，以参考图商品外观、比例、颜色、部件和结构为最高优先级；不得改成同类普通款、传统款或不可收纳形态；例如可折叠/可收纳钢琴必须是便携折叠电子琴/键盘类商品，不得生成传统立式钢琴、三角钢琴、柜式电钢琴或固定琴架款。
 严格要求：纯白或接近纯白背景；无标题、无卖点文字、无价格、无促销标签、无图标、无贴纸、无边框、无水印、无品牌标志、无场景道具、无人物手部；商品真实、清晰、完整、单独呈现。`
 		return renderTemplate(src, renderData{
-			Requirement: requirement,
-			Platform:    platform,
-			Output:      out,
-			UnifiedInfo: formatUnifiedInfo(out),
+			Requirement:  requirement,
+			Platform:     platform,
+			Output:       out,
+			UnifiedInfo:  formatUnifiedInfoForLanguage(out, langCode),
+			LanguageCode: langCode,
+			LanguageName: platformLanguageName(langCode),
+			LanguageRule: platformLanguageRule(langCode),
 		})
 	}
 	src := `{{.Prompt.ImagePrompt}}
@@ -688,6 +796,7 @@ func (r *Runner) buildImagePrompt(platform Platform, prompt PromptTemplate, styl
 本图允许出现的文字：
 {{.ImageTextPlan}}
 图片参数：尺寸 ` + spec.Size + `，长宽比 ` + spec.AspectRatio + `，清晰度 ` + spec.Clarity + `
+语言要求：{{.LanguageRule}}
 一致性要求：所有标题、价格、原价、促销、规格、型号必须严格使用“统一商品信息”和“本图允许出现的文字”；不得新增、替换、改写任何数字价格、折扣、标题、型号或规格；没有价格数字时不得编造价格数字；中文文字清晰可读，商业电商设计，避免虚假品牌标志。`
 	return renderTemplate(src, renderData{
 		Requirement:   requirement,
@@ -696,9 +805,61 @@ func (r *Runner) buildImagePrompt(platform Platform, prompt PromptTemplate, styl
 		Style:         style,
 		Output:        out,
 		AssetType:     assetType,
-		UnifiedInfo:   formatUnifiedInfo(out),
-		ImageTextPlan: formatImageTextPlan(out.ImageTextPlans[assetType]),
+		UnifiedInfo:   formatUnifiedInfoForLanguage(out, langCode),
+		ImageTextPlan: formatImageTextPlanForLanguage(out.ImageTextPlans[assetType], langCode),
+		LanguageCode:  langCode,
+		LanguageName:  platformLanguageName(langCode),
+		LanguageRule:  platformLanguageRule(langCode),
 	})
+}
+
+func (r *Runner) buildEnglishImagePrompt(platform Platform, prompt PromptTemplate, style StyleTemplate, out Output, requirement, assetType, langCode string) string {
+	assetText := map[string]string{
+		AssetTitle:  "store title image that highlights the product name and core value",
+		AssetMain:   "main ecommerce image with a clear product hero, suitable for listings and above-the-fold display",
+		AssetWhite:  "white-background product image showing only the product itself",
+		AssetDetail: "detail-page module image showing selling points, scenes and specs",
+		AssetPrice:  "price promotion image highlighting the offer and call to action",
+	}[assetType]
+	spec := out.ImageSpecs[assetType]
+	data := newRenderData(requirement, platform, prompt, style, out)
+	data.AssetType = assetType
+	data.UnifiedInfo = formatUnifiedInfoForLanguage(out, langCode)
+	data.ImageTextPlan = formatImageTextPlanForLanguage(out.ImageTextPlans[assetType], langCode)
+	if assetType == AssetWhite {
+		src := `Platform: {{.Platform.Name}}
+Image type: white-background image
+Goal: a clean product-only white-background ecommerce image; the product is complete, centered, sharp-edged and suitable for platform review.
+Product title: {{.Output.ProductTitle}}
+Description: {{.Output.Description}}
+Original requirement: {{.Requirement}}
+Unified product information:
+{{.UnifiedInfo}}
+Image parameters: size ` + spec.Size + `, aspect ratio ` + spec.AspectRatio + `, clarity ` + spec.Clarity + `
+Language requirement: {{.LanguageRule}}
+Shape fidelity: strictly preserve the product category, structure, foldable/portable/storage features and other key forms from the original requirement and reference images. If reference images are provided, their product appearance, proportions, colors, parts and structure have highest priority.
+Strict requirements: pure white or near-white background; no title, no selling-point text, no price, no promotion tag, no icon, no sticker, no border, no watermark, no brand logo, no scene props, no hands or people; realistic, clear, complete, standalone product.`
+		return renderTemplate(src, data)
+	}
+	src := `Marketing image strategy; adapt this template into English and do not copy Chinese template text into the image:
+{{.Prompt.ImagePrompt}}
+Visual style strategy; adapt this template into English:
+{{.Style.StylePrompt}}
+Platform: {{.Platform.Name}}
+Image type: {{.AssetType}}
+Goal: ` + assetText + `
+Product title: {{.Output.ProductTitle}}
+Description: {{.Output.Description}}
+Price copy: {{.Output.PriceCopy}}
+Original requirement: {{.Requirement}}
+Unified product information:
+{{.UnifiedInfo}}
+Allowed visible text for this image:
+{{.ImageTextPlan}}
+Image parameters: size ` + spec.Size + `, aspect ratio ` + spec.AspectRatio + `, clarity ` + spec.Clarity + `
+Language requirement: {{.LanguageRule}}
+Consistency requirements: every title, price, original price, promotion, spec and model must strictly use Unified product information and Allowed visible text. Do not add, replace or rewrite numeric prices, discounts, titles, models or specs. If no numeric price is provided, do not invent a numeric price. Visible text must be clear English. Use commercial ecommerce design and avoid fake brand logos.`
+	return renderTemplate(src, data)
 }
 
 func (r *Runner) firstModel(ctx context.Context, modelType string) (*modelpkg.Model, error) {

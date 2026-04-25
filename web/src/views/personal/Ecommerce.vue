@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { ElMessage, type UploadFile } from 'element-plus'
+import { ElMessage, ElMessageBox, type UploadFile } from 'element-plus'
 import {
+  cancelEcommerceTask,
   createEcommerceTask,
   getEcommerceOptions,
   getEcommerceTask,
@@ -26,6 +27,7 @@ const styles = ref<EcommerceStyleTemplate[]>([])
 const tasks = ref<EcommerceTask[]>([])
 const activeTask = ref<EcommerceTask | null>(null)
 const retryingAssetID = ref(0)
+const cancelingTask = ref(false)
 const previewVisible = ref(false)
 const previewAsset = ref<EcommerceAsset | null>(null)
 const exportingPoster = ref(false)
@@ -43,12 +45,14 @@ const statusText: Record<string, string> = {
   running: '生成中',
   success: '已完成',
   failed: '失败',
+  canceled: '已中断',
 }
 const statusType: Record<string, 'success' | 'warning' | 'danger' | 'info'> = {
   queued: 'info',
   running: 'warning',
   success: 'success',
   failed: 'danger',
+  canceled: 'info',
 }
 const assetText: Record<string, string> = {
   title_image: '店标题图',
@@ -75,13 +79,14 @@ const generationSteps = computed(() => {
   const hasAssets = assets.value.length > 0
   const success = status === 'success'
   const failed = status === 'failed'
+  const canceled = status === 'canceled'
   const imageDone = totalAssetCount.value > 0 && doneAssetCount.value >= totalAssetCount.value
-  const activeIndex = failed ? -1 : success ? 3 : hasAssets ? 2 : hasContent ? 1 : 0
+  const activeIndex = (failed || canceled) ? -1 : success ? 3 : hasAssets ? 2 : hasContent ? 1 : 0
   return [
     { key: 'prompt', label: '提示词分析', done: activeIndex > 0 || success, active: activeIndex === 0 },
     { key: 'copy', label: '文案生成', done: activeIndex > 1 || success, active: activeIndex === 1 },
     { key: 'image', label: success || imageDone ? `图片（${doneAssetCount.value}/${totalAssetCount.value}）已生成` : imageProgressText.value, done: imageDone || success, active: activeIndex === 2 },
-    { key: 'done', label: failed ? '生成失败' : '完成', done: success, active: false, failed },
+    { key: 'done', label: canceled ? '已中断' : failed ? '生成失败' : '完成', done: success, active: false, failed: failed || canceled },
   ]
 })
 
@@ -173,6 +178,26 @@ async function retryAsset(assetID: number) {
     startPolling(fresh.task_id)
   } finally {
     retryingAssetID.value = 0
+  }
+}
+
+async function cancelTask() {
+  if (!activeTask.value || !running.value) return
+  const ok = await ElMessageBox.confirm('确定中断当前生成任务吗？已完成的图片会保留，未完成的图片会停止更新。', '中断生成', {
+    type: 'warning',
+    confirmButtonText: '中断',
+    cancelButtonText: '继续生成',
+  }).catch(() => false)
+  if (!ok || !activeTask.value) return
+  cancelingTask.value = true
+  try {
+    const fresh = await cancelEcommerceTask(activeTask.value.task_id)
+    activeTask.value = fresh
+    stopPolling()
+    await loadTasks()
+    ElMessage.success('已中断生成')
+  } finally {
+    cancelingTask.value = false
   }
 }
 
@@ -439,7 +464,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="page-container ecommerce-page" v-loading="loading">
+  <div class="page-container ecommerce-page">
     <div class="workspace">
       <section class="left-pane">
         <div class="card-block">
@@ -504,10 +529,10 @@ onBeforeUnmount(() => {
           </el-form>
         </div>
 
-        <div class="card-block history">
+        <div class="card-block history" v-loading="loading">
           <div class="flex-between">
             <h2 class="page-title">历史记录</h2>
-            <el-button size="small" @click="loadTasks">刷新</el-button>
+            <el-button size="small" :loading="loading" @click="loadTasks">刷新</el-button>
           </div>
           <div
             v-for="task in tasks"
@@ -530,7 +555,19 @@ onBeforeUnmount(() => {
         <div class="card-block result-card">
           <div class="flex-between">
             <h2 class="page-title">生成结果</h2>
-            <el-progress v-if="activeTask" :percentage="activeTask.progress || 0" :status="activeTask.status === 'failed' ? 'exception' : undefined" style="width:220px" />
+            <div v-if="activeTask" class="result-actions">
+              <el-button
+                v-if="running"
+                type="danger"
+                plain
+                size="small"
+                :loading="cancelingTask"
+                @click="cancelTask"
+              >
+                中断生成
+              </el-button>
+              <el-progress :percentage="activeTask.progress || 0" :status="activeTask.status === 'failed' ? 'exception' : undefined" style="width:220px" />
+            </div>
           </div>
           <el-empty v-if="!activeTask" description="提交任务后在这里查看结果" />
           <template v-else>
@@ -540,7 +577,7 @@ onBeforeUnmount(() => {
               <span>{{ activeTask.task_id }}</span>
               <span>{{ activeTask.prompt_name }} / {{ activeTask.style_name }}</span>
             </div>
-            <div v-if="running || activeTask.status === 'success' || activeTask.status === 'failed'" class="generation-steps">
+            <div v-if="running || activeTask.status === 'success' || activeTask.status === 'failed' || activeTask.status === 'canceled'" class="generation-steps">
               <div
                 v-for="(step, index) in generationSteps"
                 :key="step.key"
@@ -704,6 +741,7 @@ onBeforeUnmount(() => {
 }
 .history-row.active { color: var(--el-color-primary); }
 .result-card { min-height: calc(100vh - 112px); }
+.result-actions { display: inline-flex; align-items: center; gap: 10px; }
 .result-meta { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; color: var(--el-text-color-secondary); font-size: 13px; }
 .generation-steps { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
 .generation-step {
@@ -789,10 +827,8 @@ onBeforeUnmount(() => {
   bottom: 8px;
   display: flex;
   gap: 6px;
-  opacity: 0;
-  transition: opacity 0.16s ease;
+  opacity: 1;
 }
-.asset-preview:hover .asset-actions { opacity: 1; }
 .asset-empty { height: 160px; display: grid; place-items: center; color: var(--el-text-color-secondary); background: var(--el-fill-color-lighter); border-radius: 6px; text-align: center; padding: 10px; }
 .asset-empty.pending {
   gap: 8px;
