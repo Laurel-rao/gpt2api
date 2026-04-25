@@ -17,6 +17,8 @@ import { formatDateTime } from '@/utils/format'
 const loading = ref(false)
 const submitting = ref(false)
 const polling = ref<number | null>(null)
+const clockTimer = ref<number | null>(null)
+const nowTs = ref(Date.now())
 const platforms = ref<EcommercePlatform[]>([])
 const prompts = ref<EcommercePromptTemplate[]>([])
 const styles = ref<EcommerceStyleTemplate[]>([])
@@ -58,6 +60,7 @@ const running = computed(() => ['queued', 'running'].includes(activeTask.value?.
 const contentLoading = computed(() => running.value && !output.value?.product_title)
 const assetLoading = (status: string) => ['queued', 'running'].includes(status)
 const runningAssetCount = computed(() => assets.value.filter((a) => assetLoading(a.status) && !a.url).length)
+const taskElapsed = computed(() => activeTask.value ? elapsedText(activeTask.value.created_at, activeTask.value.finished_at, running.value) : '0秒')
 
 async function loadOptions() {
   const d = await getEcommerceOptions()
@@ -168,7 +171,23 @@ function stopPolling() {
   polling.value = null
 }
 
+function elapsedText(start?: string | null, end?: string | null, live = false) {
+  if (!start) return '0秒'
+  const startMs = new Date(start).getTime()
+  if (!Number.isFinite(startMs)) return '0秒'
+  const endMs = end ? new Date(end).getTime() : (live ? nowTs.value : Date.now())
+  const total = Math.max(0, Math.floor((endMs - startMs) / 1000))
+  const min = Math.floor(total / 60)
+  const sec = total % 60
+  return min > 0 ? `${min}分${sec}秒` : `${sec}秒`
+}
+
+function assetElapsed(asset: { created_at?: string; updated_at?: string; status: string }) {
+  return elapsedText(asset.created_at, asset.updated_at, assetLoading(asset.status))
+}
+
 onMounted(async () => {
+  clockTimer.value = window.setInterval(() => { nowTs.value = Date.now() }, 1000)
   loading.value = true
   try {
     await loadOptions()
@@ -180,7 +199,10 @@ onMounted(async () => {
     loading.value = false
   }
 })
-onBeforeUnmount(stopPolling)
+onBeforeUnmount(() => {
+  stopPolling()
+  if (clockTimer.value) window.clearInterval(clockTimer.value)
+})
 </script>
 
 <template>
@@ -281,6 +303,7 @@ onBeforeUnmount(stopPolling)
           <template v-else>
             <div class="result-meta">
               <el-tag :type="statusType[activeTask.status] || 'info'">{{ statusText[activeTask.status] || activeTask.status }}</el-tag>
+              <span>耗时 {{ taskElapsed }}</span>
               <span>{{ activeTask.task_id }}</span>
               <span>{{ activeTask.prompt_name }} / {{ activeTask.style_name }}</span>
             </div>
@@ -310,13 +333,16 @@ onBeforeUnmount(stopPolling)
               >
                 <div class="asset-head">
                   <b>{{ assetText[asset.asset_type] || asset.asset_type }}</b>
-                  <el-tag size="small" :type="statusType[asset.status] || 'info'">{{ statusText[asset.status] || asset.status }}</el-tag>
+                  <div class="asset-status">
+                    <span>{{ assetElapsed(asset) }}</span>
+                    <el-tag size="small" :type="statusType[asset.status] || 'info'">{{ statusText[asset.status] || asset.status }}</el-tag>
+                  </div>
                 </div>
                 <img v-if="asset.url" :src="asset.url" :alt="asset.asset_type" />
                 <div v-else class="asset-empty" :class="{ pending: assetLoading(asset.status) }">
                   <template v-if="assetLoading(asset.status)">
                     <el-icon class="spin"><Loading /></el-icon>
-                    <span>图片生成中</span>
+                    <span>图片生成中 · {{ assetElapsed(asset) }}</span>
                   </template>
                   <template v-else>{{ asset.error || '等待图片生成' }}</template>
                 </div>
@@ -414,6 +440,14 @@ onBeforeUnmount(stopPolling)
   img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 6px; display: block; }
 }
 .asset-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+.asset-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
 .asset-empty { height: 160px; display: grid; place-items: center; color: var(--el-text-color-secondary); background: var(--el-fill-color-lighter); border-radius: 6px; text-align: center; padding: 10px; }
 .asset-empty.pending {
   gap: 8px;

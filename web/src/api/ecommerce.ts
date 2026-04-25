@@ -45,6 +45,8 @@ export interface EcommerceAsset {
   prompt: string
   status: string
   error?: string
+  created_at: string
+  updated_at: string
 }
 
 export interface EcommerceTask {
