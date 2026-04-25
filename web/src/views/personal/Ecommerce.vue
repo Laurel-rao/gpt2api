@@ -65,7 +65,25 @@ const running = computed(() => ['queued', 'running'].includes(activeTask.value?.
 const contentLoading = computed(() => running.value && !output.value?.product_title)
 const assetLoading = (status: string) => ['queued', 'running'].includes(status)
 const runningAssetCount = computed(() => assets.value.filter((a) => assetLoading(a.status) && !a.url).length)
+const doneAssetCount = computed(() => assets.value.filter((a) => a.status === 'success' || a.url).length)
+const totalAssetCount = computed(() => Math.max(assets.value.length, 5))
+const imageProgressText = computed(() => `图片（${Math.min(doneAssetCount.value + runningAssetCount.value, totalAssetCount.value)}/${totalAssetCount.value}）生成中`)
 const taskElapsed = computed(() => activeTask.value ? elapsedText(activeTask.value.created_at, activeTask.value.finished_at, running.value) : '0秒')
+const generationSteps = computed(() => {
+  const status = activeTask.value?.status || ''
+  const hasContent = !!output.value?.product_title
+  const hasAssets = assets.value.length > 0
+  const success = status === 'success'
+  const failed = status === 'failed'
+  const imageDone = totalAssetCount.value > 0 && doneAssetCount.value >= totalAssetCount.value
+  const activeIndex = failed ? -1 : success ? 3 : hasAssets ? 2 : hasContent ? 1 : 0
+  return [
+    { key: 'prompt', label: '提示词分析', done: activeIndex > 0 || success, active: activeIndex === 0 },
+    { key: 'copy', label: '文案生成', done: activeIndex > 1 || success, active: activeIndex === 1 },
+    { key: 'image', label: success || imageDone ? `图片（${doneAssetCount.value}/${totalAssetCount.value}）已生成` : imageProgressText.value, done: imageDone || success, active: activeIndex === 2 },
+    { key: 'done', label: failed ? '生成失败' : '完成', done: success, active: false, failed },
+  ]
+})
 
 async function loadOptions() {
   const d = await getEcommerceOptions()
@@ -397,7 +415,8 @@ function elapsedText(start?: string | null, end?: string | null, live = false) {
 }
 
 function assetElapsed(asset: { created_at?: string; updated_at?: string; status: string }) {
-  return elapsedText(asset.created_at, asset.updated_at, assetLoading(asset.status))
+  const live = assetLoading(asset.status)
+  return elapsedText(asset.created_at, live ? null : asset.updated_at, live)
 }
 
 onMounted(async () => {
@@ -521,9 +540,21 @@ onBeforeUnmount(() => {
               <span>{{ activeTask.task_id }}</span>
               <span>{{ activeTask.prompt_name }} / {{ activeTask.style_name }}</span>
             </div>
-            <div v-if="running" class="inline-loading">
-              <el-icon class="spin"><Loading /></el-icon>
-              <span>{{ runningAssetCount ? `${runningAssetCount} 张图片处理中` : '正在生成电商内容' }}</span>
+            <div v-if="running || activeTask.status === 'success' || activeTask.status === 'failed'" class="generation-steps">
+              <div
+                v-for="(step, index) in generationSteps"
+                :key="step.key"
+                class="generation-step"
+                :class="{ active: step.active, done: step.done, failed: step.failed }"
+              >
+                <span class="step-dot">
+                  <el-icon v-if="step.active" class="spin"><Loading /></el-icon>
+                  <el-icon v-else-if="step.done"><Check /></el-icon>
+                  <el-icon v-else-if="step.failed"><Close /></el-icon>
+                  <span v-else>{{ index + 1 }}</span>
+                </span>
+                <span>{{ step.label }}</span>
+              </div>
             </div>
             <el-alert v-if="activeTask.error" type="error" :closable="false" :title="activeTask.error" />
 
@@ -674,17 +705,41 @@ onBeforeUnmount(() => {
 .history-row.active { color: var(--el-color-primary); }
 .result-card { min-height: calc(100vh - 112px); }
 .result-meta { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; color: var(--el-text-color-secondary); font-size: 13px; }
-.inline-loading {
+.generation-steps { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.generation-step {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-bottom: 12px;
   padding: 7px 10px;
-  border: 1px solid var(--el-color-warning-light-7);
-  border-radius: 6px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 999px;
+  color: var(--el-text-color-secondary);
+  background: var(--el-fill-color-blank);
+  font-size: 13px;
+}
+.generation-step.active {
+  border-color: var(--el-color-warning-light-7);
   color: var(--el-color-warning-dark-2);
   background: var(--el-color-warning-light-9);
-  font-size: 13px;
+}
+.generation-step.done {
+  border-color: var(--el-color-success-light-7);
+  color: var(--el-color-success);
+  background: var(--el-color-success-light-9);
+}
+.generation-step.failed {
+  border-color: var(--el-color-danger-light-7);
+  color: var(--el-color-danger);
+  background: var(--el-color-danger-light-9);
+}
+.step-dot {
+  width: 16px;
+  height: 16px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 11px;
+  line-height: 1;
 }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
