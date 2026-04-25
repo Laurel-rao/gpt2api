@@ -117,6 +117,7 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 	} else {
 		out = parseOutput(rawText, task.Requirement)
 	}
+	normalizeOutput(&out, task.Requirement)
 	outBytes, _ := json.Marshal(out)
 	_ = r.dao.UpdateTaskProgress(ctx, taskID, 35)
 
@@ -530,7 +531,7 @@ func (r *Runner) generateTextByChannel(ctx context.Context, chatModel *modelpkg.
 
 func (r *Runner) buildContentMessages(platform Platform, prompt PromptTemplate, style StyleTemplate, requirement string) []chatgpt.ChatMessage {
 	return []chatgpt.ChatMessage{
-		{Role: "system", Content: "你是资深电商详情页策划。只输出 JSON，不要输出 Markdown。"},
+		{Role: "system", Content: "你是资深电商详情页策划。先解析统一商品信息和价格信息，再生成页面文案与图片文字计划。只输出 JSON，不要输出 Markdown。"},
 		{Role: "user", Content: r.buildContentPrompt(platform, prompt, style, requirement)},
 	}
 }
@@ -597,6 +598,23 @@ func (r *Runner) buildContentPrompt(platform Platform, prompt PromptTemplate, st
   "product_title": "商品标题",
   "description": "商品描述",
   "price_copy": "价格/促销文案",
+  "product_info": {
+    "category": "商品品类",
+    "canonical_title": "统一商品全称，所有图片必须一致",
+    "short_title": "统一短标题，适合图片展示",
+    "core_value": "一句话核心价值",
+    "key_specs": ["规格/材质/型号/容量等事实信息"],
+    "selling_points": ["统一卖点1", "统一卖点2", "统一卖点3"],
+    "target_audience": "目标用户"
+  },
+  "price_info": {
+    "currency": "CNY/USD 等币种",
+    "sale_price": "用户明确提供的成交价，未提供则留空",
+    "original_price": "用户明确提供的原价，未提供则留空",
+    "price_text": "图片和页面统一展示的价格文字；未提供明确数字时不得编造数字价格",
+    "promotion_text": "统一促销权益",
+    "cta": "统一行动号召"
+  },
   "marketing_copy": ["营销短句1", "营销短句2", "营销短句3"],
   "detail_sections": [{"title": "模块标题", "body": "模块正文"}],
   "platform_fields": {"title": "平台标题", "description": "平台描述"},
@@ -606,8 +624,22 @@ func (r *Runner) buildContentPrompt(platform Platform, prompt PromptTemplate, st
     "white_image": {"size": "1024x1024", "aspect_ratio": "1:1", "clarity": "high"},
     "detail_image": {"size": "1024x1536", "aspect_ratio": "2:3", "clarity": "high"},
     "price_image": {"size": "1024x1024", "aspect_ratio": "1:1", "clarity": "high"}
+  },
+  "image_text_plans": {
+    "title_image": {"title": "只使用统一标题", "subtitle": "只使用统一核心价值", "price_text": "只使用统一价格文字", "promotion_text": "只使用统一促销文字", "cta": "只使用统一行动号召", "badges": ["标签"], "selling_points": ["卖点"], "specs": ["规格"], "notes": ["图片文字约束"]},
+    "main_image": {"title": "只使用统一标题", "subtitle": "只使用统一核心价值", "price_text": "只使用统一价格文字", "promotion_text": "只使用统一促销文字", "cta": "只使用统一行动号召", "badges": ["标签"], "selling_points": ["卖点"], "specs": ["规格"], "notes": ["图片文字约束"]},
+    "white_image": {"title": "", "subtitle": "", "price_text": "", "promotion_text": "", "cta": "", "badges": [], "selling_points": [], "specs": [], "notes": ["白底图不放任何文字、价格、促销标签或图标"]},
+    "detail_image": {"title": "只使用统一标题", "subtitle": "只使用统一核心价值", "price_text": "只使用统一价格文字", "promotion_text": "只使用统一促销文字", "cta": "只使用统一行动号召", "badges": ["标签"], "selling_points": ["卖点"], "specs": ["规格"], "notes": ["图片文字约束"]},
+    "price_image": {"title": "只使用统一标题", "subtitle": "只使用统一核心价值", "price_text": "只使用统一价格文字", "promotion_text": "只使用统一促销文字", "cta": "只使用统一行动号召", "badges": ["标签"], "selling_points": ["卖点"], "specs": ["规格"], "notes": ["图片文字约束"]}
   }
-}`
+}
+
+一致性规则：
+1. 先从商品需求中解析商品品类、标题、规格、卖点、价格、促销和行动号召，再生成详情页文案。
+2. 用户提供了价格、折扣、型号、规格时，必须逐字保留；用户没有提供明确数字价格时，sale_price/original_price 留空，price_text 使用非数字促销文案。
+3. 所有图片的 image_text_plans 必须复用同一份 product_info 和 price_info，不得为不同图片编造不同价格、标题、型号或规格。
+4. 白底图 image_text_plans 必须为空文字，只保留无文字备注。
+5. 商品标题和价格在 JSON 内只允许出现一个统一版本。`
 	return renderTemplate(tpl, renderData{Requirement: requirement, Platform: platform, Prompt: prompt, Style: style})
 }
 
@@ -627,6 +659,8 @@ func (r *Runner) buildImagePrompt(platform Platform, prompt PromptTemplate, styl
 商品标题：{{.Output.ProductTitle}}
 描述：{{.Output.Description}}
 原始需求：{{.Requirement}}
+统一商品信息：
+{{.UnifiedInfo}}
 图片参数：尺寸 ` + spec.Size + `，长宽比 ` + spec.AspectRatio + `，清晰度 ` + spec.Clarity + `
 形态保真：必须严格保持原始需求和参考图中的商品品类、结构、可折叠/可收纳/便携等关键形态；如有参考图，以参考图商品外观、比例、颜色、部件和结构为最高优先级；不得改成同类普通款、传统款或不可收纳形态；例如可折叠/可收纳钢琴必须是便携折叠电子琴/键盘类商品，不得生成传统立式钢琴、三角钢琴、柜式电钢琴或固定琴架款。
 严格要求：纯白或接近纯白背景；无标题、无卖点文字、无价格、无促销标签、无图标、无贴纸、无边框、无水印、无品牌标志、无场景道具、无人物手部；商品真实、清晰、完整、单独呈现。`
@@ -634,6 +668,7 @@ func (r *Runner) buildImagePrompt(platform Platform, prompt PromptTemplate, styl
 			Requirement: requirement,
 			Platform:    platform,
 			Output:      out,
+			UnifiedInfo: formatUnifiedInfo(out),
 		})
 	}
 	src := `{{.Prompt.ImagePrompt}}
@@ -645,15 +680,21 @@ func (r *Runner) buildImagePrompt(platform Platform, prompt PromptTemplate, styl
 描述：{{.Output.Description}}
 价格文案：{{.Output.PriceCopy}}
 原始需求：{{.Requirement}}
+统一商品信息：
+{{.UnifiedInfo}}
+本图允许出现的文字：
+{{.ImageTextPlan}}
 图片参数：尺寸 ` + spec.Size + `，长宽比 ` + spec.AspectRatio + `，清晰度 ` + spec.Clarity + `
-要求：中文文字清晰可读，商业电商设计，避免虚假品牌标志。`
+一致性要求：所有标题、价格、原价、促销、规格、型号必须严格使用“统一商品信息”和“本图允许出现的文字”；不得新增、替换、改写任何数字价格、折扣、标题、型号或规格；没有价格数字时不得编造价格数字；中文文字清晰可读，商业电商设计，避免虚假品牌标志。`
 	return renderTemplate(src, renderData{
-		Requirement: requirement,
-		Platform:    platform,
-		Prompt:      prompt,
-		Style:       style,
-		Output:      out,
-		AssetType:   assetType,
+		Requirement:   requirement,
+		Platform:      platform,
+		Prompt:        prompt,
+		Style:         style,
+		Output:        out,
+		AssetType:     assetType,
+		UnifiedInfo:   formatUnifiedInfo(out),
+		ImageTextPlan: formatImageTextPlan(out.ImageTextPlans[assetType]),
 	})
 }
 

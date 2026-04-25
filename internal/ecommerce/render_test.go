@@ -60,6 +60,71 @@ func TestBuildHTML(t *testing.T) {
 	}
 }
 
+func TestNormalizeOutputBuildsConsistentImagePlans(t *testing.T) {
+	out := Output{
+		ProductTitle: "800可收纳钢琴",
+		Description:  "可折叠便携电子琴",
+		PriceCopy:    "限时到手价 2399",
+		ProductInfo: ProductInfo{
+			CanonicalTitle: "800可收纳钢琴",
+			ShortTitle:     "800可收纳钢琴",
+			KeySpecs:       []string{"可折叠", "便携收纳"},
+			SellingPoints:  []string{"节省空间"},
+		},
+		PriceInfo: PriceInfo{
+			Currency:  "CNY",
+			SalePrice: "2399",
+			PriceText: "到手价 2399",
+			CTA:       "立即购买",
+		},
+		ImageTextPlans: map[string]ImageTextPlan{
+			AssetTitle: {Title: "其他标题", PriceText: "1299"},
+			AssetPrice: {Title: "其他标题", PriceText: "1299"},
+		},
+	}
+	normalizeOutput(&out, "800 的可收纳钢琴，价格 2399")
+	if out.ImageTextPlans[AssetPrice].PriceText != "到手价 2399" {
+		t.Fatalf("price plan mismatch: %+v", out.ImageTextPlans[AssetPrice])
+	}
+	if out.ImageTextPlans[AssetTitle].Title != "800可收纳钢琴" || out.ImageTextPlans[AssetTitle].PriceText != "到手价 2399" {
+		t.Fatalf("title image plan should be unified: %+v", out.ImageTextPlans[AssetTitle])
+	}
+	if out.ImageTextPlans[AssetWhite].PriceText != "" || len(out.ImageTextPlans[AssetWhite].SellingPoints) != 0 {
+		t.Fatalf("white image should not contain text plan: %+v", out.ImageTextPlans[AssetWhite])
+	}
+}
+
+func TestBuildImagePromptUsesUnifiedPrice(t *testing.T) {
+	out := Output{
+		ProductTitle: "800可收纳钢琴",
+		Description:  "可折叠便携电子琴",
+		PriceCopy:    "限时到手价 2399",
+		ProductInfo: ProductInfo{
+			CanonicalTitle: "800可收纳钢琴",
+			ShortTitle:     "800可收纳钢琴",
+		},
+		PriceInfo: PriceInfo{
+			PriceText: "到手价 2399",
+			CTA:       "立即购买",
+		},
+	}
+	normalizeOutput(&out, "800 的可收纳钢琴，价格 2399")
+	r := NewRunner(nil, nil, nil, nil, nil, nil, nil, 1)
+	prompt := r.buildImagePrompt(
+		Platform{Name: "抖音电商"},
+		PromptTemplate{ImagePrompt: "促销图"},
+		StyleTemplate{StylePrompt: "红白风格"},
+		out,
+		"800 的可收纳钢琴，价格 2399",
+		AssetPrice,
+	)
+	for _, want := range []string{"统一商品信息", "本图允许出现的文字", "到手价 2399", "不得新增、替换、改写任何数字价格"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q: %s", want, prompt)
+		}
+	}
+}
+
 func TestRunnerImageConcurrencyDefault(t *testing.T) {
 	r := NewRunner(nil, nil, nil, nil, nil, nil, nil, 0)
 	if r.imageConcurrency != 1 {

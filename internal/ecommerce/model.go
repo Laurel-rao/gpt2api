@@ -105,14 +105,36 @@ type Asset struct {
 }
 
 type Output struct {
-	ShopTitle      string               `json:"shop_title"`
-	ProductTitle   string               `json:"product_title"`
-	Description    string               `json:"description"`
-	PriceCopy      string               `json:"price_copy"`
-	MarketingCopy  []string             `json:"marketing_copy"`
-	DetailSections []DetailSection      `json:"detail_sections"`
-	PlatformFields map[string]string    `json:"platform_fields"`
-	ImageSpecs     map[string]ImageSpec `json:"image_specs"`
+	ShopTitle      string                   `json:"shop_title"`
+	ProductTitle   string                   `json:"product_title"`
+	Description    string                   `json:"description"`
+	PriceCopy      string                   `json:"price_copy"`
+	ProductInfo    ProductInfo              `json:"product_info"`
+	PriceInfo      PriceInfo                `json:"price_info"`
+	MarketingCopy  []string                 `json:"marketing_copy"`
+	DetailSections []DetailSection          `json:"detail_sections"`
+	PlatformFields map[string]string        `json:"platform_fields"`
+	ImageSpecs     map[string]ImageSpec     `json:"image_specs"`
+	ImageTextPlans map[string]ImageTextPlan `json:"image_text_plans"`
+}
+
+type ProductInfo struct {
+	Category       string   `json:"category"`
+	CanonicalTitle string   `json:"canonical_title"`
+	ShortTitle     string   `json:"short_title"`
+	CoreValue      string   `json:"core_value"`
+	KeySpecs       []string `json:"key_specs"`
+	SellingPoints  []string `json:"selling_points"`
+	TargetAudience string   `json:"target_audience"`
+}
+
+type PriceInfo struct {
+	Currency      string `json:"currency"`
+	SalePrice     string `json:"sale_price"`
+	OriginalPrice string `json:"original_price"`
+	PriceText     string `json:"price_text"`
+	PromotionText string `json:"promotion_text"`
+	CTA           string `json:"cta"`
 }
 
 type DetailSection struct {
@@ -124,6 +146,18 @@ type ImageSpec struct {
 	Size        string `json:"size"`
 	AspectRatio string `json:"aspect_ratio"`
 	Clarity     string `json:"clarity"`
+}
+
+type ImageTextPlan struct {
+	Title         string   `json:"title"`
+	Subtitle      string   `json:"subtitle"`
+	PriceText     string   `json:"price_text"`
+	PromotionText string   `json:"promotion_text"`
+	CTA           string   `json:"cta"`
+	Badges        []string `json:"badges"`
+	SellingPoints []string `json:"selling_points"`
+	Specs         []string `json:"specs"`
+	Notes         []string `json:"notes"`
 }
 
 func NewTaskID() string { return "ecm_" + uuid.NewString() }
