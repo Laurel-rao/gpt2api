@@ -230,6 +230,14 @@ func (d *DAO) UpdateTaskProgress(ctx context.Context, taskID string, progress in
 	return err
 }
 
+func (d *DAO) UpdateTaskDraft(ctx context.Context, taskID string, progress int, output json.RawMessage, html string) error {
+	_, err := d.db.ExecContext(ctx, `
+UPDATE ecommerce_tasks
+   SET progress=?, output_json=?, output_html=?
+ WHERE task_id=? AND status<>'canceled'`, progress, nullJSON(output), html, taskID)
+	return err
+}
+
 func (d *DAO) MarkTaskRetrying(ctx context.Context, taskID string) error {
 	_, err := d.db.ExecContext(ctx, `UPDATE ecommerce_tasks SET status='running', error='', finished_at=NULL WHERE task_id=? AND status<>'canceled'`, taskID)
 	return err
@@ -282,15 +290,21 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, a.TaskID, a.AssetType, a.ImageTaskID, a.URL, a
 func (d *DAO) UpdateAssetResult(ctx context.Context, id uint64, status, imageTaskID, url, fileID, errMsg string) error {
 	res, err := d.db.ExecContext(ctx, `
 UPDATE ecommerce_assets
-   SET status=?, image_task_id=?, url=?, file_id=?, error=?
- WHERE id=? AND status<>'canceled'`, status, imageTaskID, url, fileID, truncate(errMsg, 500), id)
+   SET status=?, image_task_id=?, url=?, file_id=?, error=?,
+       started_at=CASE
+         WHEN ?='running' THEN COALESCE(started_at, NOW())
+         WHEN ?='success' THEN COALESCE(started_at, NOW())
+         ELSE started_at
+       END,
+       finished_at=CASE WHEN ? IN ('success','failed') THEN NOW() ELSE NULL END
+ WHERE id=? AND status<>'canceled'`, status, imageTaskID, url, fileID, truncate(errMsg, 500), status, status, status, id)
 	return checkRows(res, err)
 }
 
 func (d *DAO) GetAsset(ctx context.Context, id uint64) (*Asset, error) {
 	var a Asset
 	err := d.db.GetContext(ctx, &a, `
-SELECT id, task_id, asset_type, image_task_id, url, file_id, prompt, status, error, created_at, updated_at
+SELECT id, task_id, asset_type, image_task_id, url, file_id, prompt, status, error, created_at, started_at, finished_at, updated_at
   FROM ecommerce_assets
  WHERE id=?`, id)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -302,7 +316,7 @@ SELECT id, task_id, asset_type, image_task_id, url, file_id, prompt, status, err
 func (d *DAO) MarkAssetRetrying(ctx context.Context, id uint64, imageTaskID, prompt string) error {
 	res, err := d.db.ExecContext(ctx, `
 UPDATE ecommerce_assets
-   SET status='running', image_task_id=?, url='', file_id='', prompt=?, error=''
+   SET status='running', image_task_id=?, url='', file_id='', prompt=?, error='', started_at=NOW(), finished_at=NULL
  WHERE id=? AND status<>'canceled'`, imageTaskID, prompt, id)
 	return checkRows(res, err)
 }
@@ -310,7 +324,7 @@ UPDATE ecommerce_assets
 func (d *DAO) MarkTaskAssetsCanceled(ctx context.Context, taskID string) error {
 	_, err := d.db.ExecContext(ctx, `
 UPDATE ecommerce_assets
-   SET status='canceled', error='用户已中断生成'
+   SET status='canceled', error='用户已中断生成', finished_at=CASE WHEN started_at IS NULL THEN finished_at ELSE NOW() END
  WHERE task_id=? AND status IN ('queued','running')`, taskID)
 	return err
 }
@@ -318,7 +332,7 @@ UPDATE ecommerce_assets
 func (d *DAO) ListAssets(ctx context.Context, taskID string) ([]Asset, error) {
 	var out []Asset
 	err := d.db.SelectContext(ctx, &out, `
-SELECT id, task_id, asset_type, image_task_id, url, file_id, prompt, status, error, created_at, updated_at
+SELECT id, task_id, asset_type, image_task_id, url, file_id, prompt, status, error, created_at, started_at, finished_at, updated_at
   FROM ecommerce_assets
  WHERE task_id=?
  ORDER BY id ASC`, taskID)

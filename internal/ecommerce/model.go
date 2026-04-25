@@ -93,17 +93,19 @@ type TaskRow struct {
 }
 
 type Asset struct {
-	ID          uint64    `db:"id" json:"id"`
-	TaskID      string    `db:"task_id" json:"task_id"`
-	AssetType   string    `db:"asset_type" json:"asset_type"`
-	ImageTaskID string    `db:"image_task_id" json:"image_task_id"`
-	URL         string    `db:"url" json:"url"`
-	FileID      string    `db:"file_id" json:"file_id"`
-	Prompt      string    `db:"prompt" json:"prompt"`
-	Status      string    `db:"status" json:"status"`
-	Error       string    `db:"error,omitempty" json:"error,omitempty"`
-	CreatedAt   time.Time `db:"created_at" json:"created_at"`
-	UpdatedAt   time.Time `db:"updated_at" json:"updated_at"`
+	ID          uint64     `db:"id" json:"id"`
+	TaskID      string     `db:"task_id" json:"task_id"`
+	AssetType   string     `db:"asset_type" json:"asset_type"`
+	ImageTaskID string     `db:"image_task_id" json:"image_task_id"`
+	URL         string     `db:"url" json:"url"`
+	FileID      string     `db:"file_id" json:"file_id"`
+	Prompt      string     `db:"prompt" json:"prompt"`
+	Status      string     `db:"status" json:"status"`
+	Error       string     `db:"error,omitempty" json:"error,omitempty"`
+	CreatedAt   time.Time  `db:"created_at" json:"created_at"`
+	StartedAt   *time.Time `db:"started_at" json:"started_at,omitempty"`
+	FinishedAt  *time.Time `db:"finished_at" json:"finished_at,omitempty"`
+	UpdatedAt   time.Time  `db:"updated_at" json:"updated_at"`
 }
 
 type Output struct {

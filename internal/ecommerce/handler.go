@@ -311,7 +311,12 @@ func (h *Handler) taskViewFromRow(ctx context.Context, row *TaskRow, includeRefs
 
 func refreshAssetProxyURLs(assets []Asset) {
 	for i := range assets {
-		if assets[i].ImageTaskID == "" {
+		if assets[i].Status != StatusSuccess || assets[i].ImageTaskID == "" {
+			assets[i].URL = ""
+			continue
+		}
+		if assets[i].FileID == "" && assets[i].URL == "" {
+			assets[i].URL = ""
 			continue
 		}
 		assets[i].URL = imgpkg.BuildProxyURL(assets[i].ImageTaskID, 0, 0)

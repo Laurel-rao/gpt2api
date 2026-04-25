@@ -176,7 +176,7 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 	}
 	normalizeOutput(&out, task.Requirement)
 	outBytes, _ := json.Marshal(out)
-	_ = r.dao.UpdateTaskProgress(ctx, taskID, 35)
+	_ = r.dao.UpdateTaskDraft(ctx, taskID, 35, outBytes, buildHTML(out, nil))
 
 	refs, err := decodeReferenceInputs(ctx, task.ReferenceImages.RawMessage())
 	if err != nil {
@@ -186,10 +186,15 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 	if err != nil {
 		return err
 	}
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var completed int
-	assetErrors := make([]string, 0)
+	type assetJob struct {
+		id        uint64
+		assetTyp  string
+		imgTaskID string
+		prompt    string
+		spec      ImageSpec
+	}
+	jobs := make([]assetJob, 0, len(assetTypes))
+	var whiteJob assetJob
 	for _, assetType := range assetTypes {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -212,66 +217,106 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 				Status:  imgpkg.StatusDispatched,
 			})
 		}
-		wg.Add(1)
-		go func(assetID uint64, assetType, imgTaskID, assetPrompt string) {
-			defer wg.Done()
-			release, err := r.acquireImageSlot(ctx)
-			if err != nil {
-				errCode := err.Error()
-				_ = r.dao.UpdateAssetResult(context.Background(), assetID, StatusFailed, imgTaskID, "", "", errCode)
-				mu.Lock()
-				assetErrors = append(assetErrors, fmt.Sprintf("%s:%s", assetType, errCode))
-				completed++
-				progress := 35 + completed*10
-				mu.Unlock()
-				_ = r.dao.UpdateTaskProgress(context.Background(), taskID, progress)
-				return
-			}
-			defer release()
-			_ = r.dao.UpdateAssetResult(context.Background(), assetID, StatusRunning, imgTaskID, "", "", "")
-			res := r.imageRun.Run(ctx, imgpkg.RunOptions{
-				TaskID:        imgTaskID,
-				UserID:        task.UserID,
-				ModelID:       imageModel.ID,
-				UpstreamModel: imageModel.UpstreamModelSlug,
-				Prompt:        assetPrompt,
-				N:             1,
-				Size:          spec.Size,
-				MaxAttempts:   1,
-				References:    refs,
-			})
-			if res.Status != imgpkg.StatusSuccess {
-				errCode := res.ErrorCode
-				if errCode == "" {
-					errCode = res.ErrorMessage
-				}
-				if errCode == "" {
-					errCode = "unknown"
-				}
-				_ = r.dao.UpdateAssetResult(context.Background(), assetID, StatusFailed, imgTaskID, "", "", errCode)
-				mu.Lock()
-				assetErrors = append(assetErrors, fmt.Sprintf("%s:%s", assetType, errCode))
-				completed++
-				progress := 35 + completed*10
-				mu.Unlock()
-				_ = r.dao.UpdateTaskProgress(context.Background(), taskID, progress)
-				return
-			}
-			url := ""
-			fileID := ""
-			if len(res.SignedURLs) > 0 {
-				url = imgpkg.BuildProxyURL(imgTaskID, 0, 24*time.Hour)
-			}
-			if len(res.FileIDs) > 0 {
-				fileID = strings.TrimPrefix(res.FileIDs[0], "sed:")
-			}
-			_ = r.dao.UpdateAssetResult(context.Background(), assetID, StatusSuccess, imgTaskID, url, fileID, "")
+		job := assetJob{id: asset.ID, assetTyp: assetType, imgTaskID: imgTaskID, prompt: assetPrompt, spec: spec}
+		jobs = append(jobs, job)
+		if assetType == AssetWhite {
+			whiteJob = job
+		}
+	}
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var completed int
+	assetErrors := make([]string, 0)
+	runAsset := func(job assetJob, refImages []imgpkg.ReferenceImage) *imgpkg.RunResult {
+		release, err := r.acquireImageSlot(ctx)
+		if err != nil {
+			errCode := err.Error()
+			_ = r.dao.UpdateAssetResult(context.Background(), job.id, StatusFailed, job.imgTaskID, "", "", errCode)
 			mu.Lock()
+			assetErrors = append(assetErrors, fmt.Sprintf("%s:%s", job.assetTyp, errCode))
 			completed++
 			progress := 35 + completed*10
 			mu.Unlock()
 			_ = r.dao.UpdateTaskProgress(context.Background(), taskID, progress)
-		}(asset.ID, assetType, imgTaskID, assetPrompt)
+			return &imgpkg.RunResult{Status: imgpkg.StatusFailed, ErrorCode: errCode}
+		}
+		defer release()
+		_ = r.dao.UpdateAssetResult(context.Background(), job.id, StatusRunning, job.imgTaskID, "", "", "")
+		res := r.imageRun.Run(ctx, imgpkg.RunOptions{
+			TaskID:        job.imgTaskID,
+			UserID:        task.UserID,
+			ModelID:       imageModel.ID,
+			UpstreamModel: imageModel.UpstreamModelSlug,
+			Prompt:        job.prompt,
+			N:             1,
+			Size:          job.spec.Size,
+			MaxAttempts:   1,
+			References:    refImages,
+		})
+		if res.Status != imgpkg.StatusSuccess {
+			errCode := res.ErrorCode
+			if errCode == "" {
+				errCode = res.ErrorMessage
+			}
+			if errCode == "" {
+				errCode = "unknown"
+			}
+			_ = r.dao.UpdateAssetResult(context.Background(), job.id, StatusFailed, job.imgTaskID, "", "", errCode)
+			mu.Lock()
+			assetErrors = append(assetErrors, fmt.Sprintf("%s:%s", job.assetTyp, errCode))
+			completed++
+			progress := 35 + completed*10
+			mu.Unlock()
+			_ = r.dao.UpdateTaskProgress(context.Background(), taskID, progress)
+			return res
+		}
+		url := ""
+		fileID := ""
+		if len(res.SignedURLs) > 0 {
+			url = imgpkg.BuildProxyURL(job.imgTaskID, 0, 24*time.Hour)
+		}
+		if len(res.FileIDs) > 0 {
+			fileID = strings.TrimPrefix(res.FileIDs[0], "sed:")
+		}
+		_ = r.dao.UpdateAssetResult(context.Background(), job.id, StatusSuccess, job.imgTaskID, url, fileID, "")
+		mu.Lock()
+		completed++
+		progress := 35 + completed*10
+		mu.Unlock()
+		_ = r.dao.UpdateTaskProgress(context.Background(), taskID, progress)
+		return res
+	}
+
+	whiteRes := runAsset(whiteJob, refs)
+	whiteRefs, whiteRefErr := whiteReferenceFromResult(ctx, whiteRes)
+	if whiteRes.Status != imgpkg.StatusSuccess || whiteRefErr != nil {
+		errCode := "white_reference_failed"
+		if whiteRefErr != nil {
+			errCode = whiteRefErr.Error()
+		}
+		if whiteRes.Status == imgpkg.StatusSuccess {
+			assetErrors = append(assetErrors, "white_reference:"+errCode)
+		}
+		for _, job := range jobs {
+			if job.assetTyp == AssetWhite {
+				continue
+			}
+			_ = r.dao.UpdateAssetResult(context.Background(), job.id, StatusFailed, job.imgTaskID, "", "", errCode)
+			completed++
+			_ = r.dao.UpdateTaskProgress(context.Background(), taskID, 35+completed*10)
+		}
+	} else {
+		for _, job := range jobs {
+			if job.assetTyp == AssetWhite {
+				continue
+			}
+			wg.Add(1)
+			go func(job assetJob) {
+				defer wg.Done()
+				_ = runAsset(job, whiteRefs)
+			}(job)
+		}
 	}
 	wg.Wait()
 	dbCtx := context.Background()
@@ -364,7 +409,7 @@ func (r *Runner) RetryAsset(ctx context.Context, taskID string, assetID uint64) 
 		N:             1,
 		Size:          spec.Size,
 		MaxAttempts:   1,
-		References:    refs,
+		References:    referencesForAsset(asset.AssetType, refs),
 	})
 	if res.Status != imgpkg.StatusSuccess {
 		errCode := imageErrorCode(res)
@@ -759,6 +804,7 @@ func (r *Runner) buildImagePrompt(platform Platform, prompt PromptTemplate, styl
 		AssetDetail: "详情页长图模块，展示卖点、场景和参数",
 		AssetPrice:  "价格促销图，突出优惠和行动号召",
 	}[assetType]
+	composition := assetCompositionCN(assetType)
 	spec := out.ImageSpecs[assetType]
 	if assetType == AssetWhite {
 		src := `平台：{{.Platform.Name}}
@@ -770,6 +816,7 @@ func (r *Runner) buildImagePrompt(platform Platform, prompt PromptTemplate, styl
 统一商品信息：
 {{.UnifiedInfo}}
 图片参数：尺寸 ` + spec.Size + `，长宽比 ` + spec.AspectRatio + `，清晰度 ` + spec.Clarity + `
+构图要求：` + composition + `
 形态保真：必须严格保持原始需求和参考图中的商品品类、结构、可折叠/可收纳/便携等关键形态；如有参考图，以参考图商品外观、比例、颜色、部件和结构为最高优先级；不得改成同类普通款、传统款或不可收纳形态；例如可折叠/可收纳钢琴必须是便携折叠电子琴/键盘类商品，不得生成传统立式钢琴、三角钢琴、柜式电钢琴或固定琴架款。
 严格要求：纯白或接近纯白背景；无标题、无卖点文字、无价格、无促销标签、无图标、无贴纸、无边框、无水印、无品牌标志、无场景道具、无人物手部；商品真实、清晰、完整、单独呈现。`
 		return renderTemplate(src, renderData{
@@ -796,6 +843,8 @@ func (r *Runner) buildImagePrompt(platform Platform, prompt PromptTemplate, styl
 本图允许出现的文字：
 {{.ImageTextPlan}}
 图片参数：尺寸 ` + spec.Size + `，长宽比 ` + spec.AspectRatio + `，清晰度 ` + spec.Clarity + `
+构图要求：` + composition + `
+参考图规则：参考图只用于识别商品外观，不得照搬参考图的背景、角度、裁切和光影；本图必须按当前图片类型重新设计版式，与白底图和其他资产明显不同。
 语言要求：{{.LanguageRule}}
 一致性要求：所有标题、价格、原价、促销、规格、型号必须严格使用“统一商品信息”和“本图允许出现的文字”；不得新增、替换、改写任何数字价格、折扣、标题、型号或规格；没有价格数字时不得编造价格数字；中文文字清晰可读，商业电商设计，避免虚假品牌标志。`
 	return renderTemplate(src, renderData{
@@ -821,6 +870,7 @@ func (r *Runner) buildEnglishImagePrompt(platform Platform, prompt PromptTemplat
 		AssetDetail: "detail-page module image showing selling points, scenes and specs",
 		AssetPrice:  "price promotion image highlighting the offer and call to action",
 	}[assetType]
+	composition := assetCompositionEN(assetType)
 	spec := out.ImageSpecs[assetType]
 	data := newRenderData(requirement, platform, prompt, style, out)
 	data.AssetType = assetType
@@ -836,6 +886,7 @@ Original requirement: {{.Requirement}}
 Unified product information:
 {{.UnifiedInfo}}
 Image parameters: size ` + spec.Size + `, aspect ratio ` + spec.AspectRatio + `, clarity ` + spec.Clarity + `
+Composition requirement: ` + composition + `
 Language requirement: {{.LanguageRule}}
 Shape fidelity: strictly preserve the product category, structure, foldable/portable/storage features and other key forms from the original requirement and reference images. If reference images are provided, their product appearance, proportions, colors, parts and structure have highest priority.
 Strict requirements: pure white or near-white background; no title, no selling-point text, no price, no promotion tag, no icon, no sticker, no border, no watermark, no brand logo, no scene props, no hands or people; realistic, clear, complete, standalone product.`
@@ -857,6 +908,8 @@ Unified product information:
 Allowed visible text for this image:
 {{.ImageTextPlan}}
 Image parameters: size ` + spec.Size + `, aspect ratio ` + spec.AspectRatio + `, clarity ` + spec.Clarity + `
+Composition requirement: ` + composition + `
+Reference rule: reference images are only for recognizing product appearance; do not copy their background, angle, crop or lighting. Redesign the layout for this asset type and make it visibly different from the white-background image and other assets.
 Language requirement: {{.LanguageRule}}
 Consistency requirements: every title, price, original price, promotion, spec and model must strictly use Unified product information and Allowed visible text. Do not add, replace or rewrite numeric prices, discounts, titles, models or specs. If no numeric price is provided, do not invent a numeric price. Visible text must be clear English. Use commercial ecommerce design and avoid fake brand logos.`
 	return renderTemplate(src, data)
@@ -873,6 +926,62 @@ func (r *Runner) firstModel(ctx context.Context, modelType string) (*modelpkg.Mo
 		}
 	}
 	return nil, fmt.Errorf("未配置可用的 %s 模型", modelType)
+}
+
+func assetCompositionCN(assetType string) string {
+	switch assetType {
+	case AssetTitle:
+		return "横版品牌海报，商品放在画面右侧或左侧三分之一，留出大标题和核心卖点区，必须有明确营销版式。"
+	case AssetMain:
+		return "商品主图，单一主视觉，使用干净渐变或平台友好背景，展示商品使用氛围，但不要与白底图同角度同裁切。"
+	case AssetWhite:
+		return "标准白底商品图，居中、完整、无文字，只保留商品本体。"
+	case AssetDetail:
+		return "竖版详情模块，分区展示卖点、参数和场景，可使用信息卡片、局部特写和图文排版。"
+	case AssetPrice:
+		return "竖版促销图，突出价格、优惠、CTA 和购买理由，使用强视觉层级，不做纯产品白底图。"
+	default:
+		return "按当前图片类型设计独立构图，避免与其他资产重复。"
+	}
+}
+
+func assetCompositionEN(assetType string) string {
+	switch assetType {
+	case AssetTitle:
+		return "horizontal brand poster; place the product on the left or right third, reserve space for a large headline and key value, with a clear marketing layout."
+	case AssetMain:
+		return "main product visual with a clean gradient or platform-safe background and usage atmosphere; do not reuse the white-background angle or crop."
+	case AssetWhite:
+		return "standard white-background product image, centered, complete, no text, product only."
+	case AssetDetail:
+		return "vertical detail module with sections for selling points, specs and scenes; use info cards, close-ups and editorial layout."
+	case AssetPrice:
+		return "vertical promotion image emphasizing price, discount, CTA and purchase reasons with strong visual hierarchy; not a plain product cutout."
+	default:
+		return "design an independent composition for this asset type and avoid repeating other assets."
+	}
+}
+
+func referencesForAsset(assetType string, refs []imgpkg.ReferenceImage) []imgpkg.ReferenceImage {
+	// 所有图片都使用参考图锁定商品外观，差异化交给每类 asset 的构图规则控制。
+	return refs
+}
+
+func whiteReferenceFromResult(ctx context.Context, res *imgpkg.RunResult) ([]imgpkg.ReferenceImage, error) {
+	if res == nil || res.Status != imgpkg.StatusSuccess {
+		return nil, errors.New("白底图未生成成功")
+	}
+	if len(res.SignedURLs) == 0 || strings.TrimSpace(res.SignedURLs[0]) == "" {
+		return nil, errors.New("白底图缺少下载地址")
+	}
+	data, name, err := fetchReferenceBytes(ctx, res.SignedURLs[0])
+	if err != nil {
+		return nil, fmt.Errorf("读取白底图参考失败:%w", err)
+	}
+	if strings.TrimSpace(name) == "" {
+		name = "white-reference.png"
+	}
+	return []imgpkg.ReferenceImage{{Data: data, FileName: name}}, nil
 }
 
 func decodeReferenceInputs(ctx context.Context, raw json.RawMessage) ([]imgpkg.ReferenceImage, error) {
