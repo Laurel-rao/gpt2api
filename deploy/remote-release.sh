@@ -21,6 +21,7 @@ RESTORE_DB=0
 FORCE_BUILD=0
 
 BUNDLE_ITEMS=(
+  ".dockerignore"
   "deploy/bin/gpt2api"
   "deploy/bin/goose"
   "deploy/Dockerfile"
@@ -173,7 +174,7 @@ make_bundle() {
   local release_id="$1"
   local bundle_file="$2"
   assert_local_artifacts
-  COPYFILE_DISABLE=1 tar -C "$ROOT" -czf "$bundle_file" "${BUNDLE_ITEMS[@]}"
+  COPYFILE_DISABLE=1 tar -C "$ROOT" -cf - "${BUNDLE_ITEMS[@]}" | gzip -1 > "$bundle_file"
   log "已打包发布包: $bundle_file"
 }
 
@@ -277,25 +278,45 @@ META_FILE="$META_DIR/$RELEASE_ID.env"
 CREATED_AT="$(date '+%F %T %Z')"
 SOURCE_REF="${SOURCE_BRANCH}@${SOURCE_COMMIT}"
 
+checksum_server_inputs() {
+  cd "$REMOTE_DIR"
+  {
+    for path in .dockerignore deploy/Dockerfile deploy/entrypoint.sh deploy/bin configs sql; do
+      [ -e "$path" ] || continue
+      if [ -d "$path" ]; then
+        find "$path" -type f -print0
+      else
+        printf '%s\0' "$path"
+      fi
+    done
+  } | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}'
+}
+
+NGINX_CONF_BEFORE=""
+SERVER_BUILD_BEFORE="$(checksum_server_inputs || true)"
+[ -f "$REMOTE_DIR/deploy/nginx.conf" ] && NGINX_CONF_BEFORE="$(sha256sum "$REMOTE_DIR/deploy/nginx.conf" | awk '{print $1}')"
+
 cleanup_remote_bundle() {
   rm -f "$REMOTE_BUNDLE"
 }
 trap cleanup_remote_bundle EXIT
 
 backup_runtime() {
+  local backup_items=(
+    deploy/.env
+    deploy/Dockerfile
+    deploy/docker-compose.yml
+    deploy/entrypoint.sh
+    deploy/nginx.conf
+    deploy/bin
+    configs
+    sql
+    web/dist
+  )
   mkdir -p "$APP_DIR" "$DB_DIR" "$META_DIR"
   cd "$REMOTE_DIR"
-  tar -czf "$APP_BACKUP" \
-    --ignore-failed-read \
-    deploy/.env \
-    deploy/Dockerfile \
-    deploy/docker-compose.yml \
-    deploy/entrypoint.sh \
-    deploy/nginx.conf \
-    deploy/bin \
-    configs \
-    sql \
-    web/dist
+  [ -f .dockerignore ] && backup_items=(.dockerignore "${backup_items[@]}")
+  tar -cf - --ignore-failed-read "${backup_items[@]}" | gzip -1 > "$APP_BACKUP"
 
   if [ "$SKIP_DB_BACKUP" != "1" ]; then
     (
@@ -317,7 +338,9 @@ backup_runtime() {
 
 restore_app_backup() {
   cd "$REMOTE_DIR"
-  rm -rf deploy/bin web/dist configs sql
+  rm -rf .dockerignore deploy/bin configs sql
+  mkdir -p web/dist
+  find web/dist -mindepth 1 -maxdepth 1 -exec rm -rf {} +
   tar -xzf "$APP_BACKUP" -C "$REMOTE_DIR"
 }
 
@@ -333,10 +356,22 @@ health_check() {
 }
 
 rebuild_and_up() {
+  local force_restart="${1:-0}"
+  local nginx_conf_after=""
+  local server_build_after=""
   cd "$REMOTE_DIR/deploy"
-  docker compose build server
-  docker compose up -d server nginx
-  docker compose restart nginx
+  server_build_after="$(checksum_server_inputs || true)"
+  if [ "$force_restart" = "1" ] || [ "$SERVER_BUILD_BEFORE" != "$server_build_after" ]; then
+    docker compose build server
+    docker compose up -d server nginx
+    force_restart=1
+  else
+    docker compose up -d nginx
+  fi
+  [ -f "$REMOTE_DIR/deploy/nginx.conf" ] && nginx_conf_after="$(sha256sum "$REMOTE_DIR/deploy/nginx.conf" | awk '{print $1}')"
+  if [ "$force_restart" = "1" ] || [ "$NGINX_CONF_BEFORE" != "$nginx_conf_after" ]; then
+    docker compose restart nginx
+  fi
 }
 
 prune_old_backups() {
@@ -354,13 +389,15 @@ EOF_OLD
 
 backup_runtime
 cd "$REMOTE_DIR"
-rm -rf deploy/bin web/dist sql
+rm -rf deploy/bin sql
+mkdir -p web/dist
+find web/dist -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 tar -xzf "$REMOTE_BUNDLE" -C "$REMOTE_DIR"
 
 if ! rebuild_and_up; then
   echo "[remote-release] rebuild/up failed, restoring $APP_BACKUP" >&2
   restore_app_backup
-  rebuild_and_up || true
+  rebuild_and_up 1 || true
   health_check || true
   exit 1
 fi
@@ -368,7 +405,7 @@ fi
 if ! health_check; then
   echo "[remote-release] health check failed, restoring $APP_BACKUP" >&2
   restore_app_backup
-  rebuild_and_up
+  rebuild_and_up 1
   health_check || true
   exit 1
 fi
@@ -420,19 +457,21 @@ CURRENT_DB="$DB_DIR/$CURRENT_ID.sql.gz"
 CURRENT_META="$META_DIR/$CURRENT_ID.env"
 
 backup_current() {
+  local backup_items=(
+    deploy/.env
+    deploy/Dockerfile
+    deploy/docker-compose.yml
+    deploy/entrypoint.sh
+    deploy/nginx.conf
+    deploy/bin
+    configs
+    sql
+    web/dist
+  )
   mkdir -p "$APP_DIR" "$DB_DIR" "$META_DIR"
   cd "$REMOTE_DIR"
-  tar -czf "$CURRENT_APP" \
-    --ignore-failed-read \
-    deploy/.env \
-    deploy/Dockerfile \
-    deploy/docker-compose.yml \
-    deploy/entrypoint.sh \
-    deploy/nginx.conf \
-    deploy/bin \
-    configs \
-    sql \
-    web/dist
+  [ -f .dockerignore ] && backup_items=(.dockerignore "${backup_items[@]}")
+  tar -cf - --ignore-failed-read "${backup_items[@]}" | gzip -1 > "$CURRENT_APP"
 
   if [ "$SKIP_DB_BACKUP" != "1" ]; then
     (
@@ -454,7 +493,9 @@ backup_current() {
 
 restore_app() {
   cd "$REMOTE_DIR"
-  rm -rf deploy/bin web/dist configs sql
+  rm -rf .dockerignore deploy/bin configs sql
+  mkdir -p web/dist
+  find web/dist -mindepth 1 -maxdepth 1 -exec rm -rf {} +
   tar -xzf "$APP_BACKUP" -C "$REMOTE_DIR"
 }
 

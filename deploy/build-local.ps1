@@ -22,7 +22,7 @@ $env:GOOS = "linux"
 $env:GOARCH = "amd64"
 $env:CGO_ENABLED = "0"
 New-Item -ItemType Directory -Force deploy/bin | Out-Null
-go build -ldflags "-s -w" -o deploy/bin/gpt2api ./cmd/server
+go build -trimpath -buildvcs=false -ldflags "-s -w" -o deploy/bin/gpt2api ./cmd/server
 if ($LASTEXITCODE -ne 0) { throw "gpt2api build failed" }
 
 $goosePath = Join-Path $root "deploy/bin/goose"
@@ -35,7 +35,7 @@ if ($Force -or -not (Test-Path $goosePath)) {
     try {
         cmd /c "go mod init goose-wrapper >nul 2>&1"
         cmd /c "go get github.com/pressly/goose/v3/cmd/goose@v3.20.0 >nul 2>&1"
-        go build -ldflags "-s -w" -o $goosePath github.com/pressly/goose/v3/cmd/goose
+        go build -trimpath -buildvcs=false -ldflags "-s -w" -o $goosePath github.com/pressly/goose/v3/cmd/goose
         if ($LASTEXITCODE -ne 0) { throw "goose build failed" }
     } finally {
         Pop-Location

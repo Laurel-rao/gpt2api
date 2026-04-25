@@ -26,36 +26,65 @@ cd "$ROOT"
 
 echo "[build-local] repo  = $ROOT"
 
-# ---- step1: 交叉编译 gpt2api ----
-echo "[build-local] step1 = cross-build gpt2api (linux/amd64)"
-mkdir -p deploy/bin
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
-    go build -ldflags "-s -w" -o deploy/bin/gpt2api ./cmd/server
-
-# ---- step2: 编译 goose ----
-GOOSE="$ROOT/deploy/bin/goose"
-if [ "$FORCE" = "1" ] || [ ! -x "$GOOSE" ]; then
-    echo "[build-local] step2 = cross-build goose (tmp module)"
-    TMP="$(mktemp -d)"
-    trap 'rm -rf "$TMP"' EXIT
-    pushd "$TMP" >/dev/null
-    go mod init goose-wrapper >/dev/null 2>&1
-    go get github.com/pressly/goose/v3/cmd/goose@v3.20.0 >/dev/null 2>&1
+build_server() {
+    echo "[build-local] backend = cross-build gpt2api (linux/amd64)"
+    mkdir -p deploy/bin
     GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
-        go build -ldflags "-s -w" -o "$GOOSE" github.com/pressly/goose/v3/cmd/goose
-    popd >/dev/null
-else
-    echo "[build-local] step2 = skip goose (exists). use --force to rebuild"
-fi
+        go build -trimpath -buildvcs=false -ldflags "-s -w" -o deploy/bin/gpt2api ./cmd/server
+}
 
-# ---- step3: 前端 ----
-echo "[build-local] step3 = npm run build (web)"
-pushd web >/dev/null
-if [ ! -d node_modules ]; then
-    npm install --no-audit --no-fund --loglevel=error
-fi
-npm run build
-popd >/dev/null
+build_goose() {
+    local goose="$ROOT/deploy/bin/goose"
+    if [ "$FORCE" = "1" ] || [ ! -x "$goose" ]; then
+        echo "[build-local] goose   = cross-build goose (tmp module)"
+        local tmp
+        tmp="$(mktemp -d)"
+        pushd "$tmp" >/dev/null
+        go mod init goose-wrapper >/dev/null 2>&1
+        go get github.com/pressly/goose/v3/cmd/goose@v3.20.0 >/dev/null 2>&1
+        GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
+            go build -trimpath -buildvcs=false -ldflags "-s -w" -o "$goose" github.com/pressly/goose/v3/cmd/goose
+        popd >/dev/null
+        rm -rf "$tmp"
+    else
+        echo "[build-local] goose   = skip goose (exists). use --force to rebuild"
+    fi
+}
+
+build_web() {
+    echo "[build-local] frontend = npm run build (web)"
+    pushd web >/dev/null
+    if [ ! -d node_modules ]; then
+        npm install --no-audit --no-fund --loglevel=error
+    fi
+    npm run build
+    popd >/dev/null
+}
+
+wait_job() {
+    local pid="$1"
+    local name="$2"
+    if wait "$pid"; then
+        echo "[build-local] $name done"
+        return 0
+    fi
+    echo "[build-local] $name failed" >&2
+    return 1
+}
+
+echo "[build-local] build = backend/frontend parallel"
+build_server &
+pid_backend=$!
+build_web &
+pid_frontend=$!
+build_goose &
+pid_goose=$!
+
+failed=0
+wait_job "$pid_backend" "backend" || failed=1
+wait_job "$pid_frontend" "frontend" || failed=1
+wait_job "$pid_goose" "goose" || failed=1
+[ "$failed" = "0" ] || exit 1
 
 echo "[build-local] done. artifacts:"
 ls -lh deploy/bin/gpt2api deploy/bin/goose web/dist/index.html

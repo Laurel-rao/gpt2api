@@ -1,0 +1,13 @@
+*
+!deploy/
+deploy/*
+!deploy/Dockerfile
+!deploy/entrypoint.sh
+!deploy/bin/
+deploy/bin/*
+!deploy/bin/gpt2api
+!deploy/bin/goose
+!sql/
+!sql/**
+!configs/
+!configs/**
