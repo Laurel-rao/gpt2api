@@ -26,6 +26,15 @@ export function sendTestEmail(to: string): Promise<{ sent: boolean; to: string }
   return http.post('/api/admin/settings/test-email', { to })
 }
 
+export function uploadSiteAsset(key: string, file: File): Promise<{ key: string; url: string }> {
+  const form = new FormData()
+  form.append('key', key)
+  form.append('file', file)
+  return http.post('/api/admin/settings/site-asset', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+}
+
 // 匿名公开接口:返回登录页需要的站点元信息(site.name 等)。
 export function fetchSiteInfo(): Promise<Record<string, string>> {
   return http.get('/api/public/site-info')

@@ -1,6 +1,8 @@
 package server
 
 import (
+	"os"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/432539/gpt2api/internal/account"
@@ -32,20 +34,20 @@ type Deps struct {
 	AuthH *auth.Handler
 	UserH *user.Handler
 
-	KeySvc     *apikey.Service
-	KeyH       *apikey.Handler
-	ProxyH     *proxy.Handler
-	AccountH   *account.Handler
-	ChannelH   *channel.Handler
+	KeySvc   *apikey.Service
+	KeyH     *apikey.Handler
+	ProxyH   *proxy.Handler
+	AccountH *account.Handler
+	ChannelH *channel.Handler
 
 	GatewayH *gateway.Handler
 	ImagesH  *gateway.ImagesHandler
 
-	BackupH      *backup.Handler
-	AuditH       *audit.Handler
-	AuditDAO     *audit.DAO
-	AdminUserH   *user.AdminHandler
-	AdminGroupH  *user.AdminGroupHandler
+	BackupH     *backup.Handler
+	AuditH      *audit.Handler
+	AuditDAO    *audit.DAO
+	AdminUserH  *user.AdminHandler
+	AdminGroupH *user.AdminGroupHandler
 
 	AdminModelH *model.AdminHandler
 	AdminKeyH   *apikey.AdminHandler
@@ -345,6 +347,7 @@ func New(d *Deps) *gin.Engine {
 					sg.PUT("", d.SettingsH.Update)
 					sg.POST("/reload", d.SettingsH.Reload)
 					sg.POST("/test-email", d.SettingsH.TestMail)
+					sg.POST("/site-asset", d.SettingsH.UploadSiteAsset)
 				}
 			}
 
@@ -379,6 +382,9 @@ func New(d *Deps) *gin.Engine {
 	// ---- 图片代理(签名 URL,无需 API Key,对 <img src> 友好)----
 	if d.ImagesH != nil {
 		r.GET("/p/img/:task_id/:idx", d.ImagesH.ImageProxy)
+	}
+	if err := os.MkdirAll(settings.SiteAssetDir(), 0o755); err == nil {
+		r.Static("/site-assets", settings.SiteAssetDir())
 	}
 
 	// ---- 前端 SPA(可选;找不到 dist 就跳过) ----

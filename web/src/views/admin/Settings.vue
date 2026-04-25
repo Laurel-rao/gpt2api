@@ -16,6 +16,7 @@ import {
   updateSettings,
   reloadSettings,
   sendTestEmail,
+  uploadSiteAsset,
   type SettingItem,
 } from '@/api/settings'
 import { useSiteStore } from '@/stores/site'
@@ -76,10 +77,23 @@ function reset() {
 function isBool(it: SettingItem) { return it.type === 'bool' }
 function isInt(it: SettingItem) { return it.type === 'int' }
 function isFloat(it: SettingItem) { return it.type === 'float' }
+function isFavicon(it: SettingItem) { return it.key === 'site.favicon_url' }
 function inputType(it: SettingItem) {
   if (it.type === 'email') return 'email'
   if (it.type === 'url') return 'url'
   return 'text'
+}
+
+async function onSiteAssetChange(it: SettingItem, uploadFile: any) {
+  const raw = uploadFile?.raw as File | undefined
+  if (!raw) return
+  try {
+    const res = await uploadSiteAsset(it.key, raw)
+    draft[it.key] = res.url
+    ElMessage.success('图标上传成功')
+  } catch {
+    // 错误由拦截器处理
+  }
 }
 
 async function save() {
@@ -212,6 +226,26 @@ onMounted(load)
                     style="width: 240px"
                     @update:model-value="(v) => (draft[it.key] = String(v ?? 0))"
                   />
+                  <div v-else-if="isFavicon(it)" class="asset-upload">
+                    <div class="asset-preview">
+                      <img v-if="draft[it.key]" :src="draft[it.key]" alt="favicon" />
+                      <div v-else class="asset-preview__empty">暂无图标</div>
+                    </div>
+                    <div class="asset-actions">
+                      <el-upload
+                        :auto-upload="false"
+                        :show-file-list="false"
+                        accept=".ico,.png,.jpg,.jpeg,.svg,image/*"
+                        :on-change="(file) => onSiteAssetChange(it, file)"
+                      >
+                        <template #trigger>
+                          <el-button type="primary" plain>上传图标</el-button>
+                        </template>
+                      </el-upload>
+                      <el-button v-if="draft[it.key]" @click="draft[it.key] = ''">清空</el-button>
+                      <div class="hint">上传后保存到服务器本地静态目录，并自动写回当前设置值。</div>
+                    </div>
+                  </div>
                   <el-input
                     v-else
                     v-model="draft[it.key]"
@@ -283,6 +317,37 @@ onMounted(load)
   font-size: 12px;
   color: var(--el-text-color-secondary);
   line-height: 1.5;
+}
+.asset-upload {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.asset-preview {
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
+  border: 1px solid var(--el-border-color);
+  background: var(--el-fill-color-light);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.asset-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.asset-preview__empty {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.asset-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 @media (max-width: 640px) {

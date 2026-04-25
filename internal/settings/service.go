@@ -3,6 +3,8 @@ package settings
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -131,6 +133,15 @@ func (s *Service) GetFloat(key string) float64 {
 
 // -- site --
 func (s *Service) SiteName() string { return firstNonEmpty(s.GetString(SiteName), "GPT2API") }
+func SiteAssetDir() string {
+	if d := strings.TrimSpace(os.Getenv("GPT2API_SITE_ASSET_DIR")); d != "" {
+		return d
+	}
+	if wd, err := os.Getwd(); err == nil {
+		return filepath.Join(wd, "data", "site-assets")
+	}
+	return "./data/site-assets"
+}
 
 // -- auth --
 func (s *Service) AllowRegister() bool { return s.GetBool(AuthAllowRegister) }
@@ -196,14 +207,44 @@ func (s *Service) JWTRefreshTTLSec() int {
 }
 
 // -- key defaults --
-func (s *Service) KeyDefaultDailyQuota() int64 { n := s.GetInt(KeyDefaultDailyQuota); if n < 0 { return 0 }; return n }
-func (s *Service) KeyMaxPerUser() int          { return int(s.GetInt(KeyMaxPerUser)) }
+func (s *Service) KeyDefaultDailyQuota() int64 {
+	n := s.GetInt(KeyDefaultDailyQuota)
+	if n < 0 {
+		return 0
+	}
+	return n
+}
+func (s *Service) KeyMaxPerUser() int { return int(s.GetInt(KeyMaxPerUser)) }
 
 // -- gateway --
-func (s *Service) GatewayUpstreamTimeoutSec() int { n := int(s.GetInt(GatewayUpstreamTimeoutSec)); if n <= 0 { return 60 }; return n }
-func (s *Service) GatewaySSEReadTimeoutSec() int  { n := int(s.GetInt(GatewaySSEReadTimeoutSec));  if n <= 0 { return 120 }; return n }
-func (s *Service) Cooldown429Sec() int            { n := int(s.GetInt(GatewayCooldown429Sec));     if n <= 0 { return 300 }; return n }
-func (s *Service) WarnedPauseHours() int          { n := int(s.GetInt(GatewayWarnedPauseHours));   if n <= 0 { return 24 }; return n }
+func (s *Service) GatewayUpstreamTimeoutSec() int {
+	n := int(s.GetInt(GatewayUpstreamTimeoutSec))
+	if n <= 0 {
+		return 60
+	}
+	return n
+}
+func (s *Service) GatewaySSEReadTimeoutSec() int {
+	n := int(s.GetInt(GatewaySSEReadTimeoutSec))
+	if n <= 0 {
+		return 120
+	}
+	return n
+}
+func (s *Service) Cooldown429Sec() int {
+	n := int(s.GetInt(GatewayCooldown429Sec))
+	if n <= 0 {
+		return 300
+	}
+	return n
+}
+func (s *Service) WarnedPauseHours() int {
+	n := int(s.GetInt(GatewayWarnedPauseHours))
+	if n <= 0 {
+		return 24
+	}
+	return n
+}
 func (s *Service) DailyUsageRatio() float64 {
 	f := s.GetFloat(GatewayDailyUsageRatio)
 	if f <= 0 || f > 1 {
@@ -250,6 +291,7 @@ func (s *Service) ProbeTimeoutSec() int {
 	}
 	return n
 }
+
 // ProbeTargetURL 返回管理员配置的探测目标原值。
 // 留空不再在此层硬塞 gstatic,而是把"空"的语义向下透传给 Prober,
 // 由 Prober 走内置候选链(见 defaultProbeTargets)。
@@ -306,10 +348,28 @@ func (s *Service) AccountDefaultClientID() string {
 }
 
 // -- billing / recharge --
-func (s *Service) RechargeEnabled() bool    { return s.GetBool(RechargeEnabled) }
-func (s *Service) RechargeMinCNY() int64    { n := s.GetInt(RechargeMinCNY); if n < 0 { return 0 }; return n }
-func (s *Service) RechargeMaxCNY() int64    { n := s.GetInt(RechargeMaxCNY); if n < 0 { return 0 }; return n }
-func (s *Service) RechargeDailyLimitCNY() int64 { n := s.GetInt(RechargeDailyLimitCNY); if n < 0 { return 0 }; return n }
+func (s *Service) RechargeEnabled() bool { return s.GetBool(RechargeEnabled) }
+func (s *Service) RechargeMinCNY() int64 {
+	n := s.GetInt(RechargeMinCNY)
+	if n < 0 {
+		return 0
+	}
+	return n
+}
+func (s *Service) RechargeMaxCNY() int64 {
+	n := s.GetInt(RechargeMaxCNY)
+	if n < 0 {
+		return 0
+	}
+	return n
+}
+func (s *Service) RechargeDailyLimitCNY() int64 {
+	n := s.GetInt(RechargeDailyLimitCNY)
+	if n < 0 {
+		return 0
+	}
+	return n
+}
 func (s *Service) RechargeOrderExpireMin() int {
 	n := int(s.GetInt(RechargeOrderExpireMinutes))
 	if n <= 0 {
