@@ -1,23 +1,23 @@
 # gpt2api 容器化部署
 
-一键启动 = `docker compose up -d`。Server 启动时自动:
+一键启动 = `docker compose up -d`。nginx 对外提供前端静态站点并代理后端;Server 启动时自动:
 
 1. 等 MySQL 健康
 2. 跑 `goose up` 应用所有迁移(包含用户表、账号池、审计、备份元数据等)
-3. 启动 HTTP 服务(`:8080`)
+3. 启动内部 HTTP 服务(`:8080`)
 
 ## ⚠️ 架构说明:宿主预编译 + 容器运行
 
 本仓库的 `Dockerfile` 是**零外网依赖的"预构建 + 运行时"镜像**(规避国内拉 `proxy.golang.org` / `npm registry` 卡死)。  
-镜像里**不会**帮你 `go build` / `npm install`,而是直接 `COPY` 宿主机上已经编译好的三个产物:
+容器里**不会**帮你 `go build` / `npm install`;后端镜像直接 `COPY` 宿主机上已经编译好的二进制,nginx 挂载宿主机 `web/dist/`:
 
 | 产物 | 路径 |
 |------|------|
 | 后端(linux/amd64) | `deploy/bin/gpt2api` |
 | 迁移工具(linux/amd64) | `deploy/bin/goose` |
-| 前端 Vite 产物 | `web/dist/` |
+| 前端 Vite 产物(nginx 托管) | `web/dist/` |
 
-所以**第一次部署 / 代码更新后,都要先在宿主机跑一次预编译脚本**,再 `docker compose build server`。
+所以**第一次部署 / 代码更新后,都要先在宿主机跑一次预编译脚本**;后端变更后再 `docker compose build server`,前端变更只需重建 `web/dist` 并重启 nginx。
 
 ## 快速开始
 
@@ -65,9 +65,9 @@ docker compose logs -f server  # 观察迁移 + 启动日志
 
 | 场景 | 做什么 |
 |------|--------|
-| 只改了前端 | `cd web && npm run build` → `cd ../deploy && docker compose build server && docker compose up -d server` |
+| 只改了前端 | `cd web && npm run build` → `cd ../deploy && docker compose restart nginx` |
 | 只改了后端 | `bash deploy/build-local.sh` → `cd deploy && docker compose build server && docker compose up -d server` |
-| `git pull` 新版 | `bash deploy/build-local.sh` → `docker compose build server && docker compose up -d server` |
+| `git pull` 新版 | `bash deploy/build-local.sh` → `docker compose build server && docker compose up -d` |
 | 只改了 `.env` | `docker compose up -d`(环境变量变化 compose 会自动感知并重建容器) |
 | 想秒重启 | `docker compose restart server` |
 
@@ -148,7 +148,6 @@ docker compose exec server mysqldump -hmysql -ugpt2api -p \
 
 当前 compose 配置针对单机部署。后续要做多副本:
 
-- `server` 可直接 `docker compose up -d --scale server=3`(需前面加 nginx/traefik)
+- `server` 可扩多副本,前置 nginx/traefik 负责负载均衡
 - `backups` 卷改成共享存储(NFS / S3 fuse),否则每个副本只能看到自己创建的备份
 - Redis 分布式锁已天然支持多副本,MySQL 和 JWT 密钥需统一
-

@@ -120,7 +120,7 @@
 
 **部署**
 
-- Docker Compose(MySQL + Redis + server,可选 nginx)
+- Docker Compose(MySQL + Redis + server + nginx)
 - 默认单机;水平扩展见 [`deploy/README.md`](deploy/README.md)
 
 ---
@@ -222,7 +222,7 @@ cd gpt2api
 
 ### 3. 本地预编译(**必做,容器内不会帮你 build**)
 
-这一步会产出三个东西,镜像 COPY 进去就能直接起:
+这一步会产出三个东西:后端镜像 COPY 二进制和迁移工具,nginx 挂载 `web/dist/` 托管前端。
 
 | 产物 | 路径 | 由谁产出 |
 |------|------|---------|
@@ -256,7 +256,7 @@ powershell -NoProfile -File deploy\build-local.ps1
 -rw-r--r-- ... web/dist/index.html
 ```
 
-> 改完后端代码后**只需重跑 `build-local` 再 `docker compose build server`**;改前端只跑 `npm run build` + `docker compose build server` 即可。  
+> 改完后端代码后**重跑 `build-local` 再 `docker compose build server`**;改前端只跑 `cd web && npm run build`,nginx 会直接读取新的 `web/dist`。
 > 有同事反馈 `go get` / `npm install` 慢,可以先 `go env -w GOPROXY=https://goproxy.cn,direct` 和 `npm config set registry https://registry.npmmirror.com`。
 
 ### 4. 配置 `.env` 与启动容器
@@ -285,16 +285,16 @@ openssl rand -base64 48 | tr -d '=/+' | cut -c1-48   # JWT_SECRET
 启动:
 
 ```bash
-docker compose build server    # 首次或后端/前端代码有更新后执行
+docker compose build server    # 首次或后端代码有更新后执行
 docker compose up -d
 docker compose logs -f server
 ```
 
-启动过程里 `server` 会自动:
+启动过程里 `server` 会自动完成迁移并监听 compose 内部 `:8080`;`nginx` 对外暴露 `${HTTP_PORT:-8080}`、托管前端并代理 `/api`、`/v1`、`/p/img`、`/site-assets`。
 
 1. 等 `mysql` 健康;
 2. 跑 `goose up` 应用全部迁移(用户 / 账号 / 审计 / 备份元数据等十余张表);
-3. 启动 HTTP 服务 `:8080`。
+3. 启动后端 HTTP 服务 `:8080`。
 
 > ### ⚠️ 没有默认账号 / 密码 —— 首位注册者自动成为管理员
 >
@@ -318,11 +318,11 @@ docker compose logs -f server
 
 | 场景 | 命令 |
 |------|------|
-| **仅改了前端** | `cd web && npm run build` → `cd ../deploy && docker compose build server && docker compose up -d server` |
-| **仅改了后端** | `bash deploy/build-local.sh`(前端 `npm run build` 无代价也会重跑)→ `cd deploy && docker compose build server && docker compose up -d server` |
-| **拉 main 新版** | `git pull` → `bash deploy/build-local.sh` → `docker compose build server && docker compose up -d server` |
+| **仅改了前端** | `cd web && npm run build` → `cd ../deploy && docker compose restart nginx` |
+| **仅改了后端** | `bash deploy/build-local.sh`(会顺带重建前端产物)→ `cd deploy && docker compose build server && docker compose up -d server` |
+| **拉 main 新版** | `git pull` → `bash deploy/build-local.sh` → `docker compose build server && docker compose up -d` |
 | **只重启不重建** | `docker compose restart server` |
-| **想回滚上一版** | `docker compose down server` → 恢复 `deploy/bin/gpt2api` + `web/dist` 备份 → `docker compose build server && docker compose up -d server` |
+| **想回滚上一版** | `docker compose down server nginx` → 恢复 `deploy/bin/gpt2api` + `web/dist` 备份 → `docker compose build server && docker compose up -d` |
 
 ### 7. 五分钟跑通第一次生图
 
@@ -712,7 +712,7 @@ make run
 cd web
 npm install
 npm run dev          # http://localhost:5173,自动代理到 :8080
-npm run build        # 构建到 web/dist/,供后端 SPA 路由挂载
+npm run build        # 构建到 web/dist/,由 nginx 静态托管
 ```
 
 **恢复文字模型 UI**(当前版本默认关闭):
