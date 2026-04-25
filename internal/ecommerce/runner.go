@@ -845,7 +845,8 @@ func (r *Runner) buildImagePrompt(platform Platform, prompt PromptTemplate, styl
 {{.ImageTextPlan}}
 图片参数：尺寸 ` + spec.Size + `，长宽比 ` + spec.AspectRatio + `，清晰度 ` + spec.Clarity + `
 构图要求：` + composition + `
-参考图规则：参考图只用于识别商品外观，不得照搬参考图的背景、角度、裁切和光影；本图必须按当前图片类型重新设计版式，与白底图和其他资产明显不同。
+用户创意要求：原始需求里关于店铺首页、人物、代言人、场景、品牌氛围、活动主题的要求优先级高于默认构图，店标题图和电商大图必须体现这些创意要求；如果真实公众人物或明确代言关系受安全策略限制，使用同风格商务人物/科技发布会代言氛围替代，不要完全忽略人物和代言感。
+参考图规则：参考图只用于锁定商品主体外观，不得照搬参考图的纯白背景、角度、裁切和光影；本图必须按当前图片类型重新设计版式，与白底图和其他资产明显不同。
 语言要求：{{.LanguageRule}}
 一致性要求：所有标题、价格、原价、促销、规格、型号必须严格使用“统一商品信息”和“本图允许出现的文字”；不得新增、替换、改写任何数字价格、折扣、标题、型号或规格；没有价格数字时不得编造价格数字；中文文字清晰可读，商业电商设计，避免虚假品牌标志。`
 	return renderTemplate(src, renderData{
@@ -910,7 +911,8 @@ Allowed visible text for this image:
 {{.ImageTextPlan}}
 Image parameters: size ` + spec.Size + `, aspect ratio ` + spec.AspectRatio + `, clarity ` + spec.Clarity + `
 Composition requirement: ` + composition + `
-Reference rule: reference images are only for recognizing product appearance; do not copy their background, angle, crop or lighting. Redesign the layout for this asset type and make it visibly different from the white-background image and other assets.
+User creative requirement: requirements about storefront homepage, people, spokespersons, endorsement style, scenes, brand mood or campaign theme in Original requirement have higher priority than the default composition. Store title and main ecommerce images must reflect those creative requirements. If a real public figure or explicit endorsement relationship is restricted by safety policy, use a similar business/tech-launch spokesperson mood instead; do not ignore the people or endorsement direction.
+Reference rule: reference images are only for locking the product's core appearance; do not copy their plain white background, angle, crop or lighting. Redesign the layout for this asset type and make it visibly different from the white-background image and other assets.
 Language requirement: {{.LanguageRule}}
 Consistency requirements: every title, price, original price, promotion, spec and model must strictly use Unified product information and Allowed visible text. Do not add, replace or rewrite numeric prices, discounts, titles, models or specs. If no numeric price is provided, do not invent a numeric price. Visible text must be clear English. Use commercial ecommerce design and avoid fake brand logos.`
 	return renderTemplate(src, data)
