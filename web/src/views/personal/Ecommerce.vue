@@ -7,6 +7,7 @@ import {
   getEcommerceTask,
   listEcommerceTasks,
   retryEcommerceAsset,
+  type EcommerceAsset,
   type EcommercePlatform,
   type EcommercePromptTemplate,
   type EcommerceStyleTemplate,
@@ -25,6 +26,8 @@ const styles = ref<EcommerceStyleTemplate[]>([])
 const tasks = ref<EcommerceTask[]>([])
 const activeTask = ref<EcommerceTask | null>(null)
 const retryingAssetID = ref(0)
+const previewVisible = ref(false)
+const previewAsset = ref<EcommerceAsset | null>(null)
 
 const form = reactive({
   platform_id: 0,
@@ -150,6 +153,37 @@ async function retryAsset(assetID: number) {
     startPolling(fresh.task_id)
   } finally {
     retryingAssetID.value = 0
+  }
+}
+
+function openAssetPreview(asset: EcommerceAsset) {
+  if (!asset.url) return
+  previewAsset.value = asset
+  previewVisible.value = true
+}
+
+function assetFileName(asset: EcommerceAsset) {
+  const taskID = activeTask.value?.task_id || asset.task_id || 'ecommerce'
+  return `${taskID}-${asset.asset_type || 'image'}.png`
+}
+
+async function downloadAsset(asset: EcommerceAsset) {
+  if (!asset.url) return
+  try {
+    const res = await fetch(asset.url)
+    if (!res.ok) throw new Error(`download failed: ${res.status}`)
+    const blob = await res.blob()
+    const objectURL = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = objectURL
+    a.download = assetFileName(asset)
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(objectURL)
+  } catch (err) {
+    window.open(asset.url, '_blank')
+    ElMessage.error('下载失败，已打开图片')
   }
 }
 
@@ -338,7 +372,26 @@ onBeforeUnmount(() => {
                     <el-tag size="small" :type="statusType[asset.status] || 'info'">{{ statusText[asset.status] || asset.status }}</el-tag>
                   </div>
                 </div>
-                <img v-if="asset.url" :src="asset.url" :alt="asset.asset_type" />
+                <div
+                  v-if="asset.url"
+                  class="asset-preview"
+                  title="双击放大"
+                  @dblclick="openAssetPreview(asset)"
+                >
+                  <img :src="asset.url" :alt="asset.asset_type" />
+                  <div class="asset-actions">
+                    <el-tooltip content="放大" placement="top">
+                      <el-button circle size="small" @click.stop="openAssetPreview(asset)">
+                        <el-icon><ZoomIn /></el-icon>
+                      </el-button>
+                    </el-tooltip>
+                    <el-tooltip content="下载" placement="top">
+                      <el-button circle size="small" @click.stop="downloadAsset(asset)">
+                        <el-icon><Download /></el-icon>
+                      </el-button>
+                    </el-tooltip>
+                  </div>
+                </div>
                 <div v-else class="asset-empty" :class="{ pending: assetLoading(asset.status) }">
                   <template v-if="assetLoading(asset.status)">
                     <el-icon class="spin"><Loading /></el-icon>
@@ -373,6 +426,27 @@ onBeforeUnmount(() => {
       </section>
     </div>
   </div>
+
+  <el-dialog
+    v-model="previewVisible"
+    class="asset-dialog"
+    width="920px"
+    append-to-body
+    :title="previewAsset ? (assetText[previewAsset.asset_type] || previewAsset.asset_type) : '图片预览'"
+  >
+    <div v-if="previewAsset" class="asset-dialog-body">
+      <img :src="previewAsset.url" :alt="previewAsset.asset_type" />
+    </div>
+    <template #footer>
+      <div class="asset-dialog-footer">
+        <el-button v-if="previewAsset" @click="downloadAsset(previewAsset)">
+          <el-icon><Download /></el-icon>
+          下载
+        </el-button>
+        <el-button type="primary" @click="previewVisible = false">关闭</el-button>
+      </div>
+    </template>
+  </el-dialog>
 </template>
 
 <style scoped lang="scss">
@@ -437,7 +511,6 @@ onBeforeUnmount(() => {
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
   padding: 10px;
-  img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 6px; display: block; }
 }
 .asset-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
 .asset-status {
@@ -448,6 +521,31 @@ onBeforeUnmount(() => {
   font-size: 12px;
   white-space: nowrap;
 }
+.asset-preview {
+  position: relative;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--el-fill-color-lighter);
+  cursor: zoom-in;
+
+  img {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: cover;
+  }
+}
+.asset-actions {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity 0.16s ease;
+}
+.asset-preview:hover .asset-actions { opacity: 1; }
 .asset-empty { height: 160px; display: grid; place-items: center; color: var(--el-text-color-secondary); background: var(--el-fill-color-lighter); border-radius: 6px; text-align: center; padding: 10px; }
 .asset-empty.pending {
   gap: 8px;
@@ -473,6 +571,27 @@ onBeforeUnmount(() => {
   :deep(.copy-grid span) { border: 1px solid var(--el-border-color); border-radius: 999px; padding: 6px 10px; }
 }
 pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; }
+:global(.asset-dialog) { max-width: 92vw; }
+:global(.asset-dialog .el-dialog__body) { padding-top: 8px; }
+.asset-dialog-body {
+  max-height: 72vh;
+  overflow: auto;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--el-fill-color-lighter);
+
+  img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+  }
+}
+.asset-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
 @media (max-width: 980px) {
   .workspace { grid-template-columns: 1fr; }
   .result-card { min-height: auto; }
