@@ -28,6 +28,7 @@ const activeTask = ref<EcommerceTask | null>(null)
 const retryingAssetID = ref(0)
 const previewVisible = ref(false)
 const previewAsset = ref<EcommerceAsset | null>(null)
+const exportingPoster = ref(false)
 
 const form = reactive({
   platform_id: 0,
@@ -56,6 +57,7 @@ const assetText: Record<string, string> = {
   detail_image: '详情图',
   price_image: '价格图',
 }
+const posterAssetOrder = ['title_image', 'main_image', 'price_image', 'white_image', 'detail_image']
 
 const output = computed<any>(() => activeTask.value?.output_json || {})
 const assets = computed(() => activeTask.value?.assets || [])
@@ -184,6 +186,184 @@ async function downloadAsset(asset: EcommerceAsset) {
   } catch (err) {
     window.open(asset.url, '_blank')
     ElMessage.error('下载失败，已打开图片')
+  }
+}
+
+function drawRoundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  const radius = Math.min(r, w / 2, h / 2)
+  ctx.beginPath()
+  ctx.moveTo(x + radius, y)
+  ctx.arcTo(x + w, y, x + w, y + h, radius)
+  ctx.arcTo(x + w, y + h, x, y + h, radius)
+  ctx.arcTo(x, y + h, x, y, radius)
+  ctx.arcTo(x, y, x + w, y, radius)
+  ctx.closePath()
+}
+
+function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number) {
+  const lines: string[] = []
+  let line = ''
+  for (const char of text || '') {
+    const next = line + char
+    if (ctx.measureText(next).width > maxWidth && line) {
+      lines.push(line)
+      line = char
+    } else {
+      line = next
+    }
+  }
+  if (line) lines.push(line)
+  return lines
+}
+
+function drawWrappedText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, maxWidth: number, lineHeight: number) {
+  const lines = wrapText(ctx, text, maxWidth)
+  lines.forEach((line, index) => ctx.fillText(line, x, y + index * lineHeight))
+  return lines.length * lineHeight
+}
+
+function fetchImage(url: string): Promise<HTMLImageElement> {
+  return fetch(url)
+    .then((res) => {
+      if (!res.ok) throw new Error(`image fetch failed: ${res.status}`)
+      return res.blob()
+    })
+    .then((blob) => new Promise<HTMLImageElement>((resolve, reject) => {
+      const objectURL = URL.createObjectURL(blob)
+      const img = new Image()
+      img.onload = () => {
+        URL.revokeObjectURL(objectURL)
+        resolve(img)
+      }
+      img.onerror = () => {
+        URL.revokeObjectURL(objectURL)
+        reject(new Error('image load failed'))
+      }
+      img.src = objectURL
+    }))
+}
+
+function downloadCanvas(canvas: HTMLCanvasElement, filename: string) {
+  canvas.toBlob((blob) => {
+    if (!blob) {
+      ElMessage.error('导出失败')
+      return
+    }
+    const objectURL = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = objectURL
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(objectURL)
+  }, 'image/png')
+}
+
+async function downloadDesignPoster() {
+  if (!activeTask.value) return
+  const imageAssets = posterAssetOrder
+    .map((type) => assets.value.find((asset) => asset.asset_type === type && asset.url))
+    .filter(Boolean) as EcommerceAsset[]
+  if (!imageAssets.length) {
+    ElMessage.warning('暂无可导出的图片')
+    return
+  }
+  exportingPoster.value = true
+  try {
+    const loaded = await Promise.all(imageAssets.map(async (asset) => ({ asset, img: await fetchImage(asset.url) })))
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d')
+    if (!ctx) throw new Error('canvas not supported')
+
+    const width = 1242
+    const padding = 72
+    const contentWidth = width - padding * 2
+    const blockGap = 34
+    const title = output.value.product_title || '电商详情方案'
+    const description = output.value.description || ''
+    const priceCopy = output.value.price_copy || ''
+    const marketingCopy = Array.isArray(output.value.marketing_copy) ? output.value.marketing_copy : []
+
+    ctx.font = '700 50px Arial, sans-serif'
+    const titleHeight = wrapText(ctx, title, contentWidth).length * 62
+    ctx.font = '400 28px Arial, sans-serif'
+    const descHeight = description ? wrapText(ctx, description, contentWidth).length * 42 : 0
+    const chipRows = marketingCopy.length ? Math.ceil(marketingCopy.length / 2) : 0
+    const headerHeight = 96 + titleHeight + descHeight + (priceCopy ? 54 : 0) + chipRows * 56 + 58
+    const imageHeight = loaded.reduce((sum, item) => {
+      const h = Math.round(item.img.height * contentWidth / item.img.width)
+      return sum + 56 + h + blockGap
+    }, 0)
+    const height = headerHeight + imageHeight + 72
+
+    canvas.width = width
+    canvas.height = height
+    ctx.fillStyle = '#f7f3ec'
+    ctx.fillRect(0, 0, width, height)
+
+    let y = 64
+    ctx.fillStyle = '#16181d'
+    ctx.font = '700 28px Arial, sans-serif'
+    ctx.fillText('电商详情完整设计方案', padding, y)
+    y += 58
+    ctx.font = '700 50px Arial, sans-serif'
+    y += drawWrappedText(ctx, title, padding, y, contentWidth, 62)
+    if (description) {
+      y += 22
+      ctx.fillStyle = '#4f5663'
+      ctx.font = '400 28px Arial, sans-serif'
+      y += drawWrappedText(ctx, description, padding, y, contentWidth, 42)
+    }
+    if (priceCopy) {
+      y += 26
+      ctx.fillStyle = '#f06f38'
+      ctx.font = '700 30px Arial, sans-serif'
+      y += drawWrappedText(ctx, priceCopy, padding, y, contentWidth, 42)
+    }
+    if (marketingCopy.length) {
+      y += 18
+      ctx.font = '400 24px Arial, sans-serif'
+      let chipX = padding
+      for (const copy of marketingCopy) {
+        const text = String(copy)
+        const chipW = Math.min(contentWidth, ctx.measureText(text).width + 42)
+        if (chipX + chipW > padding + contentWidth) {
+          chipX = padding
+          y += 56
+        }
+        drawRoundRect(ctx, chipX, y - 30, chipW, 42, 21)
+        ctx.fillStyle = '#fff8f0'
+        ctx.fill()
+        ctx.fillStyle = '#b75b2d'
+        ctx.fillText(text, chipX + 21, y)
+        chipX += chipW + 14
+      }
+      y += 34
+    }
+    y += 44
+
+    for (const item of loaded) {
+      const label = assetText[item.asset.asset_type] || item.asset.asset_type
+      ctx.fillStyle = '#16181d'
+      ctx.font = '700 32px Arial, sans-serif'
+      ctx.fillText(label, padding, y)
+      y += 24
+      const imgH = Math.round(item.img.height * contentWidth / item.img.width)
+      drawRoundRect(ctx, padding, y, contentWidth, imgH, 18)
+      ctx.save()
+      ctx.clip()
+      ctx.drawImage(item.img, padding, y, contentWidth, imgH)
+      ctx.restore()
+      y += imgH + blockGap
+    }
+
+    downloadCanvas(canvas, `${activeTask.value.task_id}-电商详情长图.png`)
+    ElMessage.success('长图已生成')
+  } catch (err) {
+    ElMessage.error('长图导出失败')
+  } finally {
+    exportingPoster.value = false
   }
 }
 
@@ -413,6 +593,18 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
+            <div v-if="activeTask.output_html || activeTask.output_json" class="preview-toolbar">
+              <el-button
+                type="primary"
+                plain
+                :loading="exportingPoster"
+                :disabled="!assets.some((asset) => asset.url)"
+                @click="downloadDesignPoster"
+              >
+                <el-icon><Printer /></el-icon>
+                导出长图
+              </el-button>
+            </div>
             <el-tabs v-if="activeTask.output_html || activeTask.output_json" class="preview-tabs">
               <el-tab-pane label="详情页预览">
                 <div class="detail-preview" v-html="activeTask.output_html" />
@@ -559,7 +751,12 @@ onBeforeUnmount(() => {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
-.preview-tabs { margin-top: 18px; }
+.preview-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 18px;
+}
+.preview-tabs { margin-top: 10px; }
 .detail-preview {
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
