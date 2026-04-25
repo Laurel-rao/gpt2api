@@ -384,7 +384,7 @@ func (r *Runner) RetryAsset(ctx context.Context, taskID string, assetID uint64, 
 	if err != nil {
 		return err
 	}
-	assetPrompt := appendRetryPrompt(r.buildImagePrompt(*platform, *prompt, *style, out, task.Requirement, asset.AssetType), extraPrompt)
+	assetPrompt := r.buildRetryImagePrompt(*platform, *prompt, *style, out, task.Requirement, asset.AssetType, extraPrompt)
 	spec := out.ImageSpecs[asset.AssetType]
 	imgTaskID := imgpkg.GenerateTaskID()
 	if err := r.dao.MarkTaskRetrying(ctx, taskID); err != nil {
@@ -841,37 +841,40 @@ func (r *Runner) buildImagePrompt(platform Platform, prompt PromptTemplate, styl
 			LanguageRule: platformLanguageRule(langCode),
 		})
 	}
-	src := `{{.Prompt.ImagePrompt}}
+	src := `以下内容仅作为视觉方向，不要把模板原文直接做成画面文字：
+{{.Prompt.ImagePrompt}}
 {{.Style.StylePrompt}}
 平台：{{.Platform.Name}}
 图片类型：{{.AssetType}}
 目标：` + assetText + `
-商品标题：{{.Output.ProductTitle}}
-描述：{{.Output.Description}}
-价格文案：{{.Output.PriceCopy}}
 原始需求：{{.Requirement}}
 统一商品信息：
-{{.UnifiedInfo}}
+{{.CompactUnifiedInfo}}
 本图允许出现的文字：
-{{.ImageTextPlan}}
+{{.CompactImageTextPlan}}
 图片参数：尺寸 ` + spec.Size + `，长宽比 ` + spec.AspectRatio + `，清晰度 ` + spec.Clarity + `
 构图要求：` + composition + `
-用户创意要求：原始需求里关于店铺首页、人物、代言人、场景、品牌氛围、活动主题的要求优先级高于默认构图，店标题图和电商大图必须体现这些创意要求；如果真实公众人物或明确代言关系受安全策略限制，使用同风格商务人物/科技发布会代言氛围替代，不要完全忽略人物和代言感。
-参考图规则：参考图只用于锁定商品主体外观，不得照搬参考图的纯白背景、角度、裁切和光影；本图必须按当前图片类型重新设计版式，与白底图和其他资产明显不同。
-语言要求：{{.LanguageRule}}
-一致性要求：所有标题、价格、原价、促销、规格、型号必须严格使用“统一商品信息”和“本图允许出现的文字”；不得新增、替换、改写任何数字价格、折扣、标题、型号或规格；没有价格数字时不得编造价格数字；中文文字清晰可读，商业电商设计，避免虚假品牌标志。`
+硬约束：
+- 必须保持参考图中的商品主体一致。
+- 不得照搬参考图或白底图的纯白背景、角度、裁切和光影。
+- 当前资产必须与白底图明显不同。
+- 非白底图不得退化成白底商品图。
+- 原始需求中关于场景、人物、代言氛围、品牌氛围、活动主题的要求优先级更高。
+- 不得新增、替换、改写任何数字价格、折扣、标题、规格、型号。`
 	return renderTemplate(src, renderData{
-		Requirement:   requirement,
-		Platform:      platform,
-		Prompt:        prompt,
-		Style:         style,
-		Output:        out,
-		AssetType:     assetType,
-		UnifiedInfo:   formatUnifiedInfoForLanguage(out, langCode),
-		ImageTextPlan: formatImageTextPlanForLanguage(out.ImageTextPlans[assetType], langCode),
-		LanguageCode:  langCode,
-		LanguageName:  platformLanguageName(langCode),
-		LanguageRule:  platformLanguageRule(langCode),
+		Requirement:          requirement,
+		Platform:             platform,
+		Prompt:               prompt,
+		Style:                style,
+		Output:               out,
+		AssetType:            assetType,
+		UnifiedInfo:          formatUnifiedInfoForLanguage(out, langCode),
+		ImageTextPlan:        formatImageTextPlanForLanguage(out.ImageTextPlans[assetType], langCode),
+		CompactUnifiedInfo:   formatCompactUnifiedInfoForLanguage(out, langCode),
+		CompactImageTextPlan: formatCompactImageTextPlanForLanguage(out.ImageTextPlans[assetType], assetType, langCode),
+		LanguageCode:         langCode,
+		LanguageName:         platformLanguageName(langCode),
+		LanguageRule:         platformLanguageRule(langCode),
 	})
 }
 
@@ -889,6 +892,8 @@ func (r *Runner) buildEnglishImagePrompt(platform Platform, prompt PromptTemplat
 	data.AssetType = assetType
 	data.UnifiedInfo = formatUnifiedInfoForLanguage(out, langCode)
 	data.ImageTextPlan = formatImageTextPlanForLanguage(out.ImageTextPlans[assetType], langCode)
+	data.CompactUnifiedInfo = formatCompactUnifiedInfoForLanguage(out, langCode)
+	data.CompactImageTextPlan = formatCompactImageTextPlanForLanguage(out.ImageTextPlans[assetType], assetType, langCode)
 	if assetType == AssetWhite {
 		src := `Platform: {{.Platform.Name}}
 Image type: white-background image
@@ -905,28 +910,114 @@ Shape fidelity: strictly preserve the product category, structure, foldable/port
 Strict requirements: pure white or near-white background; no title, no selling-point text, no price, no promotion tag, no icon, no sticker, no border, no watermark, no brand logo, no scene props, no hands or people; realistic, clear, complete, standalone product.`
 		return renderTemplate(src, data)
 	}
-	src := `Marketing image strategy; adapt this template into English and do not copy Chinese template text into the image:
+	src := `Use the following as visual direction, not as literal overlay text:
 {{.Prompt.ImagePrompt}}
-Visual style strategy; adapt this template into English:
 {{.Style.StylePrompt}}
 Platform: {{.Platform.Name}}
 Image type: {{.AssetType}}
 Goal: ` + assetText + `
-Product title: {{.Output.ProductTitle}}
-Description: {{.Output.Description}}
-Price copy: {{.Output.PriceCopy}}
 Original requirement: {{.Requirement}}
-Unified product information:
-{{.UnifiedInfo}}
-Allowed visible text for this image:
-{{.ImageTextPlan}}
+Core product facts:
+{{.CompactUnifiedInfo}}
+Visible text pool for this image:
+{{.CompactImageTextPlan}}
 Image parameters: size ` + spec.Size + `, aspect ratio ` + spec.AspectRatio + `, clarity ` + spec.Clarity + `
-Composition requirement: ` + composition + `
-User creative requirement: requirements about storefront homepage, people, spokespersons, endorsement style, scenes, brand mood or campaign theme in Original requirement have higher priority than the default composition. Store title and main ecommerce images must reflect those creative requirements. If a real public figure or explicit endorsement relationship is restricted by safety policy, use a similar business/tech-launch spokesperson mood instead; do not ignore the people or endorsement direction.
-Reference rule: reference images are only for locking the product's core appearance; do not copy their plain white background, angle, crop or lighting. Redesign the layout for this asset type and make it visibly different from the white-background image and other assets.
-Language requirement: {{.LanguageRule}}
-Consistency requirements: every title, price, original price, promotion, spec and model must strictly use Unified product information and Allowed visible text. Do not add, replace or rewrite numeric prices, discounts, titles, models or specs. If no numeric price is provided, do not invent a numeric price. Visible text must be clear English. Use commercial ecommerce design and avoid fake brand logos.`
+Composition: ` + composition + `
+Hard constraints:
+- Keep the same product identity as the reference images.
+- Do not copy the white background, angle, crop or lighting from the references.
+- This asset must look clearly different from the white-background image.
+- For non-white assets, do not output a plain centered product cutout on a white background.
+- Follow user requests about scenes, spokesperson mood, campaign mood or brand atmosphere when present.
+- {{.LanguageRule}}
+- Do not invent prices, discounts, models or specs.`
 	return renderTemplate(src, data)
+}
+
+func (r *Runner) buildRetryImagePrompt(platform Platform, prompt PromptTemplate, style StyleTemplate, out Output, requirement, assetType, extraPrompt string) string {
+	extraPrompt = strings.TrimSpace(extraPrompt)
+	if extraPrompt == "" {
+		return r.buildImagePrompt(platform, prompt, style, out, requirement, assetType)
+	}
+	langCode := platformLanguageCode(platform)
+	if strings.HasPrefix(strings.ToLower(langCode), "en") {
+		return r.buildRetryEnglishImagePrompt(platform, out, requirement, assetType, extraPrompt, langCode)
+	}
+	return r.buildRetryChineseImagePrompt(platform, out, requirement, assetType, extraPrompt, langCode)
+}
+
+func (r *Runner) buildRetryChineseImagePrompt(platform Platform, out Output, requirement, assetType, extraPrompt, langCode string) string {
+	assetText := map[string]string{
+		AssetTitle:  "店标题图，突出商品名称和核心价值",
+		AssetMain:   "电商主图，商品主体清晰，适合列表和首屏",
+		AssetWhite:  "商品白底图，只展示商品本体",
+		AssetDetail: "详情页长图模块，展示卖点、场景和参数",
+		AssetPrice:  "价格促销图，突出优惠和行动号召",
+	}[assetType]
+	spec := out.ImageSpecs[assetType]
+	src := `平台：{{.Platform.Name}}
+图片类型：{{.AssetType}}
+目标：` + assetText + `
+` + `{{.RetryExtra}}
+原始需求：{{.Requirement}}
+统一商品信息：
+{{.CompactUnifiedInfo}}
+本图允许出现的文字：
+{{.CompactImageTextPlan}}
+图片参数：尺寸 ` + spec.Size + `，长宽比 ` + spec.AspectRatio + `，清晰度 ` + spec.Clarity + `
+构图要求：` + assetCompositionCN(assetType) + `
+硬约束：
+` + assetRetryRulesCN(assetType) + `
+- 没有价格数字时不得编造价格数字，不得新增、替换、改写标题、规格、型号。`
+	return renderTemplate(src, renderData{
+		Requirement:          requirement,
+		Platform:             platform,
+		Output:               out,
+		AssetType:            assetType,
+		CompactUnifiedInfo:   formatCompactUnifiedInfoForLanguage(out, langCode),
+		CompactImageTextPlan: formatCompactImageTextPlanForLanguage(out.ImageTextPlans[assetType], assetType, langCode),
+		RetryExtra:           extraPrompt,
+		LanguageCode:         langCode,
+		LanguageName:         platformLanguageName(langCode),
+		LanguageRule:         platformLanguageRule(langCode),
+	})
+}
+
+func (r *Runner) buildRetryEnglishImagePrompt(platform Platform, out Output, requirement, assetType, extraPrompt, langCode string) string {
+	assetText := map[string]string{
+		AssetTitle:  "store title image that highlights the product name and core value",
+		AssetMain:   "main ecommerce image with a clear product hero, suitable for listings and above-the-fold display",
+		AssetWhite:  "white-background product image showing only the product itself",
+		AssetDetail: "detail-page module image showing selling points, scenes and specs",
+		AssetPrice:  "price promotion image highlighting the offer and call to action",
+	}[assetType]
+	spec := out.ImageSpecs[assetType]
+	src := `Platform: {{.Platform.Name}}
+Image type: {{.AssetType}}
+Goal: ` + assetText + `
+{{.RetryExtra}}
+Original requirement: {{.Requirement}}
+Core product facts:
+{{.CompactUnifiedInfo}}
+Visible text pool for this image:
+{{.CompactImageTextPlan}}
+Image parameters: size ` + spec.Size + `, aspect ratio ` + spec.AspectRatio + `, clarity ` + spec.Clarity + `
+Composition: ` + assetCompositionEN(assetType) + `
+Hard constraints:
+- ` + assetRetryRulesEN(assetType) + `
+- Do not invent prices, discounts, models or specs.`
+	return renderTemplate(src, renderData{
+		Requirement:          requirement,
+		Platform:             platform,
+		Output:               out,
+		AssetType:            assetType,
+		CompactUnifiedInfo:   formatCompactUnifiedInfoForLanguage(out, langCode),
+		CompactImageTextPlan: formatCompactImageTextPlanForLanguage(out.ImageTextPlans[assetType], assetType, langCode),
+		RetryExtra:           extraPrompt,
+		LanguageCode:         langCode,
+		LanguageName:         platformLanguageName(langCode),
+		LanguageRule:         platformLanguageRule(langCode),
+	})
 }
 
 func (r *Runner) firstModel(ctx context.Context, modelType string) (*modelpkg.Model, error) {
@@ -976,17 +1067,23 @@ func assetCompositionEN(assetType string) string {
 	}
 }
 
+func assetRetryRulesCN(assetType string) string {
+	if assetType == AssetWhite {
+		return "- 必须保持参考图中的商品主体一致。\n- 保持干净白底，只展示商品本体，不要加入场景、文字或装饰元素。"
+	}
+	return "- 必须保持参考图中的商品主体一致。\n- 不得复用白底图的纯白背景、居中孤立摆放、角度、裁切和光影。\n- 当前资产必须与白底图明显不同。\n- 非白底图不得退化成白底商品图。"
+}
+
+func assetRetryRulesEN(assetType string) string {
+	if assetType == AssetWhite {
+		return "Keep the same product identity as the reference images.\n- Keep a clean white background with the product only; no scene, text or decorative elements."
+	}
+	return "Keep the same product identity as the reference images.\n- Do not reuse the white-background look, centered cutout, angle, crop or lighting from the white image.\n- This asset must look clearly different from the white-background image.\n- For non-white assets, do not output a plain centered product cutout on a white background."
+}
+
 func referencesForAsset(assetType string, refs []imgpkg.ReferenceImage) []imgpkg.ReferenceImage {
 	// 所有图片都使用参考图锁定商品外观，差异化交给每类 asset 的构图规则控制。
 	return refs
-}
-
-func appendRetryPrompt(base, extra string) string {
-	extra = strings.TrimSpace(extra)
-	if extra == "" {
-		return base
-	}
-	return base + "\n\n重试追加描述词（高优先级）：\n" + extra + "\n请在保持商品主体一致的前提下，优先体现以上追加描述词；这是本次图生图重试的主要修改方向。"
 }
 
 func (r *Runner) retryReferences(ctx context.Context, taskID string, asset Asset, fallback []imgpkg.ReferenceImage) []imgpkg.ReferenceImage {

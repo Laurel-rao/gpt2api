@@ -12,17 +12,20 @@ import (
 var jsonFenceRe = regexp.MustCompile("(?s)```(?:json)?\\s*(.*?)\\s*```")
 
 type renderData struct {
-	Requirement   string
-	Platform      Platform
-	Prompt        PromptTemplate
-	Style         StyleTemplate
-	Output        Output
-	AssetType     string
-	UnifiedInfo   string
-	ImageTextPlan string
-	LanguageCode  string
-	LanguageName  string
-	LanguageRule  string
+	Requirement          string
+	Platform             Platform
+	Prompt               PromptTemplate
+	Style                StyleTemplate
+	Output               Output
+	AssetType            string
+	UnifiedInfo          string
+	ImageTextPlan        string
+	CompactUnifiedInfo   string
+	CompactImageTextPlan string
+	RetryExtra           string
+	LanguageCode         string
+	LanguageName         string
+	LanguageRule         string
 }
 
 func renderTemplate(src string, data renderData) string {
@@ -359,6 +362,41 @@ func formatUnifiedInfoForLanguage(out Output, languageCode string) string {
 	return strings.Join(nonEmptyLines(lines), "\n")
 }
 
+func limitStrings(items []string, n int) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	if n <= 0 || len(items) <= n {
+		return append([]string(nil), items...)
+	}
+	return append([]string(nil), items[:n]...)
+}
+
+func formatCompactUnifiedInfoForLanguage(out Output, languageCode string) string {
+	if strings.HasPrefix(strings.ToLower(languageCode), "en") {
+		lines := []string{
+			"Title: " + firstNonEmpty(out.ProductInfo.CanonicalTitle, out.ProductTitle),
+			"Core value: " + out.ProductInfo.CoreValue,
+			"Price text: " + out.PriceInfo.PriceText,
+			"Promotion text: " + out.PriceInfo.PromotionText,
+			"CTA: " + out.PriceInfo.CTA,
+			"Key specs: " + strings.Join(limitStrings(out.ProductInfo.KeySpecs, 4), "; "),
+			"Selling points: " + strings.Join(limitStrings(out.ProductInfo.SellingPoints, 3), "; "),
+		}
+		return strings.Join(nonEmptyLines(lines), "\n")
+	}
+	lines := []string{
+		"标题：" + firstNonEmpty(out.ProductInfo.CanonicalTitle, out.ProductTitle),
+		"核心价值：" + out.ProductInfo.CoreValue,
+		"价格文字：" + out.PriceInfo.PriceText,
+		"促销文字：" + out.PriceInfo.PromotionText,
+		"行动号召：" + out.PriceInfo.CTA,
+		"关键规格：" + strings.Join(limitStrings(out.ProductInfo.KeySpecs, 4), "；"),
+		"卖点：" + strings.Join(limitStrings(out.ProductInfo.SellingPoints, 3), "；"),
+	}
+	return strings.Join(nonEmptyLines(lines), "\n")
+}
+
 func formatImageTextPlan(plan ImageTextPlan) string {
 	return formatImageTextPlanForLanguage(plan, "zh-CN")
 }
@@ -388,6 +426,63 @@ func formatImageTextPlanForLanguage(plan ImageTextPlan, languageCode string) str
 		"卖点：" + strings.Join(plan.SellingPoints, "；"),
 		"规格：" + strings.Join(plan.Specs, "；"),
 		"备注：" + strings.Join(plan.Notes, "；"),
+	}
+	return strings.Join(nonEmptyLines(lines), "\n")
+}
+
+func formatCompactImageTextPlanForLanguage(plan ImageTextPlan, assetType, languageCode string) string {
+	var lines []string
+	switch {
+	case strings.HasPrefix(strings.ToLower(languageCode), "en"):
+		switch assetType {
+		case AssetTitle, AssetMain:
+			lines = []string{
+				"Title: " + plan.Title,
+				"Subtitle: " + plan.Subtitle,
+				"Badges: " + strings.Join(limitStrings(plan.Badges, 2), "; "),
+				"CTA: " + plan.CTA,
+			}
+		case AssetPrice:
+			lines = []string{
+				"Title: " + plan.Title,
+				"Price: " + plan.PriceText,
+				"Promotion: " + plan.PromotionText,
+				"CTA: " + plan.CTA,
+				"Badges: " + strings.Join(limitStrings(plan.Badges, 2), "; "),
+			}
+		default:
+			lines = []string{
+				"Title: " + plan.Title,
+				"Subtitle: " + plan.Subtitle,
+				"Selling points: " + strings.Join(limitStrings(plan.SellingPoints, 3), "; "),
+				"Specs: " + strings.Join(limitStrings(plan.Specs, 3), "; "),
+			}
+		}
+	default:
+		switch assetType {
+		case AssetTitle, AssetMain:
+			lines = []string{
+				"标题：" + plan.Title,
+				"副标题：" + plan.Subtitle,
+				"标签：" + strings.Join(limitStrings(plan.Badges, 2), "；"),
+				"行动号召：" + plan.CTA,
+			}
+		case AssetPrice:
+			lines = []string{
+				"标题：" + plan.Title,
+				"价格：" + plan.PriceText,
+				"促销：" + plan.PromotionText,
+				"行动号召：" + plan.CTA,
+				"标签：" + strings.Join(limitStrings(plan.Badges, 2), "；"),
+			}
+		default:
+			lines = []string{
+				"标题：" + plan.Title,
+				"副标题：" + plan.Subtitle,
+				"卖点：" + strings.Join(limitStrings(plan.SellingPoints, 3), "；"),
+				"规格：" + strings.Join(limitStrings(plan.Specs, 3), "；"),
+			}
+		}
 	}
 	return strings.Join(nonEmptyLines(lines), "\n")
 }
