@@ -4,7 +4,7 @@ import { fetchSiteInfo } from '@/api/settings'
 
 /**
  * Site store 缓存站点公开信息:
- *   site.name / site.description / site.logo_url / site.footer / site.contact_email
+ *   site.name / site.description / site.logo_url / site.favicon_url / site.footer / site.contact_email
  *   auth.allow_register   — 用于登录/注册页判定是否展示注册入口
  *
  * 页面启动时 refresh() 一次即可;管理员改完设置会再触发一次 refresh。
@@ -15,6 +15,7 @@ export const useSiteStore = defineStore('site', () => {
     'site.name': 'GPT2API',
     'site.description': '企业级 OpenAI 兼容网关',
     'site.logo_url': '',
+    'site.favicon_url': '',
     'site.footer': '',
     'site.contact_email': '',
     'auth.allow_register': 'true',
@@ -40,8 +41,7 @@ export const useSiteStore = defineStore('site', () => {
   }
 
   function applyFavicon() {
-    const url = info.value['site.logo_url']
-    if (!url) return
+    const url = info.value['site.favicon_url'] || info.value['site.logo_url'] || '/favicon.svg'
     let link = document.querySelector<HTMLLinkElement>('link[rel~="icon"]')
     if (!link) {
       link = document.createElement('link')
