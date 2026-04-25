@@ -47,6 +47,8 @@ export interface EcommerceAsset {
   status: string
   error?: string
   created_at: string
+  started_at?: string | null
+  finished_at?: string | null
   updated_at: string
 }
 

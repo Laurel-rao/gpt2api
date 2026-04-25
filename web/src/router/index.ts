@@ -2,6 +2,7 @@ import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import BasicLayout from '@/layouts/BasicLayout.vue'
 import BlankLayout from '@/layouts/BlankLayout.vue'
 import { useUserStore } from '@/stores/user'
+import Ecommerce from '@/views/personal/Ecommerce.vue'
 
 /**
  * 路由约定:
@@ -46,7 +47,7 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '账单与充值', perm: 'self:recharge' } },
       { path: 'play', component: () => import('@/views/personal/OnlinePlay.vue'),
         meta: { title: '在线体验', perm: ['self:image', 'self:usage'] } },
-      { path: 'ecommerce', component: () => import('@/views/personal/Ecommerce.vue'),
+      { path: 'ecommerce', component: Ecommerce,
         meta: { title: '电商板块', perm: 'self:ecommerce' } },
       { path: 'docs', component: () => import('@/views/personal/ApiDocs.vue'),
         meta: { title: '接口文档', perm: ['self:usage', 'self:image'] } },
