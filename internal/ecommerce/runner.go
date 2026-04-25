@@ -58,6 +58,17 @@ func (r *Runner) Enqueue(taskID string) {
 	}()
 }
 
+func (r *Runner) EnqueueAssetRetry(taskID string, assetID uint64) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		if err := r.RetryAsset(ctx, taskID, assetID); err != nil {
+			logger.L().Warn("ecommerce asset retry failed",
+				zap.String("task_id", taskID), zap.Uint64("asset_id", assetID), zap.Error(err))
+		}
+	}()
+}
+
 func (r *Runner) Run(ctx context.Context, taskID string) error {
 	task, err := r.dao.GetTask(ctx, taskID)
 	if err != nil {
@@ -108,6 +119,7 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 	assetErrors := make([]string, 0)
 	for _, assetType := range assetTypes {
 		assetPrompt := r.buildImagePrompt(*platform, *prompt, *style, out, task.Requirement, assetType)
+		spec := out.ImageSpecs[assetType]
 		imgTaskID := imgpkg.GenerateTaskID()
 		asset := &Asset{TaskID: taskID, AssetType: assetType, ImageTaskID: imgTaskID, Prompt: assetPrompt, Status: StatusRunning}
 		if err := r.dao.CreateAsset(ctx, asset); err != nil {
@@ -120,7 +132,7 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 				ModelID: imageModel.ID,
 				Prompt:  assetPrompt,
 				N:       1,
-				Size:    "1024x1024",
+				Size:    spec.Size,
 				Status:  imgpkg.StatusDispatched,
 			})
 		}
@@ -172,11 +184,10 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 	}
 	wg.Wait()
 	dbCtx := context.Background()
-	assets, err := r.dao.ListAssets(dbCtx, taskID)
+	html, err := r.rebuildTaskHTML(dbCtx, taskID, out)
 	if err != nil {
 		return err
 	}
-	html := buildHTML(out, assets)
 	if len(assetErrors) > 0 {
 		return r.dao.MarkTaskFailedWithOutput(dbCtx, taskID, "图片生成失败: "+strings.Join(assetErrors, "; "), outBytes, html)
 	}
@@ -184,6 +195,154 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 		return err
 	}
 	return nil
+}
+
+func (r *Runner) RetryAsset(ctx context.Context, taskID string, assetID uint64) error {
+	task, err := r.dao.GetTask(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	asset, err := r.dao.GetAsset(ctx, assetID)
+	if err != nil {
+		return err
+	}
+	if asset.TaskID != taskID {
+		return ErrNotFound
+	}
+	if asset.Status == StatusRunning || asset.Status == StatusQueued {
+		return errors.New("图片正在生成中")
+	}
+	platform, err := r.dao.GetPlatform(ctx, task.PlatformID)
+	if err != nil {
+		return err
+	}
+	prompt, err := r.dao.GetPromptTemplate(ctx, task.PromptTemplateID)
+	if err != nil {
+		return err
+	}
+	style, err := r.dao.GetStyleTemplate(ctx, task.StyleTemplateID)
+	if err != nil {
+		return err
+	}
+	out := outputFromTask(task)
+	if out.ProductTitle == "" {
+		out = localDraftOutput(*platform, *style, task.Requirement)
+	}
+	normalizeOutput(&out, task.Requirement)
+	imageModel, err := r.firstModel(ctx, modelpkg.TypeImage)
+	if err != nil {
+		return err
+	}
+	refs, err := decodeReferenceInputs(ctx, task.ReferenceImages.RawMessage())
+	if err != nil {
+		return err
+	}
+	assetPrompt := r.buildImagePrompt(*platform, *prompt, *style, out, task.Requirement, asset.AssetType)
+	spec := out.ImageSpecs[asset.AssetType]
+	imgTaskID := imgpkg.GenerateTaskID()
+	if err := r.dao.MarkTaskRetrying(ctx, taskID); err != nil {
+		return err
+	}
+	if err := r.dao.MarkAssetRetrying(ctx, assetID, imgTaskID, assetPrompt); err != nil {
+		return err
+	}
+	if r.imageDAO != nil {
+		_ = r.imageDAO.Create(ctx, &imgpkg.Task{
+			TaskID:  imgTaskID,
+			UserID:  task.UserID,
+			ModelID: imageModel.ID,
+			Prompt:  assetPrompt,
+			N:       1,
+			Size:    spec.Size,
+			Status:  imgpkg.StatusDispatched,
+		})
+	}
+	res := r.imageRun.Run(ctx, imgpkg.RunOptions{
+		TaskID:        imgTaskID,
+		UserID:        task.UserID,
+		ModelID:       imageModel.ID,
+		UpstreamModel: imageModel.UpstreamModelSlug,
+		Prompt:        assetPrompt,
+		N:             1,
+		MaxAttempts:   1,
+		References:    refs,
+	})
+	if res.Status != imgpkg.StatusSuccess {
+		errCode := imageErrorCode(res)
+		_ = r.dao.UpdateAssetResult(context.Background(), assetID, StatusFailed, imgTaskID, "", "", errCode)
+		return r.finalizeTaskAfterRetry(context.Background(), taskID, out, "图片重试失败: "+asset.AssetType+":"+errCode)
+	}
+	url := ""
+	fileID := ""
+	if len(res.SignedURLs) > 0 {
+		url = imgpkg.BuildProxyURL(imgTaskID, 0, 24*time.Hour)
+	}
+	if len(res.FileIDs) > 0 {
+		fileID = strings.TrimPrefix(res.FileIDs[0], "sed:")
+	}
+	if err := r.dao.UpdateAssetResult(context.Background(), assetID, StatusSuccess, imgTaskID, url, fileID, ""); err != nil {
+		return err
+	}
+	return r.finalizeTaskAfterRetry(context.Background(), taskID, out, "")
+}
+
+func outputFromTask(task *TaskRow) Output {
+	var out Output
+	if len(task.OutputJSON) > 0 {
+		_ = json.Unmarshal(task.OutputJSON.RawMessage(), &out)
+	}
+	return out
+}
+
+func imageErrorCode(res *imgpkg.RunResult) string {
+	if res.ErrorCode != "" {
+		return res.ErrorCode
+	}
+	if res.ErrorMessage != "" {
+		return res.ErrorMessage
+	}
+	return "unknown"
+}
+
+func (r *Runner) rebuildTaskHTML(ctx context.Context, taskID string, out Output) (string, error) {
+	assets, err := r.dao.ListAssets(ctx, taskID)
+	if err != nil {
+		return "", err
+	}
+	return buildHTML(out, assets), nil
+}
+
+func (r *Runner) finalizeTaskAfterRetry(ctx context.Context, taskID string, out Output, errMsg string) error {
+	assets, err := r.dao.ListAssets(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	running := false
+	failed := make([]string, 0)
+	for _, a := range assets {
+		switch a.Status {
+		case StatusQueued, StatusRunning:
+			running = true
+		case StatusFailed:
+			if a.Error != "" {
+				failed = append(failed, a.AssetType+":"+a.Error)
+			} else {
+				failed = append(failed, a.AssetType)
+			}
+		}
+	}
+	if running {
+		return nil
+	}
+	outBytes, _ := json.Marshal(out)
+	html := buildHTML(out, assets)
+	if errMsg != "" {
+		failed = append(failed, errMsg)
+	}
+	if len(failed) > 0 {
+		return r.dao.MarkTaskFailedWithOutput(ctx, taskID, strings.Join(failed, "; "), outBytes, html)
+	}
+	return r.dao.MarkTaskSuccess(ctx, taskID, outBytes, html)
 }
 
 func (r *Runner) generateText(ctx context.Context, platform Platform, prompt PromptTemplate, style StyleTemplate, requirement string) (string, error) {
@@ -363,6 +522,7 @@ func localDraftOutput(platform Platform, style StyleTemplate, requirement string
 			"title":    name,
 			"style":    style.Name,
 		},
+		ImageSpecs: defaultImageSpecs(),
 	}
 }
 
@@ -391,7 +551,14 @@ func (r *Runner) buildContentPrompt(platform Platform, prompt PromptTemplate, st
   "price_copy": "价格/促销文案",
   "marketing_copy": ["营销短句1", "营销短句2", "营销短句3"],
   "detail_sections": [{"title": "模块标题", "body": "模块正文"}],
-  "platform_fields": {"title": "平台标题", "description": "平台描述"}
+  "platform_fields": {"title": "平台标题", "description": "平台描述"},
+  "image_specs": {
+    "title_image": {"size": "1024x1024", "aspect_ratio": "1:1", "clarity": "high"},
+    "main_image": {"size": "1024x1024", "aspect_ratio": "1:1", "clarity": "high"},
+    "white_image": {"size": "1024x1024", "aspect_ratio": "1:1", "clarity": "high"},
+    "detail_image": {"size": "1024x1536", "aspect_ratio": "2:3", "clarity": "high"},
+    "price_image": {"size": "1024x1024", "aspect_ratio": "1:1", "clarity": "high"}
+  }
 }`
 	return renderTemplate(tpl, renderData{Requirement: requirement, Platform: platform, Prompt: prompt, Style: style})
 }
@@ -404,6 +571,7 @@ func (r *Runner) buildImagePrompt(platform Platform, prompt PromptTemplate, styl
 		AssetDetail: "详情页长图模块，展示卖点、场景和参数",
 		AssetPrice:  "价格促销图，突出优惠和行动号召",
 	}[assetType]
+	spec := out.ImageSpecs[assetType]
 	src := `{{.Prompt.ImagePrompt}}
 {{.Style.StylePrompt}}
 平台：{{.Platform.Name}}
@@ -413,6 +581,7 @@ func (r *Runner) buildImagePrompt(platform Platform, prompt PromptTemplate, styl
 描述：{{.Output.Description}}
 价格文案：{{.Output.PriceCopy}}
 原始需求：{{.Requirement}}
+图片参数：尺寸 ` + spec.Size + `，长宽比 ` + spec.AspectRatio + `，清晰度 ` + spec.Clarity + `
 要求：中文文字清晰可读，商业电商设计，避免虚假品牌标志。`
 	return renderTemplate(src, renderData{
 		Requirement: requirement,

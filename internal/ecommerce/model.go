@@ -105,18 +105,25 @@ type Asset struct {
 }
 
 type Output struct {
-	ShopTitle      string            `json:"shop_title"`
-	ProductTitle   string            `json:"product_title"`
-	Description    string            `json:"description"`
-	PriceCopy      string            `json:"price_copy"`
-	MarketingCopy  []string          `json:"marketing_copy"`
-	DetailSections []DetailSection   `json:"detail_sections"`
-	PlatformFields map[string]string `json:"platform_fields"`
+	ShopTitle      string               `json:"shop_title"`
+	ProductTitle   string               `json:"product_title"`
+	Description    string               `json:"description"`
+	PriceCopy      string               `json:"price_copy"`
+	MarketingCopy  []string             `json:"marketing_copy"`
+	DetailSections []DetailSection      `json:"detail_sections"`
+	PlatformFields map[string]string    `json:"platform_fields"`
+	ImageSpecs     map[string]ImageSpec `json:"image_specs"`
 }
 
 type DetailSection struct {
 	Title string `json:"title"`
 	Body  string `json:"body"`
+}
+
+type ImageSpec struct {
+	Size        string `json:"size"`
+	AspectRatio string `json:"aspect_ratio"`
+	Clarity     string `json:"clarity"`
 }
 
 func NewTaskID() string { return "ecm_" + uuid.NewString() }

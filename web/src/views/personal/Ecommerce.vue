@@ -6,6 +6,7 @@ import {
   getEcommerceOptions,
   getEcommerceTask,
   listEcommerceTasks,
+  retryEcommerceAsset,
   type EcommercePlatform,
   type EcommercePromptTemplate,
   type EcommerceStyleTemplate,
@@ -21,6 +22,7 @@ const prompts = ref<EcommercePromptTemplate[]>([])
 const styles = ref<EcommerceStyleTemplate[]>([])
 const tasks = ref<EcommerceTask[]>([])
 const activeTask = ref<EcommerceTask | null>(null)
+const retryingAssetID = ref(0)
 
 const form = reactive({
   platform_id: 0,
@@ -132,6 +134,20 @@ async function openTask(task: EcommerceTask) {
   const fresh = await getEcommerceTask(task.task_id)
   activeTask.value = fresh
   if (['queued', 'running'].includes(fresh.status)) startPolling(fresh.task_id)
+}
+
+async function retryAsset(assetID: number) {
+  if (!activeTask.value) return
+  retryingAssetID.value = assetID
+  try {
+    await retryEcommerceAsset(activeTask.value.task_id, assetID)
+    ElMessage.success('已重新提交图片生成')
+    const fresh = await getEcommerceTask(activeTask.value.task_id)
+    activeTask.value = fresh
+    startPolling(fresh.task_id)
+  } finally {
+    retryingAssetID.value = 0
+  }
 }
 
 function startPolling(taskID: string) {
@@ -304,6 +320,17 @@ onBeforeUnmount(stopPolling)
                   </template>
                   <template v-else>{{ asset.error || '等待图片生成' }}</template>
                 </div>
+                <el-button
+                  v-if="asset.status === 'failed'"
+                  size="small"
+                  type="primary"
+                  plain
+                  class="asset-retry"
+                  :loading="retryingAssetID === asset.id"
+                  @click="retryAsset(asset.id)"
+                >
+                  重试生成
+                </el-button>
               </div>
             </div>
 
@@ -395,6 +422,7 @@ onBeforeUnmount(stopPolling)
   background-size: 200% 100%;
   animation: shimmer 1.4s ease-in-out infinite;
 }
+.asset-retry { width: 100%; margin-top: 8px; }
 @keyframes shimmer {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }

@@ -100,6 +100,11 @@ export function getEcommerceTask(taskID: string): Promise<EcommerceTask> {
   return http.get(`/api/me/ecommerce/tasks/${taskID}`)
 }
 
+export function retryEcommerceAsset(taskID: string, assetID: number):
+  Promise<{ task_id: string; asset_id: number; status: string }> {
+  return http.post(`/api/me/ecommerce/tasks/${taskID}/assets/${assetID}/retry`, {})
+}
+
 export type ConfigKind = 'platforms' | 'prompt-templates' | 'style-templates'
 
 export function listEcommerceConfig<T>(kind: ConfigKind, keyword = ''): Promise<{ items: T[]; total: number }> {

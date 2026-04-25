@@ -64,6 +64,7 @@ func fallbackOutput(requirement string) Output {
 			{Title: "购买理由", Body: "用简洁文案强化品质、体验与服务承诺。"},
 		},
 		PlatformFields: map[string]string{"title": title, "description": requirement},
+		ImageSpecs:     defaultImageSpecs(),
 	}
 }
 
@@ -91,6 +92,35 @@ func normalizeOutput(out *Output, requirement string) {
 	}
 	out.PlatformFields["title"] = out.ProductTitle
 	out.PlatformFields["description"] = out.Description
+	if out.ImageSpecs == nil {
+		out.ImageSpecs = map[string]ImageSpec{}
+	}
+	for k, spec := range defaultImageSpecs() {
+		out.ImageSpecs[k] = normalizeImageSpec(out.ImageSpecs[k], spec)
+	}
+}
+
+func defaultImageSpecs() map[string]ImageSpec {
+	return map[string]ImageSpec{
+		AssetTitle:  {Size: "1024x1024", AspectRatio: "1:1", Clarity: "high"},
+		AssetMain:   {Size: "1024x1024", AspectRatio: "1:1", Clarity: "high"},
+		AssetWhite:  {Size: "1024x1024", AspectRatio: "1:1", Clarity: "high"},
+		AssetDetail: {Size: "1024x1536", AspectRatio: "2:3", Clarity: "high"},
+		AssetPrice:  {Size: "1024x1024", AspectRatio: "1:1", Clarity: "high"},
+	}
+}
+
+func normalizeImageSpec(spec, fallback ImageSpec) ImageSpec {
+	if spec.Size == "" {
+		spec.Size = fallback.Size
+	}
+	if spec.AspectRatio == "" {
+		spec.AspectRatio = fallback.AspectRatio
+	}
+	if spec.Clarity == "" {
+		spec.Clarity = fallback.Clarity
+	}
+	return spec
 }
 
 func buildHTML(out Output, assets []Asset) string {

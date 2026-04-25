@@ -189,6 +189,44 @@ func (h *Handler) GetTask(c *gin.Context) {
 	resp.OK(c, v)
 }
 
+func (h *Handler) RetryAsset(c *gin.Context) {
+	uid := middleware.UserID(c)
+	if uid == 0 {
+		resp.Unauthorized(c, "not logged in")
+		return
+	}
+	taskID := c.Param("id")
+	assetID, err := strconv.ParseUint(c.Param("asset_id"), 10, 64)
+	if err != nil || assetID == 0 {
+		resp.BadRequest(c, "invalid asset id")
+		return
+	}
+	row, err := h.dao.GetTask(c.Request.Context(), taskID)
+	if err != nil {
+		writeErr(c, err)
+		return
+	}
+	if row.UserID != uid {
+		resp.NotFound(c, "任务不存在")
+		return
+	}
+	asset, err := h.dao.GetAsset(c.Request.Context(), assetID)
+	if err != nil {
+		writeErr(c, err)
+		return
+	}
+	if asset.TaskID != taskID {
+		resp.NotFound(c, "图片资产不存在")
+		return
+	}
+	if asset.Status == StatusRunning || asset.Status == StatusQueued {
+		resp.BadRequest(c, "图片正在生成中")
+		return
+	}
+	h.runner.EnqueueAssetRetry(taskID, assetID)
+	resp.OK(c, gin.H{"task_id": taskID, "asset_id": assetID, "status": StatusQueued})
+}
+
 func (h *Handler) taskView(ctx context.Context, taskID string, includeRefs bool) (gin.H, error) {
 	row, err := h.dao.GetTask(ctx, taskID)
 	if err != nil {

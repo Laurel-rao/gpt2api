@@ -230,6 +230,11 @@ func (d *DAO) UpdateTaskProgress(ctx context.Context, taskID string, progress in
 	return err
 }
 
+func (d *DAO) MarkTaskRetrying(ctx context.Context, taskID string) error {
+	_, err := d.db.ExecContext(ctx, `UPDATE ecommerce_tasks SET status='running', error='', finished_at=NULL WHERE task_id=?`, taskID)
+	return err
+}
+
 func (d *DAO) MarkTaskSuccess(ctx context.Context, taskID string, output json.RawMessage, html string) error {
 	_, err := d.db.ExecContext(ctx, `
 UPDATE ecommerce_tasks
@@ -271,6 +276,26 @@ func (d *DAO) UpdateAssetResult(ctx context.Context, id uint64, status, imageTas
 UPDATE ecommerce_assets
    SET status=?, image_task_id=?, url=?, file_id=?, error=?
  WHERE id=?`, status, imageTaskID, url, fileID, truncate(errMsg, 500), id)
+	return checkRows(res, err)
+}
+
+func (d *DAO) GetAsset(ctx context.Context, id uint64) (*Asset, error) {
+	var a Asset
+	err := d.db.GetContext(ctx, &a, `
+SELECT id, task_id, asset_type, image_task_id, url, file_id, prompt, status, error, created_at, updated_at
+  FROM ecommerce_assets
+ WHERE id=?`, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &a, err
+}
+
+func (d *DAO) MarkAssetRetrying(ctx context.Context, id uint64, imageTaskID, prompt string) error {
+	res, err := d.db.ExecContext(ctx, `
+UPDATE ecommerce_assets
+   SET status='running', image_task_id=?, url='', file_id='', prompt=?, error=''
+ WHERE id=?`, imageTaskID, prompt, id)
 	return checkRows(res, err)
 }
 
