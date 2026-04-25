@@ -70,7 +70,7 @@ export function deleteChannel(id: number) {
   return http.delete(`/api/admin/channels/${id}`)
 }
 export function testChannel(id: number):
-  Promise<{ ok: boolean; latency_ms: number; error?: string }> {
+  Promise<{ ok: boolean; latency_ms: number; model?: string; sample?: string; error?: string }> {
   return http.post(`/api/admin/channels/${id}/test`, {})
 }
 

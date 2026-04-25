@@ -2,11 +2,14 @@ package channel
 
 import (
 	"context"
+	"encoding/json"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/432539/gpt2api/internal/upstream/adapter"
+	"github.com/432539/gpt2api/internal/upstream/chatgpt"
 	"github.com/432539/gpt2api/pkg/resp"
 )
 
@@ -90,7 +93,7 @@ func (h *Handler) Delete(c *gin.Context) {
 }
 
 // POST /api/admin/channels/:id/test 测试连接。
-// 调 Adapter.Ping,结果写入 fail_count / status / last_test_*。
+// 发送一条 hi 到聊天接口,结果写入 fail_count / status / last_test_*。
 func (h *Handler) Test(c *gin.Context) {
 	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
 	ad, ch, err := h.router.BuildAdapter(c.Request.Context(), id)
@@ -98,21 +101,74 @@ func (h *Handler) Test(c *gin.Context) {
 		resp.BadRequest(c, err.Error())
 		return
 	}
+	var req struct {
+		Model   string `json:"model"`
+		Message string `json:"message"`
+	}
+	_ = c.ShouldBindJSON(&req)
+	model := req.Model
+	if model == "" {
+		model = testModelFromExtra(ch)
+	}
+	if model == "" {
+		model = defaultTestModel(ch.Type)
+	}
+	message := req.Message
+	if message == "" {
+		message = "hi"
+	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
 	defer cancel()
 
 	start := time.Now()
-	pingErr := ad.Ping(ctx)
+	stream, pingErr := ad.Chat(ctx, model, &adapter.ChatRequest{
+		Model:     model,
+		Messages:  []chatgpt.ChatMessage{{Role: "user", Content: message}},
+		Stream:    true,
+		MaxTokens: 16,
+	})
+	var sample string
+	if pingErr == nil {
+		for chunk := range stream {
+			if chunk.Err != nil {
+				pingErr = chunk.Err
+				break
+			}
+			if sample == "" && chunk.Delta != "" {
+				sample = chunk.Delta
+			}
+		}
+	}
 	latency := int(time.Since(start).Milliseconds())
 	if pingErr != nil {
 		_ = h.svc.MarkHealth(context.Background(), ch, false, pingErr.Error())
 		resp.OK(c, gin.H{
-			"ok": false, "latency_ms": latency, "error": pingErr.Error(),
+			"ok": false, "latency_ms": latency, "model": model, "error": pingErr.Error(),
 		})
 		return
 	}
 	_ = h.svc.MarkHealth(context.Background(), ch, true, "")
-	resp.OK(c, gin.H{"ok": true, "latency_ms": latency})
+	resp.OK(c, gin.H{"ok": true, "latency_ms": latency, "model": model, "sample": sample})
+}
+
+func testModelFromExtra(ch *Channel) string {
+	if !ch.Extra.Valid || ch.Extra.String == "" {
+		return ""
+	}
+	var extra struct {
+		TestModel string `json:"test_model"`
+	}
+	_ = json.Unmarshal([]byte(ch.Extra.String), &extra)
+	return extra.TestModel
+}
+
+func defaultTestModel(channelType string) string {
+	switch channelType {
+	case TypeGemini:
+		return "gemini-2.0-flash"
+	default:
+		return "gpt-4o-mini"
+	}
 }
 
 // ---- Mapping ----

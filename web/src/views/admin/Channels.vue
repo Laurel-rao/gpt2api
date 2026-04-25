@@ -30,12 +30,15 @@ const dlgState = ref<EditState>('create')
 const dlgLoading = ref(false)
 const formRef = ref<FormInstance>()
 
-const emptyForm = (): channelsApi.ChannelUpsert & { id: number } => ({
+type ChannelForm = channelsApi.ChannelUpsert & { id: number; test_model: string }
+
+const emptyForm = (): ChannelForm => ({
   id: 0,
   name: '',
   type: 'openai',
   base_url: 'https://api.openai.com',
   api_key: '',
+  test_model: 'gpt-4o-mini',
   enabled: true,
   priority: 100,
   weight: 1,
@@ -58,12 +61,14 @@ function openCreate() {
   dlgVisible.value = true
 }
 function openEdit(row: channelsApi.Channel) {
+  const extra = parseExtra(row.extra)
   Object.assign(form, {
     id: row.id,
     name: row.name,
     type: row.type,
     base_url: row.base_url,
     api_key: '', // 不回填明文,空串表示不修改
+    test_model: extra.test_model || defaultTestModel(row.type),
     enabled: row.enabled,
     priority: row.priority,
     weight: row.weight,
@@ -82,18 +87,48 @@ function onPickType(t: 'openai' | 'gemini') {
     if (!form.base_url || form.base_url.startsWith('https://api.openai')) {
       form.base_url = 'https://generativelanguage.googleapis.com'
     }
+    if (!form.test_model || form.test_model === 'gpt-4o-mini') {
+      form.test_model = 'gemini-2.0-flash'
+    }
   } else {
     if (!form.base_url || form.base_url.includes('googleapis')) {
       form.base_url = 'https://api.openai.com'
     }
+    if (!form.test_model || form.test_model === 'gemini-2.0-flash') {
+      form.test_model = 'gpt-4o-mini'
+    }
   }
+}
+
+function parseExtra(extra?: string): Record<string, any> {
+  if (!extra) return {}
+  try {
+    return JSON.parse(extra)
+  } catch {
+    return {}
+  }
+}
+
+function buildExtra(): string {
+  const extra = parseExtra(form.extra)
+  if (form.test_model) {
+    extra.test_model = form.test_model
+  } else {
+    delete extra.test_model
+  }
+  return Object.keys(extra).length ? JSON.stringify(extra) : ''
+}
+
+function defaultTestModel(t: 'openai' | 'gemini') {
+  return t === 'gemini' ? 'gemini-2.0-flash' : 'gpt-4o-mini'
 }
 
 async function submit() {
   if (!formRef.value) return
   const valid = await formRef.value.validate().catch(() => false)
   if (!valid) return
-  const payload: channelsApi.ChannelUpsert = { ...form }
+  const { id: _id, test_model: _testModel, ...rest } = form
+  const payload: channelsApi.ChannelUpsert = { ...rest, extra: buildExtra() }
   dlgLoading.value = true
   try {
     if (dlgState.value === 'create') {
@@ -126,7 +161,7 @@ async function onTest(row: channelsApi.Channel) {
   try {
     const res = await channelsApi.testChannel(row.id)
     if (res.ok) {
-      ElMessage.success(`连接正常(${res.latency_ms} ms)`)
+      ElMessage.success(`连接正常(${res.latency_ms} ms, ${res.model || 'model'})`)
     } else {
       ElMessage.error(`连接失败:${res.error || ''}`)
     }
@@ -344,7 +379,7 @@ onMounted(load)
         <el-form-item label="Base URL" prop="base_url">
           <el-input v-model="form.base_url" placeholder="例如 https://api.openai.com" />
           <div class="hint">
-            OpenAI 类填到根,<code>/v1/...</code> 由系统自动拼接;Gemini 类填到
+            OpenAI 类按填写值拼接 <code>/chat/completions</code>,不会自动补 <code>/v1</code>;Gemini 类填到
             <code>https://...googleapis.com</code> 即可。
           </div>
         </el-form-item>
@@ -355,6 +390,10 @@ onMounted(load)
             show-password
             :placeholder="dlgState === 'edit' ? '留空表示不修改' : '请输入 API Key'"
           />
+        </el-form-item>
+        <el-form-item label="测试模型">
+          <el-input v-model="form.test_model" placeholder="例如 gpt-4o-mini 或 gemini-2.0-flash" />
+          <div class="hint">点击“测试”时会用该模型发送 <code>hi</code> 检查聊天接口是否可用。</div>
         </el-form-item>
         <el-form-item label="优先级">
           <el-input-number v-model="form.priority" :min="0" :max="1000" />

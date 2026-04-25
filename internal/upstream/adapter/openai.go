@@ -13,11 +13,11 @@ import (
 	"time"
 )
 
-// openaiAdapter 兼容 OpenAI /v1/chat/completions、/v1/images/generations。
+// openaiAdapter 兼容 OpenAI chat/completions、images/generations。
 //
 // 许多第三方中转/聚合站(one-api、new-api、deepseek 官方、moonshot 官方、
 // kimi 兼容端点等)都遵循 OpenAI 接口规范,差别只在 BaseURL 和 APIKey。
-// 因此这个适配器同时适用:BaseURL 允许带或不带 /v1 后缀,我们做一次规整。
+// BaseURL 按用户填写值原样作为接口根路径,不会自动补 /v1。
 type openaiAdapter struct {
 	baseURL string
 	apiKey  string
@@ -27,9 +27,6 @@ type openaiAdapter struct {
 // NewOpenAI 构造一个 OpenAI 兼容适配器。
 func NewOpenAI(p Params) *openaiAdapter {
 	base := strings.TrimRight(p.BaseURL, "/")
-	// 自动去尾部的 /v1,底下拼接时再补;用户填 https://api.openai.com 和
-	// https://api.openai.com/v1 都要能用。
-	base = strings.TrimSuffix(base, "/v1")
 	timeout := time.Duration(p.TimeoutS) * time.Second
 	if timeout <= 0 {
 		timeout = 120 * time.Second
@@ -44,10 +41,10 @@ func NewOpenAI(p Params) *openaiAdapter {
 func (a *openaiAdapter) Type() string { return "openai" }
 
 func (a *openaiAdapter) endpoint(path string) string {
-	return a.baseURL + "/v1" + path
+	return a.baseURL + path
 }
 
-// Chat 发起 OpenAI /v1/chat/completions。流式和非流式都转成统一的 ChatStream。
+// Chat 发起 OpenAI chat/completions。流式和非流式都转成统一的 ChatStream。
 func (a *openaiAdapter) Chat(ctx context.Context, upstreamModel string, req *ChatRequest) (ChatStream, error) {
 	payload := map[string]any{
 		"model":    upstreamModel,
@@ -191,7 +188,7 @@ func parseOpenAINonStream(body io.ReadCloser, ch chan<- ChatChunk) {
 	}}
 }
 
-// ImageGenerate 调用 /v1/images/generations(DALL·E 3 / gpt-image-1 等)。
+// ImageGenerate 调用 images/generations(DALL·E 3 / gpt-image-1 等)。
 func (a *openaiAdapter) ImageGenerate(ctx context.Context, upstreamModel string, req *ImageRequest) (*ImageResult, error) {
 	n := req.N
 	if n <= 0 {
@@ -226,8 +223,8 @@ func (a *openaiAdapter) ImageGenerate(ctx context.Context, upstreamModel string,
 	}
 	var obj struct {
 		Data []struct {
-			URL    string `json:"url"`
-			B64    string `json:"b64_json"`
+			URL string `json:"url"`
+			B64 string `json:"b64_json"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&obj); err != nil {
@@ -248,7 +245,7 @@ func (a *openaiAdapter) ImageGenerate(ctx context.Context, upstreamModel string,
 	return r, nil
 }
 
-// Ping 发一次 /v1/models 探活。大部分兼容站都实现了这个端点。
+// Ping 发一次 models 探活。大部分兼容站都实现了这个端点。
 func (a *openaiAdapter) Ping(ctx context.Context) error {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		a.endpoint("/models"), nil)
