@@ -55,6 +55,7 @@ const assets = computed(() => activeTask.value?.assets || [])
 const running = computed(() => ['queued', 'running'].includes(activeTask.value?.status || ''))
 const contentLoading = computed(() => running.value && !output.value?.product_title)
 const assetLoading = (status: string) => ['queued', 'running'].includes(status)
+const runningAssetCount = computed(() => assets.value.filter((a) => assetLoading(a.status) && !a.url).length)
 
 async function loadOptions() {
   const d = await getEcommerceOptions()
@@ -255,11 +256,7 @@ onBeforeUnmount(stopPolling)
       </section>
 
       <section class="right-pane">
-        <div
-          class="card-block result-card"
-          v-loading="running"
-          element-loading-text="正在生成电商内容..."
-        >
+        <div class="card-block result-card">
           <div class="flex-between">
             <h2 class="page-title">生成结果</h2>
             <el-progress v-if="activeTask" :percentage="activeTask.progress || 0" :status="activeTask.status === 'failed' ? 'exception' : undefined" style="width:220px" />
@@ -270,6 +267,10 @@ onBeforeUnmount(stopPolling)
               <el-tag :type="statusType[activeTask.status] || 'info'">{{ statusText[activeTask.status] || activeTask.status }}</el-tag>
               <span>{{ activeTask.task_id }}</span>
               <span>{{ activeTask.prompt_name }} / {{ activeTask.style_name }}</span>
+            </div>
+            <div v-if="running" class="inline-loading">
+              <el-icon class="spin"><Loading /></el-icon>
+              <span>{{ runningAssetCount ? `${runningAssetCount} 张图片处理中` : '正在生成电商内容' }}</span>
             </div>
             <el-alert v-if="activeTask.error" type="error" :closable="false" :title="activeTask.error" />
 
@@ -290,15 +291,19 @@ onBeforeUnmount(stopPolling)
                 v-for="asset in assets"
                 :key="asset.id"
                 class="asset-item"
-                v-loading="assetLoading(asset.status) && !asset.url"
-                element-loading-text="生成中..."
               >
                 <div class="asset-head">
                   <b>{{ assetText[asset.asset_type] || asset.asset_type }}</b>
                   <el-tag size="small" :type="statusType[asset.status] || 'info'">{{ statusText[asset.status] || asset.status }}</el-tag>
                 </div>
                 <img v-if="asset.url" :src="asset.url" :alt="asset.asset_type" />
-                <div v-else class="asset-empty">{{ asset.error || (assetLoading(asset.status) ? '' : '等待图片生成') }}</div>
+                <div v-else class="asset-empty" :class="{ pending: assetLoading(asset.status) }">
+                  <template v-if="assetLoading(asset.status)">
+                    <el-icon class="spin"><Loading /></el-icon>
+                    <span>图片生成中</span>
+                  </template>
+                  <template v-else>{{ asset.error || '等待图片生成' }}</template>
+                </div>
               </div>
             </div>
 
@@ -350,6 +355,20 @@ onBeforeUnmount(stopPolling)
 .history-row.active { color: var(--el-color-primary); }
 .result-card { min-height: calc(100vh - 112px); }
 .result-meta { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; color: var(--el-text-color-secondary); font-size: 13px; }
+.inline-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding: 7px 10px;
+  border: 1px solid var(--el-color-warning-light-7);
+  border-radius: 6px;
+  color: var(--el-color-warning-dark-2);
+  background: var(--el-color-warning-light-9);
+  font-size: 13px;
+}
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .copy-block {
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
@@ -369,6 +388,17 @@ onBeforeUnmount(stopPolling)
 }
 .asset-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
 .asset-empty { height: 160px; display: grid; place-items: center; color: var(--el-text-color-secondary); background: var(--el-fill-color-lighter); border-radius: 6px; text-align: center; padding: 10px; }
+.asset-empty.pending {
+  gap: 8px;
+  color: var(--el-color-primary);
+  background: linear-gradient(90deg, var(--el-fill-color-lighter), var(--el-fill-color-light), var(--el-fill-color-lighter));
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
 .preview-tabs { margin-top: 18px; }
 .detail-preview {
   border: 1px solid var(--el-border-color-lighter);

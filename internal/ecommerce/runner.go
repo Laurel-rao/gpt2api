@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -101,14 +102,17 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 	if err != nil {
 		return err
 	}
-	var assetErrors []string
-	for i, assetType := range assetTypes {
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var completed int
+	assetErrors := make([]string, 0)
+	for _, assetType := range assetTypes {
 		assetPrompt := r.buildImagePrompt(*platform, *prompt, *style, out, task.Requirement, assetType)
-		asset := &Asset{TaskID: taskID, AssetType: assetType, Prompt: assetPrompt, Status: StatusRunning}
+		imgTaskID := imgpkg.GenerateTaskID()
+		asset := &Asset{TaskID: taskID, AssetType: assetType, ImageTaskID: imgTaskID, Prompt: assetPrompt, Status: StatusRunning}
 		if err := r.dao.CreateAsset(ctx, asset); err != nil {
 			return err
 		}
-		imgTaskID := imgpkg.GenerateTaskID()
 		if r.imageDAO != nil {
 			_ = r.imageDAO.Create(ctx, &imgpkg.Task{
 				TaskID:  imgTaskID,
@@ -120,42 +124,63 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 				Status:  imgpkg.StatusDispatched,
 			})
 		}
-		res := r.imageRun.Run(ctx, imgpkg.RunOptions{
-			TaskID:        imgTaskID,
-			UserID:        task.UserID,
-			ModelID:       imageModel.ID,
-			UpstreamModel: imageModel.UpstreamModelSlug,
-			Prompt:        assetPrompt,
-			N:             1,
-			MaxAttempts:   1,
-			References:    refs,
-		})
-		if res.Status != imgpkg.StatusSuccess {
-			_ = r.dao.UpdateAssetResult(ctx, asset.ID, StatusFailed, imgTaskID, "", "", res.ErrorCode)
-			assetErrors = append(assetErrors, fmt.Sprintf("%s:%s", assetType, res.ErrorCode))
-			_ = r.dao.UpdateTaskProgress(ctx, taskID, 35+(i+1)*10)
-			continue
-		}
-		url := ""
-		fileID := ""
-		if len(res.SignedURLs) > 0 {
-			url = imgpkg.BuildProxyURL(imgTaskID, 0, 24*time.Hour)
-		}
-		if len(res.FileIDs) > 0 {
-			fileID = strings.TrimPrefix(res.FileIDs[0], "sed:")
-		}
-		_ = r.dao.UpdateAssetResult(ctx, asset.ID, StatusSuccess, imgTaskID, url, fileID, "")
-		_ = r.dao.UpdateTaskProgress(ctx, taskID, 35+(i+1)*10)
+		wg.Add(1)
+		go func(assetID uint64, assetType, imgTaskID, assetPrompt string) {
+			defer wg.Done()
+			res := r.imageRun.Run(ctx, imgpkg.RunOptions{
+				TaskID:        imgTaskID,
+				UserID:        task.UserID,
+				ModelID:       imageModel.ID,
+				UpstreamModel: imageModel.UpstreamModelSlug,
+				Prompt:        assetPrompt,
+				N:             1,
+				MaxAttempts:   1,
+				References:    refs,
+			})
+			if res.Status != imgpkg.StatusSuccess {
+				errCode := res.ErrorCode
+				if errCode == "" {
+					errCode = res.ErrorMessage
+				}
+				if errCode == "" {
+					errCode = "unknown"
+				}
+				_ = r.dao.UpdateAssetResult(context.Background(), assetID, StatusFailed, imgTaskID, "", "", errCode)
+				mu.Lock()
+				assetErrors = append(assetErrors, fmt.Sprintf("%s:%s", assetType, errCode))
+				completed++
+				progress := 35 + completed*10
+				mu.Unlock()
+				_ = r.dao.UpdateTaskProgress(context.Background(), taskID, progress)
+				return
+			}
+			url := ""
+			fileID := ""
+			if len(res.SignedURLs) > 0 {
+				url = imgpkg.BuildProxyURL(imgTaskID, 0, 24*time.Hour)
+			}
+			if len(res.FileIDs) > 0 {
+				fileID = strings.TrimPrefix(res.FileIDs[0], "sed:")
+			}
+			_ = r.dao.UpdateAssetResult(context.Background(), assetID, StatusSuccess, imgTaskID, url, fileID, "")
+			mu.Lock()
+			completed++
+			progress := 35 + completed*10
+			mu.Unlock()
+			_ = r.dao.UpdateTaskProgress(context.Background(), taskID, progress)
+		}(asset.ID, assetType, imgTaskID, assetPrompt)
 	}
-	assets, err := r.dao.ListAssets(ctx, taskID)
+	wg.Wait()
+	dbCtx := context.Background()
+	assets, err := r.dao.ListAssets(dbCtx, taskID)
 	if err != nil {
 		return err
 	}
 	html := buildHTML(out, assets)
 	if len(assetErrors) > 0 {
-		return r.dao.MarkTaskFailedWithOutput(ctx, taskID, "图片生成失败: "+strings.Join(assetErrors, "; "), outBytes, html)
+		return r.dao.MarkTaskFailedWithOutput(dbCtx, taskID, "图片生成失败: "+strings.Join(assetErrors, "; "), outBytes, html)
 	}
-	if err := r.dao.MarkTaskSuccess(ctx, taskID, outBytes, html); err != nil {
+	if err := r.dao.MarkTaskSuccess(dbCtx, taskID, outBytes, html); err != nil {
 		return err
 	}
 	return nil
