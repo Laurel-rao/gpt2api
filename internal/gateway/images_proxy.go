@@ -77,6 +77,11 @@ func (h *ImagesHandler) ImageProxy(c *gin.Context) {
 		c.AbortWithStatus(http.StatusBadRequest)
 		return
 	}
+	thumbKB, err := strconv.Atoi(c.DefaultQuery("thumb_kb", "0"))
+	if err != nil || thumbKB < 0 || thumbKB > 64 {
+		c.AbortWithStatus(http.StatusBadRequest)
+		return
+	}
 	expMs, err := strconv.ParseInt(expStr, 10, 64)
 	if err != nil {
 		c.AbortWithStatus(http.StatusBadRequest)
@@ -143,6 +148,9 @@ func (h *ImagesHandler) ImageProxy(c *gin.Context) {
 	// 按需放大:若 task 上打了 upscale 标记,先走进程内 LRU,命中则直接返回。
 	// 未命中再拉原图,放大成 PNG 后写入缓存。
 	scale := image.ValidateUpscale(t.Upscale)
+	if thumbKB > 0 {
+		scale = ""
+	}
 	cacheKey := ""
 	if scale != "" {
 		cacheKey = fmt.Sprintf("%s|%d|%s", taskID, idx, scale)
@@ -163,6 +171,18 @@ func (h *ImagesHandler) ImageProxy(c *gin.Context) {
 	}
 	if ct == "" {
 		ct = "image/png"
+	}
+	if thumbKB > 0 {
+		thumbBytes, thumbCT, err := image.MakeThumbJPEG(body, thumbKB*1024)
+		if err != nil {
+			logger.L().Warn("image proxy thumb",
+				zap.Error(err), zap.String("task_id", taskID),
+				zap.Int("thumb_kb", thumbKB))
+		} else {
+			body = thumbBytes
+			ct = thumbCT
+			c.Header("X-Thumb-KB", strconv.Itoa(thumbKB))
+		}
 	}
 
 	if scale != "" {
