@@ -113,14 +113,25 @@ const router = createRouter({
   routes,
 })
 
+function reloadRouteOnce(path: string) {
+  const key = 'gpt2api.route-reload'
+  if (sessionStorage.getItem(key) === path) return
+  sessionStorage.setItem(key, path)
+  window.location.assign(path)
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('vite:preloadError', (event) => {
+    event.preventDefault()
+    reloadRouteOnce(window.location.pathname + window.location.search + window.location.hash)
+  })
+}
+
 router.onError((err, to) => {
   const msg = String(err?.message || err || '')
-  const isChunkLoadError = /dynamically imported module|Failed to fetch|Importing a module script failed|Loading chunk/i.test(msg)
+  const isChunkLoadError = /dynamically imported module|Failed to fetch|Importing a module script failed|Loading chunk|preload|module script|CSS/i.test(msg)
   if (!isChunkLoadError) return
-  const key = 'gpt2api.route-reload'
-  if (sessionStorage.getItem(key) === to.fullPath) return
-  sessionStorage.setItem(key, to.fullPath)
-  window.location.assign(to.fullPath)
+  reloadRouteOnce(to.fullPath)
 })
 
 router.afterEach(() => {

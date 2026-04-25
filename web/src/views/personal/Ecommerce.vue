@@ -618,6 +618,16 @@ onBeforeUnmount(() => {
                   <div class="asset-status">
                     <span>{{ assetElapsed(asset) }}</span>
                     <el-tag size="small" :type="statusType[asset.status] || 'info'">{{ statusText[asset.status] || asset.status }}</el-tag>
+                    <el-button
+                      v-if="running && assetLoading(asset.status)"
+                      size="small"
+                      type="danger"
+                      plain
+                      :loading="cancelingTask"
+                      @click.stop="cancelTask"
+                    >
+                      中断
+                    </el-button>
                   </div>
                 </div>
                 <div
@@ -804,7 +814,8 @@ onBeforeUnmount(() => {
   gap: 6px;
   color: var(--el-text-color-secondary);
   font-size: 12px;
-  white-space: nowrap;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 .asset-preview {
   position: relative;
