@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"strconv"
 	"strings"
 
@@ -58,6 +59,10 @@ type createTaskReq struct {
 	StyleTemplateID  uint64   `json:"style_template_id"`
 	Requirement      string   `json:"requirement"`
 	ReferenceImages  []string `json:"reference_images"`
+}
+
+type retryAssetReq struct {
+	Prompt string `json:"prompt"`
 }
 
 func (h *Handler) Options(c *gin.Context) {
@@ -197,6 +202,11 @@ func (h *Handler) RetryAsset(c *gin.Context) {
 		resp.Unauthorized(c, "not logged in")
 		return
 	}
+	var req retryAssetReq
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		resp.BadRequest(c, "invalid request")
+		return
+	}
 	taskID := c.Param("id")
 	assetID, err := strconv.ParseUint(c.Param("asset_id"), 10, 64)
 	if err != nil || assetID == 0 {
@@ -225,7 +235,7 @@ func (h *Handler) RetryAsset(c *gin.Context) {
 		resp.BadRequest(c, "图片正在生成中")
 		return
 	}
-	h.runner.EnqueueAssetRetry(taskID, assetID)
+	h.runner.EnqueueAssetRetry(taskID, assetID, truncate(strings.TrimSpace(req.Prompt), 1000))
 	resp.OK(c, gin.H{"task_id": taskID, "asset_id": assetID, "status": StatusQueued})
 }
 

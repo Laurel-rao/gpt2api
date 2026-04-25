@@ -261,6 +261,7 @@ func main() {
 
 	// 把 resolver 注入到图片代理端点:下载图片时按 account_id 解出 AT/cookies/proxy。
 	imagesH.ImageAccResolver = acctProxyResolver
+	ecommerceRunner.SetImageAccountResolver(acctProxyResolver)
 
 	accBgCtx, cancelAccBg := context.WithCancel(context.Background())
 	defer cancelAccBg()

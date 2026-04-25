@@ -33,11 +33,17 @@ type AccountSecretResolver interface {
 	DecryptCookies(ctx context.Context, accountID uint64) (string, error)
 }
 
+type ImageAccountResolver interface {
+	AuthToken(ctx context.Context, accountID uint64) (at, deviceID, cookies string, err error)
+	ProxyURL(ctx context.Context, accountID uint64) string
+}
+
 type Runner struct {
 	dao              *DAO
 	models           *modelpkg.Registry
 	scheduler        *scheduler.Scheduler
 	acc              AccountSecretResolver
+	imageAcc         ImageAccountResolver
 	channels         *channel.Router
 	imageDAO         *imgpkg.DAO
 	imageRun         *imgpkg.Runner
@@ -65,6 +71,10 @@ func NewRunner(dao *DAO, models *modelpkg.Registry, sched *scheduler.Scheduler, 
 	}
 }
 
+func (r *Runner) SetImageAccountResolver(resolver ImageAccountResolver) {
+	r.imageAcc = resolver
+}
+
 func (r *Runner) Enqueue(taskID string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
@@ -80,11 +90,11 @@ func (r *Runner) Enqueue(taskID string) {
 	}()
 }
 
-func (r *Runner) EnqueueAssetRetry(taskID string, assetID uint64) {
+func (r *Runner) EnqueueAssetRetry(taskID string, assetID uint64, extraPrompt string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
-		if err := r.RetryAsset(ctx, taskID, assetID); err != nil {
+		if err := r.RetryAsset(ctx, taskID, assetID, extraPrompt); err != nil {
 			logger.L().Warn("ecommerce asset retry failed",
 				zap.String("task_id", taskID), zap.Uint64("asset_id", assetID), zap.Error(err))
 		}
@@ -334,7 +344,7 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 	return nil
 }
 
-func (r *Runner) RetryAsset(ctx context.Context, taskID string, assetID uint64) error {
+func (r *Runner) RetryAsset(ctx context.Context, taskID string, assetID uint64, extraPrompt string) error {
 	task, err := r.dao.GetTask(ctx, taskID)
 	if err != nil {
 		return err
@@ -374,7 +384,7 @@ func (r *Runner) RetryAsset(ctx context.Context, taskID string, assetID uint64) 
 	if err != nil {
 		return err
 	}
-	assetPrompt := r.buildImagePrompt(*platform, *prompt, *style, out, task.Requirement, asset.AssetType)
+	assetPrompt := appendRetryPrompt(r.buildImagePrompt(*platform, *prompt, *style, out, task.Requirement, asset.AssetType), extraPrompt)
 	spec := out.ImageSpecs[asset.AssetType]
 	imgTaskID := imgpkg.GenerateTaskID()
 	if err := r.dao.MarkTaskRetrying(ctx, taskID); err != nil {
@@ -401,6 +411,7 @@ func (r *Runner) RetryAsset(ctx context.Context, taskID string, assetID uint64) 
 	if err := r.dao.MarkAssetRetrying(ctx, assetID, imgTaskID, assetPrompt); err != nil {
 		return err
 	}
+	refImages := r.retryReferences(ctx, taskID, *asset, refs)
 	res := r.imageRun.Run(ctx, imgpkg.RunOptions{
 		TaskID:        imgTaskID,
 		UserID:        task.UserID,
@@ -410,7 +421,7 @@ func (r *Runner) RetryAsset(ctx context.Context, taskID string, assetID uint64) 
 		N:             1,
 		Size:          spec.Size,
 		MaxAttempts:   1,
-		References:    referencesForAsset(asset.AssetType, refs),
+		References:    refImages,
 	})
 	if res.Status != imgpkg.StatusSuccess {
 		errCode := imageErrorCode(res)
@@ -968,6 +979,85 @@ func assetCompositionEN(assetType string) string {
 func referencesForAsset(assetType string, refs []imgpkg.ReferenceImage) []imgpkg.ReferenceImage {
 	// 所有图片都使用参考图锁定商品外观，差异化交给每类 asset 的构图规则控制。
 	return refs
+}
+
+func appendRetryPrompt(base, extra string) string {
+	extra = strings.TrimSpace(extra)
+	if extra == "" {
+		return base
+	}
+	return base + "\n\n重试追加描述词（高优先级）：\n" + extra + "\n请在保持商品主体一致的前提下，优先体现以上追加描述词；这是本次图生图重试的主要修改方向。"
+}
+
+func (r *Runner) retryReferences(ctx context.Context, taskID string, asset Asset, fallback []imgpkg.ReferenceImage) []imgpkg.ReferenceImage {
+	if asset.Status == StatusSuccess && asset.ImageTaskID != "" {
+		if refs, err := r.referenceFromImageTask(ctx, asset.ImageTaskID, asset.AssetType+"-retry-reference.png"); err == nil {
+			return refs
+		} else {
+			logger.L().Warn("ecommerce retry current image reference failed",
+				zap.String("task_id", taskID), zap.Uint64("asset_id", asset.ID), zap.Error(err))
+		}
+	}
+	if asset.AssetType != AssetWhite {
+		if assets, err := r.dao.ListAssets(ctx, taskID); err == nil {
+			for _, item := range assets {
+				if item.AssetType != AssetWhite || item.Status != StatusSuccess || item.ImageTaskID == "" {
+					continue
+				}
+				if refs, err := r.referenceFromImageTask(ctx, item.ImageTaskID, "white-retry-reference.png"); err == nil {
+					return refs
+				} else {
+					logger.L().Warn("ecommerce retry white image reference failed",
+						zap.String("task_id", taskID), zap.Uint64("asset_id", asset.ID), zap.Error(err))
+				}
+				break
+			}
+		}
+	}
+	return referencesForAsset(asset.AssetType, fallback)
+}
+
+func (r *Runner) referenceFromImageTask(ctx context.Context, taskID, fileName string) ([]imgpkg.ReferenceImage, error) {
+	if r.imageDAO == nil || r.imageAcc == nil {
+		return nil, errors.New("image reference resolver not ready")
+	}
+	imgTask, err := r.imageDAO.Get(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	if imgTask.Status != imgpkg.StatusSuccess {
+		return nil, fmt.Errorf("image task status %s", imgTask.Status)
+	}
+	refs := imgTask.DecodeFileIDs()
+	if len(refs) == 0 || imgTask.ConversationID == "" || imgTask.AccountID == 0 {
+		return nil, errors.New("image task missing download metadata")
+	}
+	at, deviceID, cookies, err := r.imageAcc.AuthToken(ctx, imgTask.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	cli, err := chatgpt.New(chatgpt.Options{
+		AuthToken: at,
+		DeviceID:  deviceID,
+		ProxyURL:  r.imageAcc.ProxyURL(ctx, imgTask.AccountID),
+		Cookies:   cookies,
+		Timeout:   90 * time.Second,
+	})
+	if err != nil {
+		return nil, err
+	}
+	signedURL, err := cli.ImageDownloadURL(ctx, imgTask.ConversationID, refs[0])
+	if err != nil {
+		return nil, err
+	}
+	data, _, err := cli.FetchImage(ctx, signedURL, maxReferenceImageBytes)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxReferenceImageBytes {
+		return nil, fmt.Errorf("参考图超过 %dMB", maxReferenceImageBytes/1024/1024)
+	}
+	return []imgpkg.ReferenceImage{{Data: data, FileName: fileName}}, nil
 }
 
 func whiteReferenceFromResult(ctx context.Context, res *imgpkg.RunResult) ([]imgpkg.ReferenceImage, error) {
