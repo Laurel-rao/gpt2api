@@ -64,6 +64,7 @@ type RunOptions struct {
 	PerAttemptTimeout time.Duration    // 单次尝试总超时,默认 6min(覆盖 SSE + PollMaxWait + 缓冲)
 	PollMaxWait       time.Duration    // SSE 没直出时,轮询 conversation 的最长等待,默认 300s
 	References        []ReferenceImage // 图生图/编辑:参考图
+	ReturnImageBytes  bool             // 成功后同步下载图片字节,用于内部二次图生图
 }
 
 // RunResult 是单次生图的输出。
@@ -73,6 +74,7 @@ type RunResult struct {
 	AccountID      uint64
 	FileIDs        []string // chatgpt.com 侧的原始 ref("sed:" 前缀表示 sediment)
 	SignedURLs     []string // 直接可访问的签名 URL(15 分钟有效)
+	ImageBytes     [][]byte // ReturnImageBytes=true 时填充
 	ContentTypes   []string
 	ErrorCode      string
 	ErrorMessage   string
@@ -515,6 +517,21 @@ func (r *Runner) runOnce(ctx context.Context, opt RunOptions, result *RunResult)
 	}
 	if len(signedURLs) == 0 {
 		return false, ErrDownload, errors.New("all download urls failed")
+	}
+	if opt.ReturnImageBytes {
+		for i, signedURL := range signedURLs {
+			body, ct, err := cli.FetchImage(ctx, signedURL, 20*1024*1024)
+			if err != nil {
+				logger.L().Warn("image runner fetch result bytes failed",
+					zap.String("task_id", opt.TaskID), zap.Error(err))
+				return false, ErrDownload, err
+			}
+			result.ImageBytes = append(result.ImageBytes, body)
+			if ct == "" {
+				ct = "image/png"
+			}
+			contentTypes[i] = ct
+		}
 	}
 
 	logger.L().Info("image runner result summary",

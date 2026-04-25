@@ -244,15 +244,16 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 		defer release()
 		_ = r.dao.UpdateAssetResult(context.Background(), job.id, StatusRunning, job.imgTaskID, "", "", "")
 		res := r.imageRun.Run(ctx, imgpkg.RunOptions{
-			TaskID:        job.imgTaskID,
-			UserID:        task.UserID,
-			ModelID:       imageModel.ID,
-			UpstreamModel: imageModel.UpstreamModelSlug,
-			Prompt:        job.prompt,
-			N:             1,
-			Size:          job.spec.Size,
-			MaxAttempts:   1,
-			References:    refImages,
+			TaskID:           job.imgTaskID,
+			UserID:           task.UserID,
+			ModelID:          imageModel.ID,
+			UpstreamModel:    imageModel.UpstreamModelSlug,
+			Prompt:           job.prompt,
+			N:                1,
+			Size:             job.spec.Size,
+			MaxAttempts:      1,
+			References:       refImages,
+			ReturnImageBytes: job.assetTyp == AssetWhite,
 		})
 		if res.Status != imgpkg.StatusSuccess {
 			errCode := res.ErrorCode
@@ -970,6 +971,9 @@ func referencesForAsset(assetType string, refs []imgpkg.ReferenceImage) []imgpkg
 func whiteReferenceFromResult(ctx context.Context, res *imgpkg.RunResult) ([]imgpkg.ReferenceImage, error) {
 	if res == nil || res.Status != imgpkg.StatusSuccess {
 		return nil, errors.New("白底图未生成成功")
+	}
+	if len(res.ImageBytes) > 0 && len(res.ImageBytes[0]) > 0 {
+		return []imgpkg.ReferenceImage{{Data: res.ImageBytes[0], FileName: "white-reference.png"}}, nil
 	}
 	if len(res.SignedURLs) == 0 || strings.TrimSpace(res.SignedURLs[0]) == "" {
 		return nil, errors.New("白底图缺少下载地址")
