@@ -269,6 +269,7 @@ func (h *ImagesHandler) ImageGenerations(c *gin.Context) {
 		UpstreamModel: m.UpstreamModelSlug,
 		Prompt:        maybeAppendClaritySuffix(req.Prompt),
 		N:             req.N,
+		Size:          req.Size,
 		MaxAttempts:   maxAttempts,
 		References:    refs,
 	})
@@ -472,6 +473,7 @@ func (h *ImagesHandler) handleChatAsImage(c *gin.Context, rec *usage.Log, ak *ap
 		UpstreamModel: m.UpstreamModelSlug,
 		Prompt:        maybeAppendClaritySuffix(prompt),
 		N:             1,
+		Size:          "1024x1024",
 		MaxAttempts:   2,
 	})
 	rec.AccountID = res.AccountID
@@ -786,6 +788,7 @@ func (h *ImagesHandler) ImageEdits(c *gin.Context) {
 		UpstreamModel: m.UpstreamModelSlug,
 		Prompt:        maybeAppendClaritySuffix(prompt),
 		N:             n,
+		Size:          size,
 		MaxAttempts:   1, // 带参考图时只跑一次,避免重复上传
 		References:    refs,
 	})

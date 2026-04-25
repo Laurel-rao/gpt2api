@@ -111,8 +111,14 @@ func normalizeOutput(out *Output, requirement string) {
 	if out.ImageSpecs == nil {
 		out.ImageSpecs = map[string]ImageSpec{}
 	}
-	for k, spec := range defaultImageSpecs() {
+	defaults := defaultImageSpecs()
+	for k, spec := range defaults {
 		out.ImageSpecs[k] = normalizeImageSpec(out.ImageSpecs[k], spec)
+	}
+	if allImageSpecsSame(out.ImageSpecs) {
+		for k, spec := range defaults {
+			out.ImageSpecs[k] = spec
+		}
 	}
 	normalizeImageTextPlans(out)
 }
@@ -190,17 +196,21 @@ func normalizeImageTextPlans(out *Output) {
 
 func defaultImageSpecs() map[string]ImageSpec {
 	return map[string]ImageSpec{
-		AssetTitle:  {Size: "1024x1024", AspectRatio: "1:1", Clarity: "high"},
+		AssetTitle:  {Size: "1792x1024", AspectRatio: "7:4", Clarity: "high"},
 		AssetMain:   {Size: "1024x1024", AspectRatio: "1:1", Clarity: "high"},
 		AssetWhite:  {Size: "1024x1024", AspectRatio: "1:1", Clarity: "high"},
-		AssetDetail: {Size: "1024x1536", AspectRatio: "2:3", Clarity: "high"},
-		AssetPrice:  {Size: "1024x1024", AspectRatio: "1:1", Clarity: "high"},
+		AssetDetail: {Size: "1024x1792", AspectRatio: "4:7", Clarity: "high"},
+		AssetPrice:  {Size: "1024x1792", AspectRatio: "4:7", Clarity: "high"},
 	}
 }
 
 func normalizeImageSpec(spec, fallback ImageSpec) ImageSpec {
 	if spec.Size == "" {
 		spec.Size = fallback.Size
+	}
+	spec.Size = normalizeImageSize(spec.Size, fallback.Size)
+	if spec.AspectRatio == "" {
+		spec.AspectRatio = aspectRatioForSize(spec.Size)
 	}
 	if spec.AspectRatio == "" {
 		spec.AspectRatio = fallback.AspectRatio
@@ -209,6 +219,53 @@ func normalizeImageSpec(spec, fallback ImageSpec) ImageSpec {
 		spec.Clarity = fallback.Clarity
 	}
 	return spec
+}
+
+func normalizeImageSize(size, fallback string) string {
+	size = strings.ToLower(strings.TrimSpace(size))
+	size = strings.ReplaceAll(size, "*", "x")
+	size = strings.ReplaceAll(size, "×", "x")
+	switch size {
+	case "1024x1024", "1792x1024", "1024x1792":
+		return size
+	case "1024x1536", "1024x1365", "1024x1280":
+		return "1024x1792"
+	case "1536x1024", "1365x1024", "1280x1024":
+		return "1792x1024"
+	default:
+		return fallback
+	}
+}
+
+func aspectRatioForSize(size string) string {
+	switch size {
+	case "1024x1024":
+		return "1:1"
+	case "1792x1024":
+		return "7:4"
+	case "1024x1792":
+		return "4:7"
+	default:
+		return ""
+	}
+}
+
+func allImageSpecsSame(specs map[string]ImageSpec) bool {
+	first := ""
+	for _, assetType := range assetTypes {
+		size := specs[assetType].Size
+		if size == "" {
+			continue
+		}
+		if first == "" {
+			first = size
+			continue
+		}
+		if size != first {
+			return false
+		}
+	}
+	return first != ""
 }
 
 func formatUnifiedInfo(out Output) string {

@@ -56,9 +56,10 @@ type RunOptions struct {
 	UserID            uint64
 	KeyID             uint64
 	ModelID           uint64
-	UpstreamModel     string           // 默认 "auto"(由上游根据 system_hints 挑选图像模型)
+	UpstreamModel     string // 默认 "auto"(由上游根据 system_hints 挑选图像模型)
 	Prompt            string
 	N                 int              // 期望返回的图片张数;够数 Poll 就立即返回(速度优先)
+	Size              string           // 1024x1024 / 1792x1024 / 1024x1792,ChatGPT 通路会转成提示词约束
 	MaxAttempts       int              // 跨账号重试次数,仅用于无账号/限流等硬错误,默认 1
 	PerAttemptTimeout time.Duration    // 单次尝试总超时,默认 6min(覆盖 SSE + PollMaxWait + 缓冲)
 	PollMaxWait       time.Duration    // SSE 没直出时,轮询 conversation 的最长等待,默认 300s
@@ -67,7 +68,7 @@ type RunOptions struct {
 
 // RunResult 是单次生图的输出。
 type RunResult struct {
-	Status         string   // success / failed
+	Status         string // success / failed
 	ConversationID string
 	AccountID      uint64
 	FileIDs        []string // chatgpt.com 侧的原始 ref("sed:" 前缀表示 sediment)
@@ -100,6 +101,7 @@ func (r *Runner) Run(ctx context.Context, opt RunOptions) *RunResult {
 	if opt.N <= 0 {
 		opt.N = 1
 	}
+	opt.Prompt = appendImageSizeInstruction(opt.Prompt, opt.Size)
 
 	result := &RunResult{Status: StatusFailed, ErrorCode: ErrUnknown}
 
@@ -226,9 +228,9 @@ func (r *Runner) runParallel(ctx context.Context, opt RunOptions, start time.Tim
 	go func() { wg.Wait(); close(ch) }()
 
 	var (
-		successCount  int
-		lastErrCode   string
-		lastErrMsg    string
+		successCount int
+		lastErrCode  string
+		lastErrMsg   string
 	)
 	for sr := range ch {
 		if sr.ok {
@@ -557,6 +559,39 @@ func (r *Runner) classifyUpstream(err error) string {
 		return ErrNetworkTransient
 	}
 	return ErrUpstream
+}
+
+func appendImageSizeInstruction(prompt, size string) string {
+	size = normalizeRunImageSize(size)
+	if size == "" {
+		return prompt
+	}
+	aspect := map[string]string{
+		"1024x1024": "1:1",
+		"1792x1024": "7:4",
+		"1024x1792": "4:7",
+	}[size]
+	line := fmt.Sprintf("图像尺寸要求：画布尺寸必须按 %s（比例 %s）构图。", size, aspect)
+	if strings.Contains(prompt, line) {
+		return prompt
+	}
+	return strings.TrimSpace(prompt) + "\n\n" + line
+}
+
+func normalizeRunImageSize(size string) string {
+	size = strings.ToLower(strings.TrimSpace(size))
+	size = strings.ReplaceAll(size, "*", "x")
+	size = strings.ReplaceAll(size, "×", "x")
+	switch size {
+	case "1024x1024", "1792x1024", "1024x1792":
+		return size
+	case "1024x1536", "1024x1365", "1024x1280":
+		return "1024x1792"
+	case "1536x1024", "1365x1024", "1280x1024":
+		return "1792x1024"
+	default:
+		return ""
+	}
 }
 
 // GenerateTaskID 生成对外 task_id。

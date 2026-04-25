@@ -94,6 +94,37 @@ func TestNormalizeOutputBuildsConsistentImagePlans(t *testing.T) {
 	}
 }
 
+func TestNormalizeOutputResetsUniformImageSpecs(t *testing.T) {
+	out := Output{
+		ProductTitle: "可收纳钢琴",
+		Description:  "便携收纳",
+		ImageSpecs: map[string]ImageSpec{
+			AssetTitle:  {Size: "1024x1024"},
+			AssetMain:   {Size: "1024x1024"},
+			AssetWhite:  {Size: "1024x1024"},
+			AssetDetail: {Size: "1024x1024"},
+			AssetPrice:  {Size: "1024x1024"},
+		},
+	}
+	normalizeOutput(&out, "可收纳钢琴")
+	if out.ImageSpecs[AssetTitle].Size != "1792x1024" {
+		t.Fatalf("title spec = %+v", out.ImageSpecs[AssetTitle])
+	}
+	if out.ImageSpecs[AssetDetail].Size != "1024x1792" || out.ImageSpecs[AssetPrice].Size != "1024x1792" {
+		t.Fatalf("vertical specs = detail:%+v price:%+v", out.ImageSpecs[AssetDetail], out.ImageSpecs[AssetPrice])
+	}
+	if out.ImageSpecs[AssetMain].Size != "1024x1024" || out.ImageSpecs[AssetWhite].Size != "1024x1024" {
+		t.Fatalf("square specs = main:%+v white:%+v", out.ImageSpecs[AssetMain], out.ImageSpecs[AssetWhite])
+	}
+}
+
+func TestNormalizeImageSpecMapsUnsupportedVerticalSize(t *testing.T) {
+	got := normalizeImageSpec(ImageSpec{Size: "1024*1536"}, ImageSpec{Size: "1024x1024", AspectRatio: "1:1", Clarity: "high"})
+	if got.Size != "1024x1792" || got.AspectRatio != "4:7" {
+		t.Fatalf("spec = %+v", got)
+	}
+}
+
 func TestBuildImagePromptUsesUnifiedPrice(t *testing.T) {
 	out := Output{
 		ProductTitle: "800可收纳钢琴",

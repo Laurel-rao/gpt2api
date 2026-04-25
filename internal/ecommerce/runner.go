@@ -176,6 +176,7 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 				UpstreamModel: imageModel.UpstreamModelSlug,
 				Prompt:        assetPrompt,
 				N:             1,
+				Size:          spec.Size,
 				MaxAttempts:   1,
 				References:    refs,
 			})
@@ -301,6 +302,7 @@ func (r *Runner) RetryAsset(ctx context.Context, taskID string, assetID uint64) 
 		UpstreamModel: imageModel.UpstreamModelSlug,
 		Prompt:        assetPrompt,
 		N:             1,
+		Size:          spec.Size,
 		MaxAttempts:   1,
 		References:    refs,
 	})
@@ -619,11 +621,11 @@ func (r *Runner) buildContentPrompt(platform Platform, prompt PromptTemplate, st
   "detail_sections": [{"title": "模块标题", "body": "模块正文"}],
   "platform_fields": {"title": "平台标题", "description": "平台描述"},
   "image_specs": {
-    "title_image": {"size": "1024x1024", "aspect_ratio": "1:1", "clarity": "high"},
+    "title_image": {"size": "1792x1024", "aspect_ratio": "7:4", "clarity": "high"},
     "main_image": {"size": "1024x1024", "aspect_ratio": "1:1", "clarity": "high"},
     "white_image": {"size": "1024x1024", "aspect_ratio": "1:1", "clarity": "high"},
-    "detail_image": {"size": "1024x1536", "aspect_ratio": "2:3", "clarity": "high"},
-    "price_image": {"size": "1024x1024", "aspect_ratio": "1:1", "clarity": "high"}
+    "detail_image": {"size": "1024x1792", "aspect_ratio": "4:7", "clarity": "high"},
+    "price_image": {"size": "1024x1792", "aspect_ratio": "4:7", "clarity": "high"}
   },
   "image_text_plans": {
     "title_image": {"title": "只使用统一标题", "subtitle": "只使用统一核心价值", "price_text": "只使用统一价格文字", "promotion_text": "只使用统一促销文字", "cta": "只使用统一行动号召", "badges": ["标签"], "selling_points": ["卖点"], "specs": ["规格"], "notes": ["图片文字约束"]},
@@ -639,7 +641,8 @@ func (r *Runner) buildContentPrompt(platform Platform, prompt PromptTemplate, st
 2. 用户提供了价格、折扣、型号、规格时，必须逐字保留；用户没有提供明确数字价格时，sale_price/original_price 留空，price_text 使用非数字促销文案。
 3. 所有图片的 image_text_plans 必须复用同一份 product_info 和 price_info，不得为不同图片编造不同价格、标题、型号或规格。
 4. 白底图 image_text_plans 必须为空文字，只保留无文字备注。
-5. 商品标题和价格在 JSON 内只允许出现一个统一版本。`
+5. 商品标题和价格在 JSON 内只允许出现一个统一版本。
+6. image_specs 只能使用 1024x1024、1792x1024、1024x1792 三种尺寸；店标题图优先横版 1792x1024，电商大图和白底图优先方图 1024x1024，详情图和价格图优先竖版 1024x1792；不得把所有图片都设置成同一尺寸。`
 	return renderTemplate(tpl, renderData{Requirement: requirement, Platform: platform, Prompt: prompt, Style: style})
 }
 
