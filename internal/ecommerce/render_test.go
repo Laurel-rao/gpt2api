@@ -1,9 +1,12 @@
 package ecommerce
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
+
+	imgpkg "github.com/432539/gpt2api/internal/image"
 )
 
 func TestRenderTemplate(t *testing.T) {
@@ -153,6 +156,81 @@ func TestBuildImagePromptUsesUnifiedPrice(t *testing.T) {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q: %s", want, prompt)
 		}
+	}
+}
+
+func TestBuildEnglishDetailPromptRequiresSceneCanvas(t *testing.T) {
+	out := Output{
+		ProductTitle: "Ma Jia Sofa",
+		Description:  "High-End Comfort Experience",
+		ProductInfo: ProductInfo{
+			CanonicalTitle: "Ma Jia Sofa",
+			ShortTitle:     "Ma Jia Sofa",
+			SellingPoints:  []string{"Luxurious and comfortable design"},
+		},
+	}
+	normalizeOutput(&out, "Ma Jia Sofa")
+	r := NewRunner(nil, nil, nil, nil, nil, nil, nil, 1)
+	prompt := r.buildImagePrompt(
+		Platform{Name: "Amazon", Language: "en-US"},
+		PromptTemplate{ImagePrompt: "Amazon product image"},
+		StyleTemplate{StylePrompt: "fresh lifestyle scene"},
+		out,
+		"Ma Jia Sofa",
+		AssetDetail,
+	)
+	for _, want := range []string{"full-bleed real home/outdoor scene", "integrate the product into the scene", "must not be a white studio product shot"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("detail prompt missing %q: %s", want, prompt)
+		}
+	}
+	for _, unwanted := range []string{"Price text:", "Promotion text:", "CTA:"} {
+		if strings.Contains(prompt, unwanted) {
+			t.Fatalf("detail prompt should not include %q: %s", unwanted, prompt)
+		}
+	}
+}
+
+func TestBuildRetryPromptUsesRawExtraWithoutPrefix(t *testing.T) {
+	out := Output{
+		ProductTitle: "JBK Bluetooth Speaker",
+		Description:  "Powerful sound with ultra-long standby time.",
+		ProductInfo: ProductInfo{
+			CanonicalTitle: "JBK Bluetooth Speaker",
+			ShortTitle:     "JBK Bluetooth Speaker",
+			KeySpecs:       []string{"Ultra-long standby"},
+			SellingPoints:  []string{"Portable and sleek"},
+		},
+	}
+	normalizeOutput(&out, "JBK 蓝牙音响，超长待机一个月")
+	r := NewRunner(nil, nil, nil, nil, nil, nil, nil, 1)
+	prompt := r.buildRetryImagePrompt(
+		Platform{Name: "Shopify", Language: "en-US"},
+		PromptTemplate{ImagePrompt: "seed content"},
+		StyleTemplate{StylePrompt: "soft pastel"},
+		out,
+		"JBK 蓝牙音响，超长待机一个月",
+		AssetDetail,
+		"Apple minimal style, exploded core-components diagram.",
+	)
+	if !strings.Contains(prompt, "Apple minimal style, exploded core-components diagram.") {
+		t.Fatalf("retry prompt missing raw extra: %s", prompt)
+	}
+	if strings.Contains(prompt, "重试追加描述词（高优先级）") {
+		t.Fatalf("retry prompt should not inject retry prefix: %s", prompt)
+	}
+}
+
+func TestRetryReferencesForNonWhiteUsesOriginalReferences(t *testing.T) {
+	r := NewRunner(nil, nil, nil, nil, nil, nil, nil, 1)
+	fallback := []imgpkg.ReferenceImage{{Data: []byte("original"), FileName: "original.png"}}
+	got := r.retryReferences(context.Background(), "task-1", Asset{
+		AssetType:   AssetDetail,
+		Status:      StatusSuccess,
+		ImageTaskID: "generated-detail",
+	}, fallback)
+	if len(got) != 1 || got[0].FileName != "original.png" || string(got[0].Data) != "original" {
+		t.Fatalf("non-white retry should use original references, got %+v", got)
 	}
 }
 

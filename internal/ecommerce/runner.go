@@ -254,16 +254,15 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 		defer release()
 		_ = r.dao.UpdateAssetResult(context.Background(), job.id, StatusRunning, job.imgTaskID, "", "", "")
 		res := r.imageRun.Run(ctx, imgpkg.RunOptions{
-			TaskID:           job.imgTaskID,
-			UserID:           task.UserID,
-			ModelID:          imageModel.ID,
-			UpstreamModel:    imageModel.UpstreamModelSlug,
-			Prompt:           job.prompt,
-			N:                1,
-			Size:             job.spec.Size,
-			MaxAttempts:      1,
-			References:       refImages,
-			ReturnImageBytes: job.assetTyp == AssetWhite,
+			TaskID:        job.imgTaskID,
+			UserID:        task.UserID,
+			ModelID:       imageModel.ID,
+			UpstreamModel: imageModel.UpstreamModelSlug,
+			Prompt:        job.prompt,
+			N:             1,
+			Size:          job.spec.Size,
+			MaxAttempts:   1,
+			References:    refImages,
 		})
 		if res.Status != imgpkg.StatusSuccess {
 			errCode := res.ErrorCode
@@ -299,35 +298,16 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 		return res
 	}
 
-	whiteRes := runAsset(whiteJob, refs)
-	whiteRefs, whiteRefErr := whiteReferenceFromResult(ctx, whiteRes)
-	if whiteRes.Status != imgpkg.StatusSuccess || whiteRefErr != nil {
-		errCode := "white_reference_failed"
-		if whiteRefErr != nil {
-			errCode = whiteRefErr.Error()
+	_ = runAsset(whiteJob, referencesForAsset(whiteJob.assetTyp, refs))
+	for _, job := range jobs {
+		if job.assetTyp == AssetWhite {
+			continue
 		}
-		if whiteRes.Status == imgpkg.StatusSuccess {
-			assetErrors = append(assetErrors, "white_reference:"+errCode)
-		}
-		for _, job := range jobs {
-			if job.assetTyp == AssetWhite {
-				continue
-			}
-			_ = r.dao.UpdateAssetResult(context.Background(), job.id, StatusFailed, job.imgTaskID, "", "", errCode)
-			completed++
-			_ = r.dao.UpdateTaskProgress(context.Background(), taskID, 35+completed*10)
-		}
-	} else {
-		for _, job := range jobs {
-			if job.assetTyp == AssetWhite {
-				continue
-			}
-			wg.Add(1)
-			go func(job assetJob) {
-				defer wg.Done()
-				_ = runAsset(job, whiteRefs)
-			}(job)
-		}
+		wg.Add(1)
+		go func(job assetJob) {
+			defer wg.Done()
+			_ = runAsset(job, referencesForAsset(job.assetTyp, refs))
+		}(job)
 	}
 	wg.Wait()
 	dbCtx := context.Background()
@@ -841,9 +821,7 @@ func (r *Runner) buildImagePrompt(platform Platform, prompt PromptTemplate, styl
 			LanguageRule: platformLanguageRule(langCode),
 		})
 	}
-	src := `以下内容仅作为视觉方向，不要把模板原文直接做成画面文字：
-{{.Prompt.ImagePrompt}}
-{{.Style.StylePrompt}}
+	src := `视觉方向：{{.VisualDirection}}
 平台：{{.Platform.Name}}
 图片类型：{{.AssetType}}
 目标：` + assetText + `
@@ -854,15 +832,17 @@ func (r *Runner) buildImagePrompt(platform Platform, prompt PromptTemplate, styl
 {{.CompactImageTextPlan}}
 图片参数：尺寸 ` + spec.Size + `，长宽比 ` + spec.AspectRatio + `，清晰度 ` + spec.Clarity + `
 构图要求：` + composition + `
+背景规则：` + assetBackgroundRuleCN(assetType) + `
 硬约束：
 - 必须保持参考图中的商品主体一致。
-- 不得照搬参考图或白底图的纯白背景、角度、裁切和光影。
-- 当前资产必须与白底图明显不同。
-- 非白底图不得退化成白底商品图。
-- 原始需求中关于场景、人物、代言氛围、品牌氛围、活动主题的要求优先级更高。
+- 不得复用参考图的背景、角度、裁切和光影。
+- ` + assetNonWhiteHardRuleCN(assetType) + `
+- {{.CompactLanguageRule}}
+- {{if .CreativeRequirement}}如原始需求含有人物、代言氛围、首页场景或品牌活动要求，优先按该方向生成。{{end}}
 - 不得新增、替换、改写任何数字价格、折扣、标题、规格、型号。`
 	return renderTemplate(src, renderData{
 		Requirement:          requirement,
+		CreativeRequirement:  extractCreativeRequirement(requirement),
 		Platform:             platform,
 		Prompt:               prompt,
 		Style:                style,
@@ -870,11 +850,13 @@ func (r *Runner) buildImagePrompt(platform Platform, prompt PromptTemplate, styl
 		AssetType:            assetType,
 		UnifiedInfo:          formatUnifiedInfoForLanguage(out, langCode),
 		ImageTextPlan:        formatImageTextPlanForLanguage(out.ImageTextPlans[assetType], langCode),
-		CompactUnifiedInfo:   formatCompactUnifiedInfoForLanguage(out, langCode),
+		CompactUnifiedInfo:   formatCompactUnifiedInfoForAssetLanguage(out, assetType, langCode),
 		CompactImageTextPlan: formatCompactImageTextPlanForLanguage(out.ImageTextPlans[assetType], assetType, langCode),
+		VisualDirection:      combineVisualDirection(prompt.ImagePrompt, style.StylePrompt),
 		LanguageCode:         langCode,
 		LanguageName:         platformLanguageName(langCode),
 		LanguageRule:         platformLanguageRule(langCode),
+		CompactLanguageRule:  compactLanguageRule(langCode),
 	})
 }
 
@@ -892,7 +874,7 @@ func (r *Runner) buildEnglishImagePrompt(platform Platform, prompt PromptTemplat
 	data.AssetType = assetType
 	data.UnifiedInfo = formatUnifiedInfoForLanguage(out, langCode)
 	data.ImageTextPlan = formatImageTextPlanForLanguage(out.ImageTextPlans[assetType], langCode)
-	data.CompactUnifiedInfo = formatCompactUnifiedInfoForLanguage(out, langCode)
+	data.CompactUnifiedInfo = formatCompactUnifiedInfoForAssetLanguage(out, assetType, langCode)
 	data.CompactImageTextPlan = formatCompactImageTextPlanForLanguage(out.ImageTextPlans[assetType], assetType, langCode)
 	if assetType == AssetWhite {
 		src := `Platform: {{.Platform.Name}}
@@ -910,9 +892,7 @@ Shape fidelity: strictly preserve the product category, structure, foldable/port
 Strict requirements: pure white or near-white background; no title, no selling-point text, no price, no promotion tag, no icon, no sticker, no border, no watermark, no brand logo, no scene props, no hands or people; realistic, clear, complete, standalone product.`
 		return renderTemplate(src, data)
 	}
-	src := `Use the following as visual direction, not as literal overlay text:
-{{.Prompt.ImagePrompt}}
-{{.Style.StylePrompt}}
+	src := `Visual direction: {{.VisualDirection}}
 Platform: {{.Platform.Name}}
 Image type: {{.AssetType}}
 Goal: ` + assetText + `
@@ -923,13 +903,13 @@ Visible text pool for this image:
 {{.CompactImageTextPlan}}
 Image parameters: size ` + spec.Size + `, aspect ratio ` + spec.AspectRatio + `, clarity ` + spec.Clarity + `
 Composition: ` + composition + `
+Background rule: ` + assetBackgroundRuleEN(assetType) + `
 Hard constraints:
 - Keep the same product identity as the reference images.
-- Do not copy the white background, angle, crop or lighting from the references.
-- This asset must look clearly different from the white-background image.
-- For non-white assets, do not output a plain centered product cutout on a white background.
-- Follow user requests about scenes, spokesperson mood, campaign mood or brand atmosphere when present.
-- {{.LanguageRule}}
+- Do not reuse the reference background, angle, crop or lighting.
+- ` + assetNonWhiteHardRuleEN(assetType) + `
+- {{.CompactLanguageRule}}
+- {{if .CreativeRequirement}}If the original requirement includes people, spokesperson mood, homepage scenes or campaign atmosphere, follow that direction first.{{end}}
 - Do not invent prices, discounts, models or specs.`
 	return renderTemplate(src, data)
 }
@@ -966,20 +946,25 @@ func (r *Runner) buildRetryChineseImagePrompt(platform Platform, out Output, req
 {{.CompactImageTextPlan}}
 图片参数：尺寸 ` + spec.Size + `，长宽比 ` + spec.AspectRatio + `，清晰度 ` + spec.Clarity + `
 构图要求：` + assetCompositionCN(assetType) + `
+背景规则：` + assetBackgroundRuleCN(assetType) + `
 硬约束：
 ` + assetRetryRulesCN(assetType) + `
+- {{.CompactLanguageRule}}
+- {{if .CreativeRequirement}}如原始需求含有人物、代言氛围、首页场景或品牌活动要求，优先按该方向生成。{{end}}
 - 没有价格数字时不得编造价格数字，不得新增、替换、改写标题、规格、型号。`
 	return renderTemplate(src, renderData{
 		Requirement:          requirement,
+		CreativeRequirement:  extractCreativeRequirement(requirement),
 		Platform:             platform,
 		Output:               out,
 		AssetType:            assetType,
-		CompactUnifiedInfo:   formatCompactUnifiedInfoForLanguage(out, langCode),
+		CompactUnifiedInfo:   formatCompactUnifiedInfoForAssetLanguage(out, assetType, langCode),
 		CompactImageTextPlan: formatCompactImageTextPlanForLanguage(out.ImageTextPlans[assetType], assetType, langCode),
 		RetryExtra:           extraPrompt,
 		LanguageCode:         langCode,
 		LanguageName:         platformLanguageName(langCode),
 		LanguageRule:         platformLanguageRule(langCode),
+		CompactLanguageRule:  compactLanguageRule(langCode),
 	})
 }
 
@@ -1003,20 +988,25 @@ Visible text pool for this image:
 {{.CompactImageTextPlan}}
 Image parameters: size ` + spec.Size + `, aspect ratio ` + spec.AspectRatio + `, clarity ` + spec.Clarity + `
 Composition: ` + assetCompositionEN(assetType) + `
+Background rule: ` + assetBackgroundRuleEN(assetType) + `
 Hard constraints:
 - ` + assetRetryRulesEN(assetType) + `
+- {{.CompactLanguageRule}}
+- {{if .CreativeRequirement}}If the original requirement includes people, spokesperson mood, homepage scenes or campaign atmosphere, follow that direction first.{{end}}
 - Do not invent prices, discounts, models or specs.`
 	return renderTemplate(src, renderData{
 		Requirement:          requirement,
+		CreativeRequirement:  extractCreativeRequirement(requirement),
 		Platform:             platform,
 		Output:               out,
 		AssetType:            assetType,
-		CompactUnifiedInfo:   formatCompactUnifiedInfoForLanguage(out, langCode),
+		CompactUnifiedInfo:   formatCompactUnifiedInfoForAssetLanguage(out, assetType, langCode),
 		CompactImageTextPlan: formatCompactImageTextPlanForLanguage(out.ImageTextPlans[assetType], assetType, langCode),
 		RetryExtra:           extraPrompt,
 		LanguageCode:         langCode,
 		LanguageName:         platformLanguageName(langCode),
 		LanguageRule:         platformLanguageRule(langCode),
+		CompactLanguageRule:  compactLanguageRule(langCode),
 	})
 }
 
@@ -1042,7 +1032,7 @@ func assetCompositionCN(assetType string) string {
 	case AssetWhite:
 		return "标准白底商品图，居中、完整、无文字，只保留商品本体。"
 	case AssetDetail:
-		return "竖版详情模块，分区展示卖点、参数和场景，可使用信息卡片、局部特写和图文排版。"
+		return "竖版详情模块，必须使用全画幅家居/户外真实场景或杂志式设计背景作为底图，商品融入场景；分区展示卖点、参数和局部特写，可使用信息卡片和图文排版；画面底层不得是白底商品棚拍。"
 	case AssetPrice:
 		return "竖版促销图，突出价格、优惠、CTA 和购买理由，使用强视觉层级，不做纯产品白底图。"
 	default:
@@ -1059,11 +1049,75 @@ func assetCompositionEN(assetType string) string {
 	case AssetWhite:
 		return "standard white-background product image, centered, complete, no text, product only."
 	case AssetDetail:
-		return "vertical detail module with sections for selling points, specs and scenes; use info cards, close-ups and editorial layout."
+		return "vertical detail module on a full-bleed real home/outdoor scene or magazine-style designed background; integrate the product into the scene; include sections for selling points, specs and close-ups with info cards and editorial layout; the base canvas must not be a white studio product shot."
 	case AssetPrice:
 		return "vertical promotion image emphasizing price, discount, CTA and purchase reasons with strong visual hierarchy; not a plain product cutout."
 	default:
 		return "design an independent composition for this asset type and avoid repeating other assets."
+	}
+}
+
+func assetBackgroundRuleCN(assetType string) string {
+	switch assetType {
+	case AssetWhite:
+		return "使用纯白或接近纯白背景。"
+	case AssetDetail:
+		return "本图必须输出详情页场景/编辑设计图；模板中的白底主图规范只表示平台合规，不控制本图背景。"
+	case AssetPrice:
+		return "使用促销海报背景、色块或场景底图，避免白底商品目录图。"
+	case AssetTitle:
+		return "使用品牌海报背景或场景化背景，避免白底商品目录图。"
+	case AssetMain:
+		return "使用渐变、浅场景或平台安全背景，避免复用白底图背景。"
+	default:
+		return "按当前资产类型使用独立背景。"
+	}
+}
+
+func assetBackgroundRuleEN(assetType string) string {
+	switch assetType {
+	case AssetWhite:
+		return "Use a pure white or near-white background."
+	case AssetDetail:
+		return "Use a full-bleed scene or editorial canvas; generic white-background platform wording does not control this asset."
+	case AssetPrice:
+		return "Use a promotional poster background, color blocks or a scene base."
+	case AssetTitle:
+		return "Use a brand poster background or lifestyle background."
+	case AssetMain:
+		return "Use a gradient, light lifestyle scene or platform-safe background."
+	default:
+		return "Use an independent background for the current asset type."
+	}
+}
+
+func assetNonWhiteHardRuleCN(assetType string) string {
+	switch assetType {
+	case AssetDetail:
+		return "详情图必须是整版场景化/编辑化信息图，不能是白底居中商品图。"
+	case AssetPrice:
+		return "价格图必须是促销海报构图，价格与行动号召优先，不能是白底目录图。"
+	case AssetTitle:
+		return "店标题图必须是横版品牌海报，保留标题区，不能是白底目录图。"
+	case AssetMain:
+		return "电商大图必须是主视觉海报或场景主图，不能退化成白底抠图。"
+	default:
+		return "当前资产必须保持独立版式，不能退化成白底目录图。"
+	}
+}
+
+func assetNonWhiteHardRuleEN(assetType string) string {
+	switch assetType {
+	case AssetDetail:
+		return "The detail image must be a scene-driven or editorial information layout, not a centered white-background product shot."
+	case AssetPrice:
+		return "The price image must read as a promotion poster with price and CTA priority, not a catalog cutout."
+	case AssetTitle:
+		return "The title image must read as a horizontal brand poster with a clear headline zone, not a catalog cutout."
+	case AssetMain:
+		return "The main image must read as a hero poster or scene-led ecommerce visual, not a white-background cutout."
+	default:
+		return "This asset must keep an independent composition and must not collapse into a catalog cutout."
 	}
 }
 
@@ -1082,33 +1136,20 @@ func assetRetryRulesEN(assetType string) string {
 }
 
 func referencesForAsset(assetType string, refs []imgpkg.ReferenceImage) []imgpkg.ReferenceImage {
-	// 所有图片都使用参考图锁定商品外观，差异化交给每类 asset 的构图规则控制。
+	// 使用用户上传的原始参考图锁定商品外观，避免非白底资产继承生成白底图的棚拍背景。
 	return refs
 }
 
 func (r *Runner) retryReferences(ctx context.Context, taskID string, asset Asset, fallback []imgpkg.ReferenceImage) []imgpkg.ReferenceImage {
+	if asset.AssetType != AssetWhite {
+		return referencesForAsset(asset.AssetType, fallback)
+	}
 	if asset.Status == StatusSuccess && asset.ImageTaskID != "" {
 		if refs, err := r.referenceFromImageTask(ctx, asset.ImageTaskID, asset.AssetType+"-retry-reference.png"); err == nil {
 			return refs
 		} else {
 			logger.L().Warn("ecommerce retry current image reference failed",
 				zap.String("task_id", taskID), zap.Uint64("asset_id", asset.ID), zap.Error(err))
-		}
-	}
-	if asset.AssetType != AssetWhite {
-		if assets, err := r.dao.ListAssets(ctx, taskID); err == nil {
-			for _, item := range assets {
-				if item.AssetType != AssetWhite || item.Status != StatusSuccess || item.ImageTaskID == "" {
-					continue
-				}
-				if refs, err := r.referenceFromImageTask(ctx, item.ImageTaskID, "white-retry-reference.png"); err == nil {
-					return refs
-				} else {
-					logger.L().Warn("ecommerce retry white image reference failed",
-						zap.String("task_id", taskID), zap.Uint64("asset_id", asset.ID), zap.Error(err))
-				}
-				break
-			}
 		}
 	}
 	return referencesForAsset(asset.AssetType, fallback)
@@ -1155,26 +1196,6 @@ func (r *Runner) referenceFromImageTask(ctx context.Context, taskID, fileName st
 		return nil, fmt.Errorf("参考图超过 %dMB", maxReferenceImageBytes/1024/1024)
 	}
 	return []imgpkg.ReferenceImage{{Data: data, FileName: fileName}}, nil
-}
-
-func whiteReferenceFromResult(ctx context.Context, res *imgpkg.RunResult) ([]imgpkg.ReferenceImage, error) {
-	if res == nil || res.Status != imgpkg.StatusSuccess {
-		return nil, errors.New("白底图未生成成功")
-	}
-	if len(res.ImageBytes) > 0 && len(res.ImageBytes[0]) > 0 {
-		return []imgpkg.ReferenceImage{{Data: res.ImageBytes[0], FileName: "white-reference.png"}}, nil
-	}
-	if len(res.SignedURLs) == 0 || strings.TrimSpace(res.SignedURLs[0]) == "" {
-		return nil, errors.New("白底图缺少下载地址")
-	}
-	data, name, err := fetchReferenceBytes(ctx, res.SignedURLs[0])
-	if err != nil {
-		return nil, fmt.Errorf("读取白底图参考失败:%w", err)
-	}
-	if strings.TrimSpace(name) == "" {
-		name = "white-reference.png"
-	}
-	return []imgpkg.ReferenceImage{{Data: data, FileName: name}}, nil
 }
 
 func decodeReferenceInputs(ctx context.Context, raw json.RawMessage) ([]imgpkg.ReferenceImage, error) {

@@ -13,6 +13,7 @@ var jsonFenceRe = regexp.MustCompile("(?s)```(?:json)?\\s*(.*?)\\s*```")
 
 type renderData struct {
 	Requirement          string
+	CreativeRequirement  string
 	Platform             Platform
 	Prompt               PromptTemplate
 	Style                StyleTemplate
@@ -22,6 +23,8 @@ type renderData struct {
 	ImageTextPlan        string
 	CompactUnifiedInfo   string
 	CompactImageTextPlan string
+	VisualDirection      string
+	CompactLanguageRule  string
 	RetryExtra           string
 	LanguageCode         string
 	LanguageName         string
@@ -43,14 +46,17 @@ func renderTemplate(src string, data renderData) string {
 func newRenderData(requirement string, platform Platform, prompt PromptTemplate, style StyleTemplate, out Output) renderData {
 	code := platformLanguageCode(platform)
 	return renderData{
-		Requirement:  requirement,
-		Platform:     platform,
-		Prompt:       prompt,
-		Style:        style,
-		Output:       out,
-		LanguageCode: code,
-		LanguageName: platformLanguageName(code),
-		LanguageRule: platformLanguageRule(code),
+		Requirement:         requirement,
+		CreativeRequirement: extractCreativeRequirement(requirement),
+		Platform:            platform,
+		Prompt:              prompt,
+		Style:               style,
+		Output:              out,
+		VisualDirection:     combineVisualDirection(prompt.ImagePrompt, style.StylePrompt),
+		LanguageCode:        code,
+		LanguageName:        platformLanguageName(code),
+		LanguageRule:        platformLanguageRule(code),
+		CompactLanguageRule: compactLanguageRule(code),
 	}
 }
 
@@ -91,6 +97,45 @@ func platformLanguageRule(code string) string {
 		return "All user-facing copy, platform fields, detail page text and image text plans must be written in English. Preserve user-provided brand names, model numbers, dimensions, prices and SKUs exactly; do not output Chinese unless it is a brand/model/spec explicitly provided by the user."
 	}
 	return "所有面向用户的文案、平台字段、详情页文字和图片文字计划必须使用简体中文。用户提供的品牌名、型号、尺寸、价格和 SKU 必须逐字保留。"
+}
+
+func compactLanguageRule(code string) string {
+	if strings.HasPrefix(strings.ToLower(code), "en") {
+		return "Visible text must stay in English and keep provided brand/model/price/spec wording exactly."
+	}
+	return "可见文字必须使用简体中文，并逐字保留用户给出的品牌、型号、价格和规格。"
+}
+
+func combineVisualDirection(parts ...string) string {
+	items := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(strings.ReplaceAll(part, "\n", " "))
+		if part == "" {
+			continue
+		}
+		items = append(items, part)
+	}
+	return strings.Join(items, " ")
+}
+
+func extractCreativeRequirement(requirement string) string {
+	requirement = strings.TrimSpace(requirement)
+	if requirement == "" {
+		return ""
+	}
+	keywords := []string{
+		"代言", "代言人", "人物", "模特", "雷军", "苹果风", "简约风", "科技风",
+		"场景", "首页", "店铺", "品牌氛围", "活动主题", "海报", "发布会", "氛围",
+		"endorsement", "spokesperson", "model", "lifestyle", "scene", "homepage",
+		"brand mood", "campaign", "launch", "minimal", "editorial", "deconstructed",
+	}
+	lower := strings.ToLower(requirement)
+	for _, keyword := range keywords {
+		if strings.Contains(requirement, keyword) || strings.Contains(lower, strings.ToLower(keyword)) {
+			return requirement
+		}
+	}
+	return ""
 }
 
 func parseOutput(raw, requirement string) Output {
@@ -393,6 +438,57 @@ func formatCompactUnifiedInfoForLanguage(out Output, languageCode string) string
 		"行动号召：" + out.PriceInfo.CTA,
 		"关键规格：" + strings.Join(limitStrings(out.ProductInfo.KeySpecs, 4), "；"),
 		"卖点：" + strings.Join(limitStrings(out.ProductInfo.SellingPoints, 3), "；"),
+	}
+	return strings.Join(nonEmptyLines(lines), "\n")
+}
+
+func formatCompactUnifiedInfoForAssetLanguage(out Output, assetType, languageCode string) string {
+	if strings.HasPrefix(strings.ToLower(languageCode), "en") {
+		lines := []string{
+			"Title: " + firstNonEmpty(out.ProductInfo.CanonicalTitle, out.ProductTitle),
+			"Category: " + out.ProductInfo.Category,
+			"Core value: " + out.ProductInfo.CoreValue,
+		}
+		switch assetType {
+		case AssetPrice:
+			lines = append(lines,
+				"Price text: "+out.PriceInfo.PriceText,
+				"Promotion text: "+out.PriceInfo.PromotionText,
+				"CTA: "+out.PriceInfo.CTA,
+			)
+		case AssetDetail:
+			lines = append(lines,
+				"Key specs: "+strings.Join(limitStrings(out.ProductInfo.KeySpecs, 3), "; "),
+				"Selling points: "+strings.Join(limitStrings(out.ProductInfo.SellingPoints, 3), "; "),
+			)
+		case AssetMain, AssetTitle:
+			lines = append(lines,
+				"Key specs: "+strings.Join(limitStrings(out.ProductInfo.KeySpecs, 2), "; "),
+			)
+		}
+		return strings.Join(nonEmptyLines(lines), "\n")
+	}
+	lines := []string{
+		"标题：" + firstNonEmpty(out.ProductInfo.CanonicalTitle, out.ProductTitle),
+		"品类：" + out.ProductInfo.Category,
+		"核心价值：" + out.ProductInfo.CoreValue,
+	}
+	switch assetType {
+	case AssetPrice:
+		lines = append(lines,
+			"价格文字："+out.PriceInfo.PriceText,
+			"促销文字："+out.PriceInfo.PromotionText,
+			"行动号召："+out.PriceInfo.CTA,
+		)
+	case AssetDetail:
+		lines = append(lines,
+			"关键规格："+strings.Join(limitStrings(out.ProductInfo.KeySpecs, 3), "；"),
+			"卖点："+strings.Join(limitStrings(out.ProductInfo.SellingPoints, 3), "；"),
+		)
+	case AssetMain, AssetTitle:
+		lines = append(lines,
+			"关键规格："+strings.Join(limitStrings(out.ProductInfo.KeySpecs, 2), "；"),
+		)
 	}
 	return strings.Join(nonEmptyLines(lines), "\n")
 }
