@@ -23,7 +23,6 @@ FORCE_BUILD=0
 BUNDLE_ITEMS=(
   ".dockerignore"
   "deploy/bin/gpt2api"
-  "deploy/bin/goose"
   "deploy/Dockerfile"
   "deploy/docker-compose.yml"
   "deploy/entrypoint.sh"
@@ -156,6 +155,9 @@ assert_local_artifacts() {
   for item in "${BUNDLE_ITEMS[@]}"; do
     [ -e "$ROOT/$item" ] || die "缺少本地产物: $item"
   done
+  if [ ! -x "$ROOT/deploy/bin/goose" ]; then
+    die "缺少本地 goose: deploy/bin/goose；首次部署或强制更新迁移工具时先运行 bash deploy/build-local.sh --force"
+  fi
 }
 
 run_local_build() {
@@ -173,8 +175,14 @@ run_local_build() {
 make_bundle() {
   local release_id="$1"
   local bundle_file="$2"
+  local tmp_dir="$3"
+  local bundle_root="$tmp_dir/bundle"
   assert_local_artifacts
-  COPYFILE_DISABLE=1 tar -C "$ROOT" -cf - "${BUNDLE_ITEMS[@]}" | gzip -1 > "$bundle_file"
+  rm -rf "$bundle_root"
+  mkdir -p "$bundle_root/deploy/bin" "$bundle_root/web" "$bundle_root/sql"
+  COPYFILE_DISABLE=1 tar -C "$ROOT" -cf - "${BUNDLE_ITEMS[@]}" | tar -C "$bundle_root" -xf -
+  ln "$ROOT/deploy/bin/goose" "$bundle_root/deploy/bin/goose" 2>/dev/null || cp "$ROOT/deploy/bin/goose" "$bundle_root/deploy/bin/goose"
+  COPYFILE_DISABLE=1 tar -C "$bundle_root" --exclude="deploy/bin/goose" -cf - . | gzip -1 > "$bundle_file"
   log "已打包发布包: $bundle_file"
 }
 
@@ -251,7 +259,7 @@ deploy_release() {
 
   trap "rm -rf '$tmp_dir'" EXIT
 
-  make_bundle "$release_id" "$bundle_file"
+  make_bundle "$release_id" "$bundle_file" "$tmp_dir"
 
   log "上传发布包到 ${REMOTE_USER}@${REMOTE_HOST}:${remote_bundle}"
   scp_base "$bundle_file" "${REMOTE_USER}@${REMOTE_HOST}:${remote_bundle}"
