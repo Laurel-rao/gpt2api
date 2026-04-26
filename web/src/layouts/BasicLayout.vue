@@ -72,7 +72,6 @@ const titleMap = computed(() => {
 const currentTitle = computed(() => titleMap.value.get(activePath.value) || (route.meta.title as string) || '')
 
 async function loadMenu() {
-  if (menu.value.length > 0) return
   loadingMenu.value = true
   try {
     await store.fetchMenu()

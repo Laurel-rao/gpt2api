@@ -21,6 +21,8 @@ export default defineConfig(({ mode }) => {
         // 开发期统一经本地代理,避免 CORS;生产由 nginx / ingress 承担
         '/api': { target: apiBase, changeOrigin: true },
         '/v1': { target: apiBase, changeOrigin: true },
+        '/p/img': { target: apiBase, changeOrigin: true },
+        '/site-assets': { target: apiBase, changeOrigin: true },
         '/healthz': { target: apiBase, changeOrigin: true },
       },
     },
