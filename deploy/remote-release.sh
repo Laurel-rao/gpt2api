@@ -23,6 +23,7 @@ FORCE_BUILD=0
 BUNDLE_ITEMS=(
   ".dockerignore"
   "deploy/bin/gpt2api"
+  "deploy/bin/goose"
   "deploy/Dockerfile"
   "deploy/docker-compose.yml"
   "deploy/entrypoint.sh"
@@ -83,6 +84,15 @@ require_cmd() {
 
 ssh_base() {
   ssh -p "$REMOTE_PORT" -o BatchMode=yes -o StrictHostKeyChecking=no "${REMOTE_USER}@${REMOTE_HOST}" "$@"
+}
+
+rsync_base() {
+  rsync \
+    --compress \
+    --partial \
+    --inplace \
+    -e "ssh -p $REMOTE_PORT -o BatchMode=yes -o StrictHostKeyChecking=no" \
+    "$@"
 }
 
 parse_common_args() {
@@ -171,14 +181,8 @@ run_local_build() {
 make_bundle() {
   local release_id="$1"
   local bundle_file="$2"
-  local tmp_dir="$3"
-  local bundle_root="$tmp_dir/bundle"
   assert_local_artifacts
-  rm -rf "$bundle_root"
-  mkdir -p "$bundle_root/deploy/bin" "$bundle_root/web" "$bundle_root/sql"
-  COPYFILE_DISABLE=1 tar -C "$ROOT" -cf - "${BUNDLE_ITEMS[@]}" | tar -C "$bundle_root" -xf -
-  ln "$ROOT/deploy/bin/goose" "$bundle_root/deploy/bin/goose" 2>/dev/null || cp "$ROOT/deploy/bin/goose" "$bundle_root/deploy/bin/goose"
-  COPYFILE_DISABLE=1 tar -C "$bundle_root" --exclude="deploy/bin/goose" -cf - . | gzip -1 > "$bundle_file"
+  COPYFILE_DISABLE=1 tar -C "$ROOT" -cf - "${BUNDLE_ITEMS[@]}" | gzip -1 > "$bundle_file"
   log "已打包发布包: $bundle_file"
 }
 
@@ -258,7 +262,7 @@ deploy_release() {
   make_bundle "$release_id" "$bundle_file" "$tmp_dir"
 
   log "上传发布包到 ${REMOTE_USER}@${REMOTE_HOST}:${remote_bundle}"
-  ssh_base "cat > '$remote_bundle'" < "$bundle_file"
+  rsync_base "$bundle_file" "${REMOTE_USER}@${REMOTE_HOST}:${remote_bundle}"
 
   log "远端开始备份并发布 release_id=${release_id}"
   ssh_base "bash -s -- '$REMOTE_DIR' '$remote_bundle' '$release_id' '$HTTP_PORT' '$KEEP_BACKUPS' '$git_branch' '$git_commit' '$SKIP_DB_BACKUP'" <<'EOF'
