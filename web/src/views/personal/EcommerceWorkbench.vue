@@ -5,7 +5,6 @@ import { ElMessage, ElMessageBox, type UploadFile } from 'element-plus'
 import {
   cancelEcommerceTask,
   createEcommerceTask,
-  exportEcommercePoster,
   getEcommerceOptions,
   getEcommerceTask,
   listEcommerceTasks,
@@ -582,25 +581,122 @@ function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(objectURL)
 }
 
+function fetchImage(url: string): Promise<HTMLImageElement> {
+  return fetch(url)
+    .then((res) => {
+      if (!res.ok) throw new Error(`image fetch failed: ${res.status}`)
+      return res.blob()
+    })
+    .then((blob) => new Promise<HTMLImageElement>((resolve, reject) => {
+      const objectURL = URL.createObjectURL(blob)
+      const img = new Image()
+      img.onload = () => {
+        URL.revokeObjectURL(objectURL)
+        resolve(img)
+      }
+      img.onerror = () => {
+        URL.revokeObjectURL(objectURL)
+        reject(new Error('image load failed'))
+      }
+      img.src = objectURL
+    }))
+}
+
+function downloadCanvas(canvas: HTMLCanvasElement, filename: string) {
+  canvas.toBlob((blob) => {
+    if (!blob) {
+      ElMessage.error('导出失败')
+      return
+    }
+    downloadBlob(blob, filename)
+  }, 'image/png')
+}
+
 async function exportPoster() {
   if (!activeTask.value) return
-  if (!doneAssetCount.value) {
+  const imageAssets = assetOrder
+    .map((type) => assets.value.find((asset) => asset.asset_type === type && assetHasImage(asset)))
+    .filter(Boolean) as EcommerceAsset[]
+  if (!imageAssets.length) {
     ElMessage.warning('暂无可导出的图片')
     return
   }
   exporting.value = true
   try {
-    const response = await exportEcommercePoster(activeTask.value.task_id) as any
-    const blob = response instanceof Blob ? response : response?.data
-    if (!(blob instanceof Blob)) throw new Error('export response is not a blob')
-    downloadBlob(blob, `${activeTask.value.task_id}-电商交付长图.png`)
-    ElMessage.success('长图已导出')
+    const loaded = await Promise.all(imageAssets.map(async (asset) => ({
+      asset,
+      img: await fetchImage(thumbURL(asset.url, 500)),
+    })))
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d')
+    if (!ctx) throw new Error('canvas unsupported')
+
+    const width = 1242
+    const padding = 72
+    const contentWidth = width - padding * 2
+    const blockGap = 34
+    const title = String(heroTitle.value)
+    const description = String(heroDescription.value)
+    const price = String(priceCopy.value)
+    const lineHeight = 42
+    const imageHeight = loaded.reduce((sum, item) => {
+      const imgWidth = item.img.width || contentWidth
+      const imgHeight = item.img.height || contentWidth
+      return sum + Math.round(imgHeight * contentWidth / imgWidth) + 86 + blockGap
+    }, 0)
+    const height = 360 + imageHeight + marketingCopy.value.length * 42
+
+    canvas.width = width
+    canvas.height = height
+    ctx.fillStyle = '#f3efe8'
+    ctx.fillRect(0, 0, width, height)
+    ctx.fillStyle = '#101828'
+    ctx.font = '700 52px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+    ctx.fillText(title.slice(0, 26), padding, 104)
+    ctx.font = '400 28px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+    wrapCanvasText(ctx, description, padding, 160, contentWidth, lineHeight, 3)
+    if (price) {
+      ctx.fillStyle = '#d45b2c'
+      ctx.font = '700 34px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+      ctx.fillText(price.slice(0, 34), padding, 300)
+    }
+    let y = 350
+    for (const item of loaded) {
+      ctx.fillStyle = '#101828'
+      ctx.font = '700 30px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+      ctx.fillText(assetText[item.asset.asset_type] || item.asset.asset_type, padding, y)
+      y += 32
+      const imgWidth = item.img.width || contentWidth
+      const imgHeight = item.img.height || contentWidth
+      const drawHeight = Math.round(imgHeight * contentWidth / imgWidth)
+      ctx.drawImage(item.img, padding, y, contentWidth, drawHeight)
+      y += drawHeight + blockGap
+    }
+    downloadCanvas(canvas, `${activeTask.value.task_id}-电商资产长图.png`)
+    ElMessage.success('长图已生成')
   } catch (err) {
     console.error('export ecommerce poster failed:', err)
     ElMessage.error('长图导出失败')
   } finally {
     exporting.value = false
   }
+}
+
+function wrapCanvasText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, maxWidth: number, lineHeight: number, maxLines: number) {
+  const lines: string[] = []
+  let line = ''
+  for (const char of text) {
+    const next = line + char
+    if (ctx.measureText(next).width > maxWidth && line) {
+      lines.push(line)
+      line = char
+      if (lines.length >= maxLines) break
+    } else {
+      line = next
+    }
+  }
+  if (line && lines.length < maxLines) lines.push(line)
+  lines.forEach((item, index) => ctx.fillText(item, x, y + index * lineHeight))
 }
 
 async function copyOutput() {
