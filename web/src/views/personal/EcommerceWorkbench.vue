@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { CopyDocument, Download, Refresh, RefreshRight, View } from '@element-plus/icons-vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { Close, CopyDocument, Download, Refresh, RefreshRight, View } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox, type UploadFile } from 'element-plus'
 import {
   cancelEcommerceTask,
@@ -21,12 +21,15 @@ import { formatDateTime } from '@/utils/format'
 const MAX_IMAGES = 4
 const MAX_IMAGE_MB = 20
 const POLL_INTERVAL = 2500
+const TASK_PAGE_SIZE = 5
 
 const loading = ref(false)
 const submitting = ref(false)
 const canceling = ref(false)
 const exporting = ref(false)
 const downloadingAll = ref(false)
+const tasksLoading = ref(false)
+const tasksTotal = ref(0)
 const retryingAssetID = ref(0)
 const polling = ref<number | null>(null)
 const pollingTaskID = ref('')
@@ -37,14 +40,15 @@ const detailVisible = ref(false)
 const previewAsset = ref<EcommerceAsset | null>(null)
 const brokenAssetIDs = ref<Set<number>>(new Set())
 const brokenTaskThumbIDs = ref<Set<number>>(new Set())
+const retryPanelOpenIDs = ref<Set<number>>(new Set())
 const retryPrompts = ref<Record<number, string>>({})
 type WorkbenchSection = 'progress' | 'copy' | 'tags' | 'specs' | 'detail'
 const openSections = reactive<Record<WorkbenchSection, boolean>>({
   progress: true,
   copy: true,
-  tags: true,
-  specs: true,
-  detail: true,
+  tags: false,
+  specs: false,
+  detail: false,
 })
 
 const platforms = ref<EcommercePlatform[]>([])
@@ -91,9 +95,10 @@ const output = computed<Record<string, any>>(() => activeTask.value?.output_json
 const productInfo = computed<Record<string, any>>(() => output.value?.product_info || {})
 const priceInfo = computed<Record<string, any>>(() => output.value?.price_info || {})
 const imageSpecs = computed<Record<string, any>>(() => output.value?.image_specs || {})
+const imageTextPlans = computed<Record<string, any>>(() => output.value?.image_text_plans || {})
 const assets = computed(() => activeTask.value?.assets || [])
 const running = computed(() => ['queued', 'running'].includes(activeTask.value?.status || ''))
-const recentTasks = computed(() => tasks.value.slice(0, 5))
+const hasMoreTasks = computed(() => tasks.value.length < tasksTotal.value)
 const currentPlatform = computed(() => platforms.value.find((p) => p.id === form.platform_id))
 const activePlatform = computed(() => platforms.value.find((p) => p.id === activeTask.value?.platform_id))
 const selectedLanguage = computed(() => currentPlatform.value?.language || '自动')
@@ -110,7 +115,13 @@ const heroDescription = computed(() => output.value?.description || productInfo.
 const priceCopy = computed(() => output.value?.price_copy || priceInfo.value?.price_text || priceInfo.value?.promotion_text || '')
 const marketingCopy = computed<string[]>(() => asStringArray(output.value?.marketing_copy))
 const sellingPoints = computed<string[]>(() => asStringArray(productInfo.value?.selling_points))
-const keySpecs = computed<string[]>(() => asStringArray(productInfo.value?.key_specs))
+const keySpecs = computed<string[]>(() => uniqueStrings([
+  ...asStringArray(productInfo.value?.key_specs),
+  ...asStringArray(productInfo.value?.specs),
+  ...asStringArray(output.value?.key_specs),
+  ...asStringArray(output.value?.specs),
+  ...Object.values(imageTextPlans.value).flatMap((plan: any) => asStringArray(plan?.specs)),
+]).slice(0, 12))
 const detailSections = computed<Array<{ title: string; body: string }>>(() => (
   Array.isArray(output.value?.detail_sections)
     ? output.value.detail_sections.filter((it: any) => it?.title || it?.body)
@@ -121,6 +132,17 @@ const quickTags = computed(() => uniqueStrings([
   ...keySpecs.value,
   ...marketingCopy.value,
 ]).slice(0, 8))
+const copyPreview = computed(() => {
+  const lines = [
+    heroTitle.value,
+    sellingPoints.value.slice(0, 2).join(' / ') || heroDescription.value,
+    priceCopy.value,
+  ].filter(Boolean)
+  return lines.join(' · ')
+})
+const tagPreview = computed(() => quickTags.value.slice(0, 4).join(' / ') || '暂无关键词')
+const specsPreview = computed(() => keySpecs.value.slice(0, 3).join(' / ') || '暂无规格')
+const detailPreview = computed(() => detailSections.value.slice(0, 2).map((item) => item.title || item.body).filter(Boolean).join(' / ') || '暂无详情结构')
 
 const detailDoc = computed(() => {
   if (!activeTask.value?.output_html) return ''
@@ -165,9 +187,18 @@ const statusHeadline = computed(() => {
   return '生成中'
 })
 
-function asStringArray(value: unknown) {
-  if (!Array.isArray(value)) return []
-  return value.map((it) => String(it || '').trim()).filter(Boolean)
+function asStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map((it) => String(it || '').trim()).filter(Boolean)
+  if (typeof value === 'string') {
+    return value
+      .split(/[\n\r;；、,，]/)
+      .map((it) => it.trim())
+      .filter(Boolean)
+  }
+  if (value && typeof value === 'object') {
+    return Object.values(value as Record<string, unknown>).flatMap(asStringArray)
+  }
+  return []
 }
 
 function uniqueStrings(items: string[]) {
@@ -176,6 +207,28 @@ function uniqueStrings(items: string[]) {
 
 function toggleSection(section: WorkbenchSection) {
   openSections[section] = !openSections[section]
+}
+
+function applySectionDefaults(task: EcommerceTask | null) {
+  const status = task?.status || ''
+  openSections.progress = status === 'queued' || status === 'running'
+  openSections.copy = true
+  openSections.tags = false
+  openSections.specs = false
+  openSections.detail = false
+}
+
+function shortTaskID(taskID: string) {
+  if (!taskID) return '--'
+  if (taskID.length <= 18) return taskID
+  return `${taskID.slice(0, 10)}...${taskID.slice(-6)}`
+}
+
+function toggleRetryPanel(assetID: number) {
+  const next = new Set(retryPanelOpenIDs.value)
+  if (next.has(assetID)) next.delete(assetID)
+  else next.add(assetID)
+  retryPanelOpenIDs.value = next
 }
 
 function assetRank(type: string) {
@@ -277,9 +330,43 @@ async function loadOptions() {
   if (!form.style_template_id && styles.value[0]) form.style_template_id = styles.value[0].id
 }
 
-async function loadTasks() {
-  const data = await listEcommerceTasks({ limit: 12, offset: 0 })
-  tasks.value = data.items || []
+async function loadTasks(reset = true) {
+  if (tasksLoading.value) return
+  tasksLoading.value = true
+  try {
+    const offset = reset ? 0 : tasks.value.length
+    const data = await listEcommerceTasks({ limit: TASK_PAGE_SIZE, offset })
+    const items = data.items || []
+    tasksTotal.value = data.total || (reset ? items.length : tasks.value.length + items.length)
+    if (reset) {
+      tasks.value = items
+      return
+    }
+    const exists = new Set(tasks.value.map((task) => task.task_id))
+    tasks.value = [...tasks.value, ...items.filter((task) => !exists.has(task.task_id))]
+  } finally {
+    tasksLoading.value = false
+  }
+}
+
+async function loadMoreTasks() {
+  if (!hasMoreTasks.value || tasksLoading.value) return
+  await loadTasks(false)
+}
+
+function onTaskListScroll(event: Event) {
+  const el = event.currentTarget as HTMLElement
+  if (el.scrollTop + el.clientHeight >= el.scrollHeight - 24) {
+    loadMoreTasks()
+  }
+}
+
+function onTaskListWheel(event: WheelEvent) {
+  if (event.deltaY <= 0) return
+  const el = event.currentTarget as HTMLElement
+  if (el.scrollHeight <= el.clientHeight + 1) {
+    loadMoreTasks()
+  }
 }
 
 async function initialize() {
@@ -539,6 +626,11 @@ onMounted(() => {
   initialize()
 })
 
+watch(
+  () => activeTask.value ? `${activeTask.value.task_id}:${activeTask.value.status}` : '',
+  () => applySectionDefaults(activeTask.value),
+)
+
 onBeforeUnmount(() => {
   stopPolling()
   if (ticker.value) window.clearInterval(ticker.value)
@@ -565,7 +657,7 @@ onBeforeUnmount(() => {
           <el-input
             v-model="form.requirement"
             type="textarea"
-            :rows="6"
+            :rows="4"
             maxlength="2000"
             show-word-limit
             resize="none"
@@ -602,34 +694,35 @@ onBeforeUnmount(() => {
 
         <el-form-item>
           <template #label>
-            <span>参考图片（最多 {{ MAX_IMAGES }} 张）</span>
+            <span>参考图片（最多 {{ MAX_IMAGES }} 张，{{ MAX_IMAGE_MB }}MB/张）</span>
           </template>
-          <div class="reference-grid">
-            <button
-              v-for="(img, index) in form.reference_images"
-              :key="index"
-              class="reference-thumb"
-              type="button"
-              @click="removeImage(index)"
-            >
-              <img :src="img" alt="参考图" />
-              <span><el-icon><Close /></el-icon></span>
-            </button>
-            <el-upload
-              v-if="form.reference_images.length < MAX_IMAGES"
-              drag
-              multiple
-              accept="image/*"
-              :auto-upload="false"
-              :show-file-list="false"
-              :on-change="onImageChange"
-              class="reference-upload"
-            >
-              <el-icon><UploadFilled /></el-icon>
-              <strong>上传图片</strong>
-            </el-upload>
+          <div class="reference-field">
+            <div class="reference-grid">
+              <button
+                v-for="(img, index) in form.reference_images"
+                :key="index"
+                class="reference-thumb"
+                type="button"
+                @click="removeImage(index)"
+              >
+                <img :src="img" alt="参考图" />
+                <span><el-icon><Close /></el-icon></span>
+              </button>
+              <el-upload
+                v-if="form.reference_images.length < MAX_IMAGES"
+                drag
+                multiple
+                accept="image/*"
+                :auto-upload="false"
+                :show-file-list="false"
+                :on-change="onImageChange"
+                class="reference-upload"
+              >
+                <el-icon><UploadFilled /></el-icon>
+                <strong>上传图片</strong>
+              </el-upload>
+            </div>
           </div>
-          <p class="field-hint">支持 JPG / PNG，单张不超过 {{ MAX_IMAGE_MB }}MB。</p>
         </el-form-item>
 
         <el-button class="primary-submit" type="primary" size="large" :loading="submitting" @click="submit">
@@ -663,7 +756,9 @@ onBeforeUnmount(() => {
           </header>
 
           <div class="task-meta">
-            <span>任务 ID：{{ activeTask.task_id }}</span>
+            <el-tooltip :content="activeTask.task_id" placement="top">
+              <span>任务 ID：{{ shortTaskID(activeTask.task_id) }}</span>
+            </el-tooltip>
             <span>创建时间：{{ formatDateTime(activeTask.created_at) }}</span>
             <span>平台：{{ activeTask.platform_name || '未知平台' }}</span>
             <span>模板：{{ activeTask.prompt_name || '默认模板' }}</span>
@@ -683,6 +778,15 @@ onBeforeUnmount(() => {
               </button>
               <span v-if="running" class="time-pill">预计剩余 --</span>
             </div>
+            <div class="progress-summary">
+              <span :class="['status-chip', statusTone[activeTask.status] || 'muted']">
+                {{ statusText[activeTask.status] || activeTask.status }}
+              </span>
+              <b>{{ activePercent }}%</b>
+              <span>生成 {{ taskElapsed }}</span>
+              <span>排队 {{ taskQueueElapsed }}</span>
+            </div>
+            <el-progress :percentage="activePercent" :stroke-width="5" :show-text="false" />
             <div v-show="openSections.progress" class="collapsible-body">
               <div class="step-line">
                 <div
@@ -697,14 +801,6 @@ onBeforeUnmount(() => {
                   <b>{{ step.label }}</b>
                   <small>{{ step.active ? `${activePercent}%` : step.done ? '完成' : '等待中' }}</small>
                 </div>
-              </div>
-              <el-progress :percentage="activePercent" :stroke-width="8" :show-text="false" />
-              <div class="time-row">
-                <span>生成 {{ taskElapsed }}</span>
-                <span>排队 {{ taskQueueElapsed }}</span>
-                <span :class="['status-chip', statusTone[activeTask.status] || 'muted']">
-                  {{ statusText[activeTask.status] || activeTask.status }}
-                </span>
               </div>
             </div>
           </section>
@@ -725,6 +821,7 @@ onBeforeUnmount(() => {
                 </button>
                 <el-button text :icon="CopyDocument" @click="copyOutput">复制全部</el-button>
               </div>
+              <p v-show="!openSections.copy" class="collapse-preview">{{ copyPreview }}</p>
               <dl v-show="openSections.copy" class="collapsible-body">
                 <dt>标题</dt>
                 <dd>{{ heroTitle }}</dd>
@@ -750,6 +847,7 @@ onBeforeUnmount(() => {
                 <h3>关键词 / 卖点</h3>
                 <el-icon :class="['collapse-icon', { open: openSections.tags }]"><ArrowDown /></el-icon>
               </button>
+              <p v-show="!openSections.tags" class="collapse-preview">{{ tagPreview }}</p>
               <div v-show="openSections.tags" class="collapsible-body">
                 <div v-if="quickTags.length" class="tag-list">
                   <span v-for="tag in quickTags" :key="tag">{{ tag }}</span>
@@ -768,6 +866,7 @@ onBeforeUnmount(() => {
                 <h3>规格参数</h3>
                 <el-icon :class="['collapse-icon', { open: openSections.specs }]"><ArrowDown /></el-icon>
               </button>
+              <p v-show="!openSections.specs" class="collapse-preview">{{ specsPreview }}</p>
               <div v-show="openSections.specs" class="collapsible-body">
                 <ul v-if="keySpecs.length" class="spec-list">
                   <li v-for="spec in keySpecs" :key="spec">{{ spec }}</li>
@@ -787,6 +886,7 @@ onBeforeUnmount(() => {
               <h3>详情页结构</h3>
               <el-icon :class="['collapse-icon', { open: openSections.detail }]"><ArrowDown /></el-icon>
             </button>
+            <p v-show="!openSections.detail" class="collapse-preview">{{ detailPreview }}</p>
             <div v-show="openSections.detail" class="detail-section-grid collapsible-body">
               <article v-for="section in detailSections.slice(0, 4)" :key="section.title || section.body">
                 <b>{{ section.title || '详情模块' }}</b>
@@ -818,6 +918,28 @@ onBeforeUnmount(() => {
               </span>
             </header>
 
+            <div class="asset-actions">
+              <el-button title="预览" :disabled="!assetHasImage(asset)" :icon="View" @click="openAssetPreview(asset)" />
+              <el-button title="下载" :disabled="!assetHasImage(asset)" :icon="Download" @click="downloadAsset(asset)" />
+              <el-button
+                v-if="isAssetWorking(asset.status)"
+                title="取消生成"
+                type="danger"
+                plain
+                :loading="canceling"
+                :disabled="!running"
+                :icon="Close"
+                @click="cancelTask"
+              />
+              <el-button
+                v-else
+                title="重新生成"
+                :loading="retryingAssetID === asset.id"
+                :icon="RefreshRight"
+                @click="retryAsset(asset)"
+              />
+            </div>
+
             <button v-if="assetHasImage(asset)" class="asset-image" type="button" @click="openAssetPreview(asset)">
               <img :src="thumbURL(asset.url)" :alt="assetText[asset.asset_type] || asset.asset_type" @error="markBrokenAsset(asset)" />
             </button>
@@ -829,27 +951,23 @@ onBeforeUnmount(() => {
 
             <footer>
               <span>生成 {{ assetGenerateElapsed(asset) }} / 排队 {{ assetQueueElapsed(asset) }}</span>
-              <div class="asset-actions">
-                <el-button :disabled="!assetHasImage(asset)" :icon="View" @click="openAssetPreview(asset)" />
-                <el-button :disabled="!assetHasImage(asset)" :icon="Download" @click="downloadAsset(asset)" />
-                <el-button
-                  :loading="retryingAssetID === asset.id"
-                  :disabled="isAssetWorking(asset.status)"
-                  :icon="RefreshRight"
-                  @click="retryAsset(asset)"
-                />
-              </div>
             </footer>
 
-            <el-input
-              v-if="!isAssetWorking(asset.status)"
-              v-model="retryPrompts[asset.id]"
-              type="textarea"
-              :rows="2"
-              maxlength="500"
-              resize="none"
-              placeholder="可选：补充重试要求"
-            />
+            <div v-if="!isAssetWorking(asset.status)" class="retry-compact">
+              <button class="retry-toggle" type="button" @click="toggleRetryPanel(asset.id)">
+                重试要求
+                <el-icon :class="['collapse-icon', { open: retryPanelOpenIDs.has(asset.id) }]"><ArrowDown /></el-icon>
+              </button>
+              <el-input
+                v-show="retryPanelOpenIDs.has(asset.id)"
+                v-model="retryPrompts[asset.id]"
+                type="textarea"
+                :rows="2"
+                maxlength="500"
+                resize="none"
+                placeholder="可选：补充重试要求"
+              />
+            </div>
           </article>
         </div>
 
@@ -864,12 +982,17 @@ onBeforeUnmount(() => {
             <span class="kicker">近期任务</span>
             <h2>任务记录</h2>
           </div>
-          <el-button text @click="loadTasks">全部任务</el-button>
+          <span v-if="tasks.length" class="task-count">{{ tasks.length }}/{{ tasksTotal || tasks.length }}</span>
         </div>
 
-        <div v-if="recentTasks.length" class="task-list">
+        <div
+          v-if="tasks.length"
+          class="task-list"
+          @scroll="onTaskListScroll"
+          @wheel.passive="onTaskListWheel"
+        >
           <button
-            v-for="task in recentTasks"
+            v-for="task in tasks"
             :key="task.task_id"
             :class="['task-list-item', { active: activeTask?.task_id === task.task_id }]"
             type="button"
@@ -892,6 +1015,9 @@ onBeforeUnmount(() => {
               {{ statusText[task.status] || task.status }}
             </em>
           </button>
+          <div v-if="tasksLoading" class="task-list-more">加载中...</div>
+          <div v-else-if="hasMoreTasks" class="task-list-more">继续下拉加载</div>
+          <div v-else class="task-list-more">已加载全部</div>
         </div>
         <el-empty v-else description="暂无任务" :image-size="64" />
       </section>
@@ -986,18 +1112,26 @@ onBeforeUnmount(() => {
   --amber: #f59e0b;
   --red: #ef4444;
   --shadow: 0 12px 32px rgba(16, 24, 40, 0.08);
+  box-sizing: border-box;
   width: 100%;
   min-height: calc(100vh - 60px);
   display: grid;
   grid-template-columns: minmax(320px, 360px) minmax(0, 1fr) minmax(286px, 320px);
-  gap: 16px;
-  padding: 16px;
+  gap: 12px;
+  padding: 12px;
   overflow-x: hidden;
   color: var(--ink);
   background:
     linear-gradient(90deg, rgba(20, 139, 127, 0.05), transparent 34%),
     linear-gradient(180deg, #fbfaf7, var(--page));
   font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.commerce-workbench :deep(.el-button) {
+  min-height: 32px;
+  height: 32px;
+  padding: 6px 10px;
+  border-radius: 7px;
 }
 
 .surface {
@@ -1018,7 +1152,7 @@ onBeforeUnmount(() => {
 .current-task,
 .asset-section,
 .side-block {
-  padding: 20px;
+  padding: 14px;
 }
 
 .composer-card {
@@ -1028,14 +1162,14 @@ onBeforeUnmount(() => {
 .task-column {
   min-width: 0;
   display: grid;
-  gap: 16px;
+  gap: 12px;
   align-content: start;
 }
 
 .delivery-card {
   min-width: 0;
   display: grid;
-  gap: 16px;
+  gap: 12px;
   align-content: start;
 }
 
@@ -1046,7 +1180,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
 }
 
 .section-head.compact,
@@ -1057,7 +1191,7 @@ onBeforeUnmount(() => {
 
 .kicker {
   display: inline-flex;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
   color: var(--green);
   font-size: 12px;
   font-weight: 700;
@@ -1071,14 +1205,14 @@ p {
 }
 
 h1 {
-  font-size: 24px;
-  line-height: 32px;
+  font-size: 22px;
+  line-height: 28px;
   font-weight: 800;
 }
 
 h2 {
-  font-size: 22px;
-  line-height: 30px;
+  font-size: 20px;
+  line-height: 26px;
   font-weight: 800;
 }
 
@@ -1094,9 +1228,9 @@ h3 {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 26px;
+  min-height: 24px;
   border-radius: 6px;
-  padding: 4px 8px;
+  padding: 3px 8px;
   font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
@@ -1133,11 +1267,16 @@ h3 {
 }
 
 .brief-form {
-  margin-top: 18px;
+  margin-top: 12px;
 }
 
 .brief-form :deep(.el-form-item) {
-  margin-bottom: 13px;
+  margin-bottom: 10px;
+}
+
+.brief-form :deep(.el-form-item__label) {
+  min-height: 24px;
+  line-height: 24px;
 }
 
 .brief-form :deep(.el-form-item__label) {
@@ -1181,17 +1320,23 @@ h3 {
   font-size: 12px;
 }
 
+.reference-field {
+  width: 100%;
+  display: grid;
+  gap: 6px;
+}
+
 .reference-grid {
   width: 100%;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px;
 }
 
 .reference-thumb,
 .reference-upload {
   min-width: 0;
-  height: 76px;
+  height: 64px;
 }
 
 .reference-thumb {
@@ -1227,25 +1372,34 @@ h3 {
 .reference-upload :deep(.el-upload),
 .reference-upload :deep(.el-upload-dragger) {
   width: 100%;
-  height: 76px;
+  height: 64px;
 }
 
 .reference-upload :deep(.el-upload-dragger) {
+  box-sizing: border-box;
   display: grid;
   place-content: center;
+  gap: 2px;
+  padding: 0;
   border-radius: 8px;
   border-color: #d0d5dd;
   background: #fff;
   color: var(--muted);
 }
 
-.reference-upload strong {
-  margin-top: 4px;
-  font-size: 13px;
-  font-weight: 700;
+.reference-upload :deep(.el-icon) {
+  margin: 0;
+  font-size: 16px;
 }
 
-.field-hint,
+.reference-upload strong {
+  display: block;
+  margin-top: 0;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 18px;
+}
+
 .cost-hint {
   margin-top: 8px;
   color: var(--muted);
@@ -1255,7 +1409,8 @@ h3 {
 
 .primary-submit {
   width: 100%;
-  height: 44px;
+  min-height: 32px;
+  height: 32px;
   border: 0;
   border-radius: 8px;
   font-weight: 800;
@@ -1268,7 +1423,7 @@ h3 {
 }
 
 .empty-current {
-  min-height: 280px;
+  min-height: 210px;
   display: grid;
   place-content: center;
   text-align: center;
@@ -1280,17 +1435,25 @@ h3 {
 }
 
 .task-header {
-  margin-bottom: 14px;
+  align-items: center;
+  flex-wrap: nowrap;
+  margin-bottom: 10px;
+}
+
+.task-header > div:first-child {
+  min-width: 0;
 }
 
 .task-header h2 {
   max-width: 760px;
-  word-break: break-word;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .header-actions {
   display: inline-flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: flex-end;
   gap: 8px;
 }
@@ -1298,14 +1461,15 @@ h3 {
 .task-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 18px;
+  gap: 6px;
+  margin-bottom: 10px;
 }
 
 .task-meta span {
   max-width: 100%;
   border-radius: 6px;
-  padding: 6px 8px;
+  min-height: 24px;
+  padding: 3px 8px;
   color: var(--muted);
   background: #f6f7f9;
   font-size: 12px;
@@ -1316,15 +1480,24 @@ h3 {
 .progress-panel {
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 18px;
+  padding: 12px;
   background: #fcfbf8;
 }
 
-.time-row {
+.progress-summary {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.progress-summary b {
+  color: var(--ink);
+  font-size: 13px;
 }
 
 .collapsible-card {
@@ -1374,7 +1547,18 @@ h3 {
 }
 
 .collapsible-body {
-  margin-top: 14px;
+  margin-top: 10px;
+}
+
+.collapse-preview {
+  display: -webkit-box;
+  margin-top: 8px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 18px;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .progress-panel .collapsible-body .step-line,
@@ -1387,15 +1571,15 @@ h3 {
 .step-line {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 10px;
-  margin: 18px 0 16px;
+  gap: 8px;
+  margin: 10px 0 8px;
 }
 
 .step-item {
   min-width: 0;
   display: grid;
   justify-items: center;
-  gap: 6px;
+  gap: 4px;
   position: relative;
   color: var(--muted);
   text-align: center;
@@ -1404,9 +1588,9 @@ h3 {
 .step-item::before {
   content: '';
   position: absolute;
-  top: 13px;
-  left: calc(-50% + 17px);
-  width: calc(100% - 34px);
+  top: 11px;
+  left: calc(-50% + 14px);
+  width: calc(100% - 28px);
   height: 2px;
   background: #d0d5dd;
 }
@@ -1425,8 +1609,8 @@ h3 {
   z-index: 1;
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   border: 1px solid #d0d5dd;
   border-radius: 50%;
   color: var(--muted);
@@ -1479,13 +1663,6 @@ h3 {
   background: linear-gradient(90deg, var(--green), #25c7b8);
 }
 
-.time-row {
-  justify-content: flex-start;
-  margin-top: 12px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
 .task-error {
   margin-top: 12px;
 }
@@ -1493,15 +1670,15 @@ h3 {
 .copy-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(220px, 0.65fr);
-  gap: 12px;
-  margin-top: 16px;
+  gap: 10px;
+  margin-top: 10px;
 }
 
 .copy-card {
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 16px;
+  padding: 12px;
   background: #fff;
 }
 
@@ -1510,11 +1687,11 @@ h3 {
 }
 
 .copy-card dl {
-  margin: 14px 0 0;
+  margin: 10px 0 0;
 }
 
 .copy-card dt {
-  margin: 12px 0 6px;
+  margin: 8px 0 4px;
   color: var(--ink);
   font-size: 12px;
   font-weight: 800;
@@ -1524,7 +1701,7 @@ h3 {
   margin: 0;
   color: #344054;
   font-size: 14px;
-  line-height: 22px;
+  line-height: 20px;
 }
 
 .copy-card ul {
@@ -1535,13 +1712,13 @@ h3 {
 .tag-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
+  gap: 6px;
+  margin-top: 8px;
 }
 
 .tag-list span {
   border-radius: 6px;
-  padding: 6px 9px;
+  padding: 4px 8px;
   color: #344054;
   background: #f5f2ec;
   font-size: 12px;
@@ -1549,7 +1726,7 @@ h3 {
 }
 
 .spec-list {
-  margin: 12px 0 0;
+  margin: 8px 0 0;
   padding-left: 18px;
   color: #344054;
   font-size: 13px;
@@ -1557,20 +1734,20 @@ h3 {
 }
 
 .detail-summary {
-  margin-top: 16px;
-  padding: 16px;
+  margin-top: 10px;
+  padding: 12px;
 }
 
 .detail-section-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 12px;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 .detail-section-grid article {
   border-radius: 8px;
-  padding: 12px;
+  padding: 10px;
   background: #fff;
 }
 
@@ -1586,7 +1763,7 @@ h3 {
 }
 
 .asset-section .section-head {
-  margin-bottom: 16px;
+  margin-bottom: 10px;
 }
 
 .asset-section .section-head p {
@@ -1599,23 +1776,28 @@ h3 {
 
 .asset-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(188px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(156px, 1fr));
+  gap: 10px;
+  align-items: start;
 }
 
 .asset-tile {
   min-width: 0;
+  display: grid;
+  grid-template-rows: auto auto 140px auto auto;
+  gap: 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 12px;
+  padding: 10px;
   background: #fff;
 }
 
 .asset-tile header {
   display: flex;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 10px;
+  gap: 8px;
+  min-height: 42px;
 }
 
 .asset-tile b,
@@ -1638,7 +1820,8 @@ h3 {
 .asset-image,
 .asset-placeholder {
   width: 100%;
-  aspect-ratio: 1 / 1;
+  height: 140px;
+  box-sizing: border-box;
   border: 1px solid var(--line);
   border-radius: 8px;
   overflow: hidden;
@@ -1662,10 +1845,11 @@ h3 {
   display: grid;
   place-content: center;
   justify-items: center;
-  gap: 8px;
+  gap: 6px;
   color: var(--subtle);
   text-align: center;
-  padding: 18px;
+  padding: 12px;
+  overflow-wrap: anywhere;
 }
 
 .asset-placeholder.working {
@@ -1674,15 +1858,13 @@ h3 {
 }
 
 .asset-tile footer {
-  display: grid;
-  gap: 8px;
-  margin-top: 10px;
+  display: block;
 }
 
 .asset-actions {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 6px;
+  gap: 5px;
 }
 
 .asset-actions :deep(.el-button) {
@@ -1690,8 +1872,28 @@ h3 {
   margin: 0;
 }
 
+.retry-compact {
+  margin-top: 8px;
+}
+
+.retry-toggle {
+  width: 100%;
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 4px 8px;
+  color: var(--muted);
+  background: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .asset-tile :deep(.el-textarea) {
-  margin-top: 10px;
+  margin-top: 8px;
 }
 
 .asset-tile :deep(.el-textarea__inner) {
@@ -1702,9 +1904,27 @@ h3 {
   min-width: 0;
 }
 
+.task-count {
+  min-height: 24px;
+  border-radius: 6px;
+  padding: 3px 8px;
+  color: var(--muted);
+  background: #f2f4f7;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
 .task-list {
   display: grid;
   gap: 10px;
+  max-height: 386px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: 0 -4px;
+  padding: 2px 4px 4px;
+  scrollbar-width: thin;
 }
 
 .task-list-item {
@@ -1724,6 +1944,15 @@ h3 {
 .task-list-item.active {
   border-color: var(--green);
   box-shadow: 0 0 0 3px rgba(20, 139, 127, 0.12);
+}
+
+.task-list-more {
+  min-height: 26px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .task-thumb {
@@ -1822,7 +2051,7 @@ h3 {
   align-items: center;
   gap: 14px;
   border-radius: 8px;
-  padding: 16px;
+  padding: 12px;
   background: #f7f8fa;
 }
 
@@ -1989,7 +2218,7 @@ h3 {
 
 @media (max-width: 560px) {
   .commerce-workbench {
-    padding: 10px;
+    padding: 12px;
     gap: 12px;
   }
 
@@ -1997,7 +2226,7 @@ h3 {
   .current-task,
   .asset-section,
   .side-block {
-    padding: 14px;
+    padding: 12px;
   }
 
   h1 {
@@ -2022,7 +2251,10 @@ h3 {
     grid-column: 2;
   }
 
-  .time-row,
+  .header-actions {
+    flex-wrap: wrap;
+  }
+
   .task-meta {
     align-items: flex-start;
     flex-direction: column;
