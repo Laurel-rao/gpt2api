@@ -32,7 +32,7 @@ const previewVisible = ref(false)
 const previewAsset = ref<EcommerceAsset | null>(null)
 const brokenAssetIDs = ref<Set<number>>(new Set())
 const retryPrompts = ref<Record<number, string>>({})
-const previewThumbKB = 20
+const previewThumbKB = 100
 
 const platforms = ref<EcommercePlatform[]>([])
 const prompts = ref<EcommercePromptTemplate[]>([])
@@ -1164,7 +1164,6 @@ h2 { font-size: 25px; }
   border: 0;
   border-radius: 18px;
   background: #fff;
-  filter: grayscale(1);
 }
 pre {
   max-height: 620px;
