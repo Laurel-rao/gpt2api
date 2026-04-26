@@ -1028,13 +1028,13 @@ func assetCompositionCN(assetType string) string {
 	case AssetTitle:
 		return "横版品牌海报，商品放在画面右侧或左侧三分之一，留出大标题和核心卖点区，必须有明确营销版式。"
 	case AssetMain:
-		return "商品主图，单一主视觉，使用干净渐变或平台友好背景，展示商品使用氛围，但不要与白底图同角度同裁切。"
+		return "商品主图，单一主视觉，使用渐变、色块或轻场景背景，展示商品使用氛围，避免审核图式居中孤立摆放。"
 	case AssetWhite:
 		return "标准白底商品图，居中、完整、无文字，只保留商品本体。"
 	case AssetDetail:
-		return "竖版详情模块，必须使用全画幅家居/户外真实场景或杂志式设计背景作为底图，商品融入场景；分区展示卖点、参数和局部特写，可使用信息卡片和图文排版；画面底层不得是白底商品棚拍。"
+		return "竖版详情模块，必须使用满版家居/户外真实场景、有色设计底板或杂志式版面，商品融入场景；分区展示卖点、参数和局部特写，可使用信息卡片和图文排版。"
 	case AssetPrice:
-		return "竖版促销图，突出价格、优惠、CTA 和购买理由，使用强视觉层级，不做纯产品白底图。"
+		return "竖版促销图，突出价格、优惠、CTA 和购买理由，使用强视觉层级、促销色块和海报式背景。"
 	default:
 		return "按当前图片类型设计独立构图，避免与其他资产重复。"
 	}
@@ -1045,13 +1045,13 @@ func assetCompositionEN(assetType string) string {
 	case AssetTitle:
 		return "horizontal brand poster; place the product on the left or right third, reserve space for a large headline and key value, with a clear marketing layout."
 	case AssetMain:
-		return "main product visual with a clean gradient or platform-safe background and usage atmosphere; do not reuse the white-background angle or crop."
+		return "main product visual with a gradient, color-block or light lifestyle background and usage atmosphere; avoid isolated catalog-style centering."
 	case AssetWhite:
 		return "standard white-background product image, centered, complete, no text, product only."
 	case AssetDetail:
-		return "vertical detail module on a full-bleed real home/outdoor scene or magazine-style designed background; integrate the product into the scene; include sections for selling points, specs and close-ups with info cards and editorial layout; the base canvas must not be a white studio product shot."
+		return "vertical detail module on a full-bleed home/outdoor scene, colored design canvas or magazine-style layout; integrate the product into the scene; include sections for selling points, specs and close-ups with info cards and editorial layout."
 	case AssetPrice:
-		return "vertical promotion image emphasizing price, discount, CTA and purchase reasons with strong visual hierarchy; not a plain product cutout."
+		return "vertical promotion image emphasizing price, discount, CTA and purchase reasons with strong visual hierarchy, campaign color blocks and a poster background."
 	default:
 		return "design an independent composition for this asset type and avoid repeating other assets."
 	}
@@ -1062,13 +1062,13 @@ func assetBackgroundRuleCN(assetType string) string {
 	case AssetWhite:
 		return "使用纯白或接近纯白背景。"
 	case AssetDetail:
-		return "本图必须输出详情页场景/编辑设计图；模板中的白底主图规范只表示平台合规，不控制本图背景。"
+		return "本图必须输出详情页场景/编辑设计图，使用有色底板、真实场景或杂志式背景。"
 	case AssetPrice:
-		return "使用促销海报背景、色块或场景底图，避免白底商品目录图。"
+		return "使用促销海报背景、色块或场景底图。"
 	case AssetTitle:
-		return "使用品牌海报背景或场景化背景，避免白底商品目录图。"
+		return "使用品牌海报背景或场景化背景。"
 	case AssetMain:
-		return "使用渐变、浅场景或平台安全背景，避免复用白底图背景。"
+		return "使用渐变、浅场景或平台安全背景。"
 	default:
 		return "按当前资产类型使用独立背景。"
 	}
@@ -1079,7 +1079,7 @@ func assetBackgroundRuleEN(assetType string) string {
 	case AssetWhite:
 		return "Use a pure white or near-white background."
 	case AssetDetail:
-		return "Use a full-bleed scene or editorial canvas; generic white-background platform wording does not control this asset."
+		return "Use a full-bleed scene, colored design canvas or editorial background."
 	case AssetPrice:
 		return "Use a promotional poster background, color blocks or a scene base."
 	case AssetTitle:
@@ -1094,28 +1094,28 @@ func assetBackgroundRuleEN(assetType string) string {
 func assetNonWhiteHardRuleCN(assetType string) string {
 	switch assetType {
 	case AssetDetail:
-		return "详情图必须是整版场景化/编辑化信息图，不能是白底居中商品图。"
+		return "详情图必须是整版场景化/编辑化信息图，背景必须有场景、色块或版面层次。"
 	case AssetPrice:
-		return "价格图必须是促销海报构图，价格与行动号召优先，不能是白底目录图。"
+		return "价格图必须是促销海报构图，价格与行动号召优先，背景必须有促销色块或场景层次。"
 	case AssetTitle:
-		return "店标题图必须是横版品牌海报，保留标题区，不能是白底目录图。"
+		return "店标题图必须是横版品牌海报，保留标题区，背景必须有品牌视觉层次。"
 	case AssetMain:
-		return "电商大图必须是主视觉海报或场景主图，不能退化成白底抠图。"
+		return "电商大图必须是主视觉海报或场景主图，背景必须有渐变、色块或使用氛围。"
 	default:
-		return "当前资产必须保持独立版式，不能退化成白底目录图。"
+		return "当前资产必须保持独立版式，背景必须有明确视觉层次。"
 	}
 }
 
 func assetNonWhiteHardRuleEN(assetType string) string {
 	switch assetType {
 	case AssetDetail:
-		return "The detail image must be a scene-driven or editorial information layout, not a centered white-background product shot."
+		return "The detail image must be a scene-driven or editorial information layout with a visible scene, color blocks or layered page design."
 	case AssetPrice:
 		return "The price image must read as a promotion poster with price and CTA priority, not a catalog cutout."
 	case AssetTitle:
 		return "The title image must read as a horizontal brand poster with a clear headline zone, not a catalog cutout."
 	case AssetMain:
-		return "The main image must read as a hero poster or scene-led ecommerce visual, not a white-background cutout."
+		return "The main image must read as a hero poster or scene-led ecommerce visual with a gradient, color blocks or usage atmosphere."
 	default:
 		return "This asset must keep an independent composition and must not collapse into a catalog cutout."
 	}
@@ -1125,14 +1125,14 @@ func assetRetryRulesCN(assetType string) string {
 	if assetType == AssetWhite {
 		return "- 必须保持参考图中的商品主体一致。\n- 保持干净白底，只展示商品本体，不要加入场景、文字或装饰元素。"
 	}
-	return "- 必须保持参考图中的商品主体一致。\n- 不得复用白底图的纯白背景、居中孤立摆放、角度、裁切和光影。\n- 当前资产必须与白底图明显不同。\n- 非白底图不得退化成白底商品图。"
+	return "- 必须保持参考图中的商品主体一致。\n- 背景必须按当前资产类型重新设计，使用场景、色块、渐变或编辑版面。\n- 不得复用参考图的孤立居中摆放、角度、裁切和光影。\n- 当前资产必须与商品审核图明显不同。"
 }
 
 func assetRetryRulesEN(assetType string) string {
 	if assetType == AssetWhite {
 		return "Keep the same product identity as the reference images.\n- Keep a clean white background with the product only; no scene, text or decorative elements."
 	}
-	return "Keep the same product identity as the reference images.\n- Do not reuse the white-background look, centered cutout, angle, crop or lighting from the white image.\n- This asset must look clearly different from the white-background image.\n- For non-white assets, do not output a plain centered product cutout on a white background."
+	return "Keep the same product identity as the reference images.\n- Redesign the background for this asset type using a scene, color blocks, gradients or editorial page layout.\n- Do not reuse the isolated centered placement, angle, crop or lighting from the reference.\n- This asset must look clearly different from the review image."
 }
 
 func referencesForAsset(assetType string, refs []imgpkg.ReferenceImage) []imgpkg.ReferenceImage {

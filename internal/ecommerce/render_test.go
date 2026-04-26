@@ -51,12 +51,15 @@ func TestBuildHTML(t *testing.T) {
 		MarketingCopy:  []string{"大容量"},
 		DetailSections: []DetailSection{{Title: "材质", Body: "耐磨面料"}},
 	}
-	assets := []Asset{{AssetType: AssetMain, URL: "/p/img/a/0"}}
+	assets := []Asset{{AssetType: AssetMain, URL: "/p/img/a/0"}, {AssetType: AssetWhite, URL: "/p/img/white/0"}}
 	html := buildHTML(out, assets)
 	for _, want := range []string{"儿童书包", "/p/img/a/0", "耐磨面料"} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("html missing %q: %s", want, html)
 		}
+	}
+	if strings.Contains(html, "/p/img/white/0") || strings.Contains(html, "白底图") {
+		t.Fatalf("detail page html should not include white asset: %s", html)
 	}
 	if !json.Valid([]byte(mustJSON(out))) {
 		t.Fatal("output should stay JSON serializable")
@@ -179,7 +182,7 @@ func TestBuildEnglishDetailPromptRequiresSceneCanvas(t *testing.T) {
 		"Ma Jia Sofa",
 		AssetDetail,
 	)
-	for _, want := range []string{"full-bleed real home/outdoor scene", "integrate the product into the scene", "must not be a white studio product shot"} {
+	for _, want := range []string{"full-bleed home/outdoor scene", "colored design canvas", "integrate the product into the scene"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("detail prompt missing %q: %s", want, prompt)
 		}

@@ -114,6 +114,10 @@ export function cancelEcommerceTask(taskID: string): Promise<EcommerceTask> {
   return http.post(`/api/me/ecommerce/tasks/${taskID}/cancel`, {})
 }
 
+export function exportEcommercePoster(taskID: string) {
+  return http.get(`/api/me/ecommerce/tasks/${taskID}/export`, { responseType: 'blob' })
+}
+
 export type ConfigKind = 'platforms' | 'prompt-templates' | 'style-templates'
 
 export function listEcommerceConfig<T>(kind: ConfigKind, keyword = ''): Promise<{ items: T[]; total: number }> {

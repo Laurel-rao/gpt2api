@@ -649,9 +649,6 @@ func buildHTML(out Output, assets []Asset) string {
 		b.WriteString(html.EscapeString(sec.Body))
 		b.WriteString(`</p></section>`)
 	}
-	if u := assetMap[AssetWhite]; u != "" {
-		b.WriteString(`<img class="wide-image" src="` + html.EscapeString(u) + `" alt="白底图">`)
-	}
 	b.WriteString(`</article>`)
 	return b.String()
 }

@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox, type UploadFile } from 'element-plus'
 import {
   cancelEcommerceTask,
   createEcommerceTask,
+  exportEcommercePoster,
   getEcommerceOptions,
   getEcommerceTask,
   listEcommerceTasks,
@@ -33,6 +34,7 @@ const previewAsset = ref<EcommerceAsset | null>(null)
 const brokenAssetIDs = ref<Set<number>>(new Set())
 const retryPrompts = ref<Record<number, string>>({})
 const previewThumbKB = 100
+const detailPreviewThumbKB = 500
 
 const platforms = ref<EcommercePlatform[]>([])
 const prompts = ref<EcommercePromptTemplate[]>([])
@@ -97,7 +99,9 @@ const heroDescription = computed(() => output.value?.description || '生成完�
 const marketingCopy = computed<string[]>(() => Array.isArray(output.value?.marketing_copy) ? output.value.marketing_copy : [])
 const detailDoc = computed(() => {
   if (!activeTask.value?.output_html) return ''
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>*{box-sizing:border-box}html,body{margin:0;max-width:100%;overflow-x:hidden;background:#fff;color:#151515;font-family:Georgia,'Songti SC',serif}.stage{width:100%;max-width:860px;margin:0 auto;padding:24px;overflow-x:hidden}.ecommerce-detail-preview{width:100%;max-width:100%;overflow-x:hidden}.ecommerce-detail-preview img{display:block;width:100%;max-width:100%;height:auto;object-fit:contain}.copy-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.detail-head,.detail-section{max-width:100%;overflow-wrap:anywhere}</style></head><body><main class="stage">${withThumbImages(activeTask.value.output_html)}</main></body></html>`
+  const body = sanitizeDetailHTML(withThumbImages(activeTask.value.output_html, detailPreviewThumbKB))
+  const colorReset = `html,body,.stage,.ecommerce-detail-preview,.ecommerce-detail-preview *{filter:none!important;-webkit-filter:none!important;mix-blend-mode:normal!important;opacity:1!important}.ecommerce-detail-preview img{display:block;width:100%;max-width:100%;height:auto;object-fit:contain}`
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>*{box-sizing:border-box}html,body{margin:0;max-width:100%;overflow-x:hidden;background:#fff;color:#151515;color-scheme:light;font-family:Georgia,'Songti SC',serif}.stage{width:100%;max-width:860px;margin:0 auto;padding:24px;overflow-x:hidden}.ecommerce-detail-preview{width:100%;max-width:100%;overflow-x:hidden}.copy-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.detail-head,.detail-section{max-width:100%;overflow-wrap:anywhere}${colorReset}</style></head><body><main class="stage">${body}</main><style>${colorReset}</style></body></html>`
 })
 const flowSteps = computed(() => {
   const status = activeTask.value?.status || ''
@@ -177,8 +181,14 @@ function thumbURL(url: string, kb = previewThumbKB) {
   return `${main}${main.includes('?') ? sep : '?'}thumb_kb=${kb}${hash}`
 }
 
-function withThumbImages(html: string) {
-  return html.replace(/(<img\b[^>]*\bsrc=["'])([^"']+)(["'])/gi, (_match, prefix, url, suffix) => `${prefix}${thumbURL(url)}${suffix}`)
+function withThumbImages(html: string, kb = previewThumbKB) {
+  return html.replace(/(<img\b[^>]*\bsrc=["'])([^"']+)(["'])/gi, (_match, prefix, url, suffix) => `${prefix}${thumbURL(url, kb)}${suffix}`)
+}
+
+function sanitizeDetailHTML(html: string) {
+  return html
+    .replace(/-webkit-filter\s*:\s*[^;"'}]+;?/gi, '')
+    .replace(/filter\s*:\s*[^;"'}]+;?/gi, '')
 }
 
 async function loadOptions() {
@@ -377,96 +387,28 @@ async function downloadAsset(asset: EcommerceAsset) {
   }
 }
 
-function fetchImage(url: string): Promise<HTMLImageElement> {
-  return fetch(url)
-    .then((res) => {
-      if (!res.ok) throw new Error(`image fetch failed: ${res.status}`)
-      return res.blob()
-    })
-    .then((blob) => new Promise<HTMLImageElement>((resolve, reject) => {
-      const objectURL = URL.createObjectURL(blob)
-      const img = new Image()
-      img.onload = () => {
-        URL.revokeObjectURL(objectURL)
-        resolve(img)
-      }
-      img.onerror = () => {
-        URL.revokeObjectURL(objectURL)
-        reject(new Error('image load failed'))
-      }
-      img.src = objectURL
-    }))
-}
-
-function downloadCanvas(canvas: HTMLCanvasElement, filename: string) {
-  canvas.toBlob((blob) => {
-    if (!blob) {
-      ElMessage.error('导出失败')
-      return
-    }
-    const objectURL = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = objectURL
-    link.download = filename
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    URL.revokeObjectURL(objectURL)
-  }, 'image/png')
+function downloadBlob(blob: Blob, filename: string) {
+  const objectURL = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = objectURL
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(objectURL)
 }
 
 async function exportPoster() {
   if (!activeTask.value) return
-  const imageAssets = assetOrder
-    .map((type) => assets.value.find((asset) => asset.asset_type === type && assetHasImage(asset)))
-    .filter(Boolean) as EcommerceAsset[]
-  if (!imageAssets.length) {
+  if (!assets.value.some(assetHasImage)) {
     ElMessage.warning('暂无可导出的图片')
     return
   }
   exporting.value = true
   try {
-    const loaded = await Promise.all(imageAssets.map(async (asset) => ({ asset, img: await fetchImage(asset.url) })))
-    const canvas = document.createElement('canvas')
-    const ctx = canvas.getContext('2d')
-    if (!ctx) throw new Error('canvas unsupported')
-
-    const width = 1242
-    const padding = 72
-    const contentWidth = width - padding * 2
-    const blockGap = 34
-    const title = String(heroTitle.value)
-    const description = String(output.value?.description || '')
-    const price = String(output.value?.price_copy || '')
-    const lineHeight = 42
-    const imageHeight = loaded.reduce((sum, item) => sum + Math.round(item.img.height * contentWidth / item.img.width) + 86 + blockGap, 0)
-    const height = 360 + imageHeight + marketingCopy.value.length * 42
-
-    canvas.width = width
-    canvas.height = height
-    ctx.fillStyle = '#f1eadc'
-    ctx.fillRect(0, 0, width, height)
-    ctx.fillStyle = '#16130f'
-    ctx.font = '700 52px Georgia, serif'
-    ctx.fillText(title.slice(0, 26), padding, 104)
-    ctx.font = '400 28px Georgia, serif'
-    wrapCanvasText(ctx, description, padding, 160, contentWidth, lineHeight, 3)
-    if (price) {
-      ctx.fillStyle = '#c55a26'
-      ctx.font = '700 34px Georgia, serif'
-      ctx.fillText(price.slice(0, 34), padding, 300)
-    }
-    let y = 350
-    for (const item of loaded) {
-      ctx.fillStyle = '#16130f'
-      ctx.font = '700 30px Georgia, serif'
-      ctx.fillText(assetText[item.asset.asset_type] || item.asset.asset_type, padding, y)
-      y += 32
-      const imgH = Math.round(item.img.height * contentWidth / item.img.width)
-      ctx.drawImage(item.img, padding, y, contentWidth, imgH)
-      y += imgH + blockGap
-    }
-    downloadCanvas(canvas, `${activeTask.value.task_id}-电商资产长图.png`)
+    const res: any = await exportEcommercePoster(activeTask.value.task_id)
+    const blob = res?.data instanceof Blob ? res.data : new Blob([res], { type: 'image/png' })
+    downloadBlob(blob, `${activeTask.value.task_id}-电商资产长图.png`)
     ElMessage.success('长图已生成')
   } catch (err) {
     console.error('export ecommerce poster failed:', err)
@@ -474,23 +416,6 @@ async function exportPoster() {
   } finally {
     exporting.value = false
   }
-}
-
-function wrapCanvasText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, maxWidth: number, lineHeight: number, maxLines: number) {
-  const lines: string[] = []
-  let line = ''
-  for (const char of text) {
-    const next = line + char
-    if (ctx.measureText(next).width > maxWidth && line) {
-      lines.push(line)
-      line = char
-      if (lines.length >= maxLines) break
-    } else {
-      line = next
-    }
-  }
-  if (line && lines.length < maxLines) lines.push(line)
-  lines.forEach((item, index) => ctx.fillText(item, x, y + index * lineHeight))
 }
 
 onMounted(() => {
@@ -1164,6 +1089,9 @@ h2 { font-size: 25px; }
   border: 0;
   border-radius: 18px;
   background: #fff;
+  filter: none;
+  mix-blend-mode: normal;
+  opacity: 1;
 }
 pre {
   max-height: 620px;
