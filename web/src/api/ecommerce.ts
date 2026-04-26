@@ -115,7 +115,10 @@ export function cancelEcommerceTask(taskID: string): Promise<EcommerceTask> {
 }
 
 export function exportEcommercePoster(taskID: string) {
-  return http.get(`/api/me/ecommerce/tasks/${taskID}/export`, { responseType: 'blob' })
+  return http.get(`/api/me/ecommerce/tasks/${taskID}/export`, {
+    responseType: 'blob',
+    timeout: 180_000,
+  })
 }
 
 export type ConfigKind = 'platforms' | 'prompt-templates' | 'style-templates'
