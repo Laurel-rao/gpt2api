@@ -8,6 +8,7 @@ import {
   getEcommerceOptions,
   getEcommerceTask,
   listEcommerceTasks,
+  retryEcommerceTask,
   retryEcommerceAsset,
   type EcommerceAsset,
   type EcommercePlatform,
@@ -29,6 +30,7 @@ const exporting = ref(false)
 const downloadingAll = ref(false)
 const tasksLoading = ref(false)
 const tasksTotal = ref(0)
+const retryingTaskID = ref('')
 const retryingAssetID = ref(0)
 const polling = ref<number | null>(null)
 const pollingTaskID = ref('')
@@ -223,6 +225,16 @@ function shortTaskID(taskID: string) {
   return `${taskID.slice(0, 10)}...${taskID.slice(-6)}`
 }
 
+function compactText(text?: string | null, limit = 84) {
+  const value = String(text || '').replace(/\s+/g, ' ').trim()
+  if (!value) return ''
+  return value.length > limit ? `${value.slice(0, limit)}...` : value
+}
+
+function taskRequirementPreview(task: EcommerceTask) {
+  return compactText(task.requirement, 92) || '暂无商品资料'
+}
+
 function toggleRetryPanel(assetID: number) {
   const next = new Set(retryPanelOpenIDs.value)
   if (next.has(assetID)) next.delete(assetID)
@@ -237,6 +249,10 @@ function assetRank(type: string) {
 
 function isAssetWorking(status: string) {
   return status === 'queued' || status === 'running'
+}
+
+function canRetryTask(status?: string) {
+  return status === 'failed' || status === 'canceled'
 }
 
 function assetHasImage(asset: EcommerceAsset) {
@@ -497,6 +513,27 @@ async function retryAsset(asset: EcommerceAsset) {
   }
 }
 
+async function retryTask(task = activeTask.value, ev?: Event) {
+  ev?.stopPropagation()
+  if (!task || !canRetryTask(task.status)) return
+  retryingTaskID.value = task.task_id
+  try {
+    const fresh = await retryEcommerceTask(task.task_id)
+    activeTask.value = fresh
+    brokenAssetIDs.value = new Set()
+    brokenTaskThumbIDs.value = new Set()
+    retryPanelOpenIDs.value = new Set()
+    retryPrompts.value = {}
+    await loadTasks()
+    startPolling(fresh.task_id)
+    ElMessage.success('已重新提交整单生成')
+  } catch (err) {
+    console.error('retry ecommerce task failed:', err)
+  } finally {
+    retryingTaskID.value = ''
+  }
+}
+
 function startPolling(taskID: string) {
   stopPolling()
   pollingTaskID.value = taskID
@@ -739,7 +776,7 @@ onBeforeUnmount(() => {
       <div class="section-head">
         <div>
           <span class="kicker">任务创建</span>
-          <h1>电商生成工作台</h1>
+          <h1>电商智能体</h1>
         </div>
         <span class="lang-chip">{{ selectedLanguage }}</span>
       </div>
@@ -847,6 +884,14 @@ onBeforeUnmount(() => {
             </div>
             <div class="header-actions">
               <el-button :icon="Refresh" @click="openTask(activeTask)">刷新</el-button>
+              <el-button
+                v-if="canRetryTask(activeTask.status)"
+                :loading="retryingTaskID === activeTask.task_id"
+                :icon="RefreshRight"
+                @click="retryTask(activeTask)"
+              >
+                整体重试
+              </el-button>
               <el-button v-if="running" type="danger" :loading="canceling" @click="cancelTask">取消任务</el-button>
             </div>
           </header>
@@ -1105,11 +1150,28 @@ onBeforeUnmount(() => {
             </span>
             <span>
               <b>{{ task.output_json?.product_title || task.requirement || '未命名任务' }}</b>
-              <small>{{ task.task_id }}</small>
+              <span class="task-tags">
+                <i>{{ task.platform_name || '未知平台' }}</i>
+                <i>{{ task.prompt_name || '默认模板' }}</i>
+                <i>{{ task.style_name || '默认风格' }}</i>
+              </span>
+              <small class="task-brief">{{ taskRequirementPreview(task) }}</small>
             </span>
-            <em :class="['text-state', statusTone[task.status] || 'muted']">
-              {{ statusText[task.status] || task.status }}
-            </em>
+            <span class="task-side">
+              <em :class="['text-state', statusTone[task.status] || 'muted']">
+                {{ statusText[task.status] || task.status }}
+              </em>
+              <el-button
+                v-if="canRetryTask(task.status)"
+                class="task-retry-btn"
+                text
+                :loading="retryingTaskID === task.task_id"
+                :icon="RefreshRight"
+                @click="retryTask(task, $event)"
+              >
+                重试
+              </el-button>
+            </span>
           </button>
           <div v-if="tasksLoading" class="task-list-more">加载中...</div>
           <div v-else-if="hasMoreTasks" class="task-list-more">继续下拉加载</div>
@@ -2025,16 +2087,30 @@ h3 {
 
 .task-list-item {
   width: 100%;
+  min-width: 0;
   display: grid;
-  grid-template-columns: 52px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 8px;
+  padding: 7px;
   background: #fff;
   text-align: left;
   cursor: pointer;
+}
+
+.task-side {
+  min-width: 0;
+  align-self: start;
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+}
+
+.task-retry-btn {
+  min-height: 20px;
+  padding: 0;
 }
 
 .task-list-item.active {
@@ -2052,8 +2128,8 @@ h3 {
 }
 
 .task-thumb {
-  width: 52px;
-  height: 52px;
+  width: 48px;
+  height: 48px;
   display: grid;
   place-items: center;
   overflow: hidden;
@@ -2072,20 +2148,66 @@ h3 {
 .task-list-item small {
   display: block;
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.task-list-item > span:not(.task-thumb):not(.task-side) {
+  min-width: 0;
+  overflow: hidden;
+}
+
 .task-list-item b {
   font-size: 13px;
-  line-height: 20px;
+  line-height: 18px;
 }
 
 .task-list-item small {
   color: var(--muted);
-  font-size: 12px;
-  line-height: 18px;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.task-tags {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 3px;
+  margin-top: 3px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.task-tags i {
+  max-width: 33%;
+  min-width: 0;
+  min-height: 15px;
+  border: 1px solid rgba(20, 139, 127, 0.16);
+  border-radius: 999px;
+  padding: 1px 4px;
+  color: var(--green);
+  background: rgba(20, 139, 127, 0.06);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-brief {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  margin-top: 3px;
+  color: var(--muted) !important;
+  font-size: 11px;
+  line-height: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .text-state {
@@ -2343,8 +2465,13 @@ h3 {
     grid-template-columns: 46px minmax(0, 1fr);
   }
 
-  .task-list-item .text-state {
+  .task-side {
     grid-column: 2;
+    justify-items: start;
+  }
+
+  .task-list-item .text-state {
+    grid-column: auto;
   }
 
   .header-actions {

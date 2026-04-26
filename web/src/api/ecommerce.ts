@@ -114,6 +114,10 @@ export function cancelEcommerceTask(taskID: string): Promise<EcommerceTask> {
   return http.post(`/api/me/ecommerce/tasks/${taskID}/cancel`, {})
 }
 
+export function retryEcommerceTask(taskID: string): Promise<EcommerceTask> {
+  return http.post(`/api/me/ecommerce/tasks/${taskID}/retry`, {})
+}
+
 export function exportEcommercePoster(taskID: string) {
   return http.get(`/api/me/ecommerce/tasks/${taskID}/export`, {
     responseType: 'blob',

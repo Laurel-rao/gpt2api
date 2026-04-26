@@ -123,6 +123,16 @@ function assetRank(type: string) {
   return idx === -1 ? 99 : idx
 }
 
+function compactText(text?: string | null, limit = 86) {
+  const value = String(text || '').replace(/\s+/g, ' ').trim()
+  if (!value) return ''
+  return value.length > limit ? `${value.slice(0, limit)}...` : value
+}
+
+function taskRequirementPreview(task: EcommerceTask) {
+  return compactText(task.requirement, 92) || '暂无商品资料'
+}
+
 function isAssetWorking(status: string) {
   return status === 'queued' || status === 'running'
 }
@@ -623,10 +633,15 @@ onBeforeUnmount(() => {
             type="button"
             @click="openTask(task)"
           >
-            <span class="history-main">{{ task.platform_name || '未知平台' }}</span>
-            <span>{{ formatDateTime(task.created_at) }}</span>
-            <small>{{ task.prompt_name || '默认提示词' }} · {{ task.style_name || '默认风格' }}</small>
+            <span class="history-main">{{ task.output_json?.product_title || task.requirement || '未命名任务' }}</span>
             <i :class="['state-dot', statusTone[task.status] || 'muted']">{{ statusText[task.status] || task.status }}</i>
+            <span class="history-time">{{ formatDateTime(task.created_at) }}</span>
+            <div class="history-meta">
+              <span>{{ task.platform_name || '未知平台' }}</span>
+              <span>{{ task.prompt_name || '默认提示词' }}</span>
+              <span>{{ task.style_name || '默认风格' }}</span>
+            </div>
+            <small class="history-prompt">{{ taskRequirementPreview(task) }}</small>
           </button>
           <el-empty v-if="!tasks.length" description="暂无生成记录" :image-size="72" />
         </div>
@@ -957,10 +972,11 @@ h2 { font-size: 25px; }
 .launch-btn:disabled { opacity: .65; cursor: wait; }
 .history-card {
   width: 100%;
+  min-width: 0;
   border: 1px solid rgba(255,255,255,.12);
   border-radius: 16px;
   margin-bottom: 10px;
-  padding: 14px;
+  padding: 10px;
   text-align: left;
   color: #fff;
   background: rgba(255,255,255,.05);
@@ -971,11 +987,41 @@ h2 { font-size: 25px; }
 }
 .history-card.active { border-color: #fff; background: rgba(255,255,255,.13); }
 .history-main { font-weight: 900; }
-.history-card > span:not(.history-main) { color: var(--studio-muted); font-size: 12px; }
+.history-time { color: var(--studio-muted); font-size: 12px; }
+.history-meta {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+.history-meta span {
+  max-width: 100%;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 999px;
+  padding: 2px 6px;
+  color: rgba(255,255,255,.66);
+  background: rgba(255,255,255,.06);
+  font-size: 10.5px;
+  font-weight: 900;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .history-card small {
   color: rgba(255,255,255,.48);
-  font-size: 12px;
+  font-size: 11px;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-prompt { grid-column: 1 / -1; }
+.history-main,
+.history-time,
+.history-prompt {
+  min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -988,6 +1034,7 @@ h2 { font-size: 25px; }
   font-size: 12px;
   font-weight: 900;
   justify-self: end;
+  align-self: start;
 }
 .state-pill { padding: 8px 12px; }
 .ok { color: #000; background: #fff; }

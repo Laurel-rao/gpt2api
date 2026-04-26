@@ -116,10 +116,10 @@ watch(() => store.isLoggedIn, (v) => { if (v) loadMenu() })
       class="sidebar"
       :class="{ 'sidebar-mobile': isMobile, 'sidebar-open': isMobile && drawerOpen }"
     >
-      <div class="logo">
+      <div class="logo" :class="{ 'has-site-logo': siteLogo, 'logo-collapsed': sideCollapsed }">
         <img v-if="siteLogo" :src="siteLogo" class="logo-img" alt="logo" />
         <span v-else class="mark">{{ (siteName[0] || 'G').toUpperCase() }}</span>
-        <span v-if="!sideCollapsed" class="title">{{ siteName }}</span>
+        <span v-if="!sideCollapsed && !siteLogo" class="title">{{ siteName }}</span>
       </div>
       <el-menu
         :default-active="activePath"
@@ -286,6 +286,26 @@ watch(() => store.isLoggedIn, (v) => { if (v) loadMenu() })
     flex-shrink: 0;
   }
   .title { font-size: 16px; white-space: nowrap; overflow: hidden; }
+}
+.logo.has-site-logo {
+  padding: 0 12px;
+  .logo-img {
+    width: 164px;
+    max-width: 100%;
+    height: 38px;
+    border-radius: 8px;
+    object-fit: contain;
+    background: transparent;
+    flex-shrink: 0;
+  }
+}
+.logo.logo-collapsed.has-site-logo {
+  justify-content: center;
+  padding: 0 10px;
+  .logo-img {
+    width: 38px;
+    height: 38px;
+  }
 }
 
 .side-menu {

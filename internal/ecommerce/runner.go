@@ -101,6 +101,27 @@ func (r *Runner) EnqueueAssetRetry(taskID string, assetID uint64, extraPrompt st
 	}()
 }
 
+func (r *Runner) RetryTask(ctx context.Context, taskID string) error {
+	task, err := r.dao.GetTask(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	switch task.Status {
+	case StatusQueued, StatusRunning:
+		return errors.New("任务正在生成中")
+	case StatusSuccess:
+		return errors.New("任务已完成，无需整体重试")
+	case StatusFailed, StatusCanceled:
+		if err := r.dao.ResetTaskForRetry(ctx, taskID); err != nil {
+			return err
+		}
+		r.Enqueue(taskID)
+		return nil
+	default:
+		return errors.New("当前任务状态不支持整体重试")
+	}
+}
+
 func (r *Runner) CancelTask(ctx context.Context, taskID string) error {
 	task, err := r.dao.GetTask(ctx, taskID)
 	if err != nil {
@@ -642,7 +663,9 @@ func canFallbackText(err error) bool {
 		return ue.Status == http.StatusUnauthorized || ue.Status == http.StatusForbidden
 	}
 	msg := err.Error()
-	return strings.Contains(msg, "chat-requirements") || strings.Contains(msg, "上游未返回电商文案")
+	return strings.Contains(msg, "chat-requirements") ||
+		strings.Contains(msg, "上游未返回电商文案") ||
+		strings.Contains(msg, "渠道未返回电商文案")
 }
 
 func localDraftOutput(platform Platform, style StyleTemplate, requirement string) Output {

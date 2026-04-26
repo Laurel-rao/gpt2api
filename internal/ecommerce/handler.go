@@ -196,6 +196,46 @@ func (h *Handler) GetTask(c *gin.Context) {
 	resp.OK(c, v)
 }
 
+func (h *Handler) RetryTask(c *gin.Context) {
+	uid := middleware.UserID(c)
+	if uid == 0 {
+		resp.Unauthorized(c, "not logged in")
+		return
+	}
+	taskID := c.Param("id")
+	row, err := h.dao.GetTask(c.Request.Context(), taskID)
+	if err != nil {
+		writeErr(c, err)
+		return
+	}
+	if row.UserID != uid {
+		resp.NotFound(c, "任务不存在")
+		return
+	}
+	switch row.Status {
+	case StatusQueued, StatusRunning:
+		resp.BadRequest(c, "任务正在生成中")
+		return
+	case StatusSuccess:
+		resp.BadRequest(c, "任务已完成，无需整体重试")
+		return
+	case StatusFailed, StatusCanceled:
+	default:
+		resp.BadRequest(c, "当前任务状态不支持整体重试")
+		return
+	}
+	if err := h.runner.RetryTask(c.Request.Context(), taskID); err != nil {
+		resp.BadRequest(c, err.Error())
+		return
+	}
+	fresh, err := h.taskView(c.Request.Context(), taskID, false)
+	if err != nil {
+		resp.Internal(c, err.Error())
+		return
+	}
+	resp.OK(c, fresh)
+}
+
 func (h *Handler) RetryAsset(c *gin.Context) {
 	uid := middleware.UserID(c)
 	if uid == 0 {

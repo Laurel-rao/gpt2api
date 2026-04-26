@@ -1,0 +1,166 @@
+[
+  {
+    "title": "通用服务器白底主图统一化",
+    "refs": [
+      {
+        "name": "昆仑KunLun 2280（2*32C，4*32G，2*480G+3*4TB，2*25GE，2*900W AC）服务器",
+        "brand": "昆仑/KUNLUN",
+        "dedupedImage": "images_deduped/001_昆仑_KUNLUN_KunLun 2280（2_32C，4_32G，2_480G+3_4TB，2_25GE，2_900W AC）_891255f758.png"
+      },
+      {
+        "name": "新华三H3C UniServer R4900 G6/2U机架式服务器/2颗至强 6526Y(2.8GHz/16核/37.5MB)/4*32GB内存/2*960GB固态硬盘/双口10G网卡/3年原厂商保修服务",
+        "brand": "新华三/H3C",
+        "dedupedImage": "images_deduped/002_新华三_H3C_H3C UniServer R4900 G6_4e738f27f2.png"
+      },
+      {
+        "name": "新华三H3C UniServer R6900 G6/4U机架式服务器/4颗至强 8454H(2.1GHz/32核/83MB)/8*64GB内存/2*480GB固态硬盘/双口10G网卡/3年原厂商保修服务",
+        "brand": "新华三/H3C",
+        "dedupedImage": "images_deduped/003_新华三_H3C_H3C UniServer R6900 G6_6a874cb6e2.png"
+      },
+      {
+        "name": "广电五舟S627K2通用服务器",
+        "brand": "广电五舟",
+        "dedupedImage": "images_deduped/005_广电五舟_S627K2_bd7c1c968c.png"
+      },
+      {
+        "name": "联想问天WR5220 G3/2xIntel Xeon Gold 6526Y (16C 2.8GHz 37.5MB缓存)/ 4x32GB内存/ 2x960GB SSD/1块双口10G网卡（含模块）/2x800W 热插拔冗余电源/三年保修/三年硬盘保留服务",
+        "brand": "联想/LENOVO",
+        "dedupedImage": "images_deduped/004_联想_LENOVO_联想问天WR5220 G3_d6701fc1cc.jpg"
+      },
+      {
+        "name": "火蓝/Hoodblue TS5112-H24 2U机架式海光服务器",
+        "brand": "火蓝/Hoodblue",
+        "dedupedImage": "images_deduped/006_火蓝_Hoodblue_TS5112-H24_48d8b8f39a.jpg"
+      }
+    ],
+    "prompt": "基于参考图生成 1:1 电商白底主图，保留服务器正面/斜侧面结构，统一柔和阴影、清晰边缘、无文字水印、无额外配件。"
+  },
+  {
+    "title": "机房场景详情首屏图",
+    "refs": [
+      {
+        "name": "超聚变2288H V7（2*4410Y，4*32G，2*480G，2*10GE，2*900W AC）服务器",
+        "brand": "超聚变",
+        "dedupedImage": "images_deduped/007_超聚变_2288H V7（2_4410Y，4_32G，2_480G，2_10GE，2_900W AC）_9043831af1.png"
+      },
+      {
+        "name": "2025-2026入围47包IDEASEA（华启）DH-RS2297",
+        "brand": "IDEASEA",
+        "dedupedImage": "images_deduped/008_IDEASEA_DH-RS2297_3eb83eff75.png"
+      },
+      {
+        "name": "2025-2026入围49包IDEASEA（华启）DH-RS2297",
+        "brand": "IDEASEA",
+        "dedupedImage": "images_deduped/009_IDEASEA_DH-RS2297-G02_698c68a617.png"
+      },
+      {
+        "name": "旭祥 H4-322G",
+        "brand": "旭祥",
+        "dedupedImage": "images_deduped/010_旭祥_H4-422G_931bd3b602.png"
+      },
+      {
+        "name": "旭祥 X4-222C",
+        "brand": "旭祥",
+        "dedupedImage": "images_deduped/011_旭祥_X4-222C_d17eb55451.png"
+      },
+      {
+        "name": "旭祥 Z4-422G",
+        "brand": "旭祥",
+        "dedupedImage": "images_deduped/012_旭祥_Z4-422G_02a07ca067.png"
+      }
+    ],
+    "prompt": "基于参考服务器外观生成现代数据中心机柜场景图，服务器上架展示，冷色专业照明，画面干净，16:9，适合商品详情首屏。"
+  },
+  {
+    "title": "卖点海报：高可靠政企服务器",
+    "refs": [
+      {
+        "name": "中今J681P通用服务器",
+        "brand": "中今",
+        "dedupedImage": "images_deduped/014_中今_J681P_9d2c36a5be.jpg"
+      },
+      {
+        "name": "中今S212通用服务器",
+        "brand": "中今",
+        "dedupedImage": "images_deduped/015_中今_S212_8a4847f8cc.jpg"
+      },
+      {
+        "name": "中今ZJ220通用服务器",
+        "brand": "中今",
+        "dedupedImage": "images_deduped/013_中今_ZJ220_e2d71ab413.jpg"
+      },
+      {
+        "name": "华鲲振宇HuaKun TG225 B1 2U2路均衡型服务器（2*64C，8*64GB，2*960GB+3*4000GB，2*25GE，2*900W AC）",
+        "brand": "华鲲振宇",
+        "dedupedImage": "images_deduped/016_华鲲振宇_TG225 B2_1ca4a27d2d.png"
+      },
+      {
+        "name": "宝德双路服务器PR2715E",
+        "brand": "宝德/Powerleader",
+        "dedupedImage": "images_deduped/017_宝德_Powerleader_PR2715E_797b20cb7a.png"
+      },
+      {
+        "name": "宝德自强®鲲鹏服务器 ",
+        "brand": "宝德/Powerleader",
+        "dedupedImage": "images_deduped/018_宝德_Powerleader_PR210K_93f0efcf26.png"
+      }
+    ],
+    "prompt": "基于参考图生成政企采购电商海报，突出双电源、扩展槽、硬盘位、散热风道等硬件质感，深浅均衡背景，预留右侧文案区。"
+  },
+  {
+    "title": "同品牌系列矩阵图",
+    "refs": [
+      {
+        "name": "昆仑KunLun 2280（2*32C，4*32G，2*480G+3*4TB，2*25GE，2*900W AC）服务器",
+        "brand": "昆仑/KUNLUN",
+        "dedupedImage": "images_deduped/001_昆仑_KUNLUN_KunLun 2280（2_32C，4_32G，2_480G+3_4TB，2_25GE，2_900W AC）_891255f758.png"
+      },
+      {
+        "name": "新华三H3C UniServer R4900 G6/2U机架式服务器/2颗至强 6526Y(2.8GHz/16核/37.5MB)/4*32GB内存/2*960GB固态硬盘/双口10G网卡/3年原厂商保修服务",
+        "brand": "新华三/H3C",
+        "dedupedImage": "images_deduped/002_新华三_H3C_H3C UniServer R4900 G6_4e738f27f2.png"
+      },
+      {
+        "name": "新华三H3C UniServer R6900 G6/4U机架式服务器/4颗至强 8454H(2.1GHz/32核/83MB)/8*64GB内存/2*480GB固态硬盘/双口10G网卡/3年原厂商保修服务",
+        "brand": "新华三/H3C",
+        "dedupedImage": "images_deduped/003_新华三_H3C_H3C UniServer R6900 G6_6a874cb6e2.png"
+      },
+      {
+        "name": "广电五舟S627K2通用服务器",
+        "brand": "广电五舟",
+        "dedupedImage": "images_deduped/005_广电五舟_S627K2_bd7c1c968c.png"
+      },
+      {
+        "name": "联想问天WR5220 G3/2xIntel Xeon Gold 6526Y (16C 2.8GHz 37.5MB缓存)/ 4x32GB内存/ 2x960GB SSD/1块双口10G网卡（含模块）/2x800W 热插拔冗余电源/三年保修/三年硬盘保留服务",
+        "brand": "联想/LENOVO",
+        "dedupedImage": "images_deduped/004_联想_LENOVO_联想问天WR5220 G3_d6701fc1cc.jpg"
+      },
+      {
+        "name": "火蓝/Hoodblue TS5112-H24 2U机架式海光服务器",
+        "brand": "火蓝/Hoodblue",
+        "dedupedImage": "images_deduped/006_火蓝_Hoodblue_TS5112-H24_48d8b8f39a.jpg"
+      },
+      {
+        "name": "超聚变2288H V7（2*4410Y，4*32G，2*480G，2*10GE，2*900W AC）服务器",
+        "brand": "超聚变",
+        "dedupedImage": "images_deduped/007_超聚变_2288H V7（2_4410Y，4_32G，2_480G，2_10GE，2_900W AC）_9043831af1.png"
+      },
+      {
+        "name": "2025-2026入围47包IDEASEA（华启）DH-RS2297",
+        "brand": "IDEASEA",
+        "dedupedImage": "images_deduped/008_IDEASEA_DH-RS2297_3eb83eff75.png"
+      },
+      {
+        "name": "2025-2026入围49包IDEASEA（华启）DH-RS2297",
+        "brand": "IDEASEA",
+        "dedupedImage": "images_deduped/009_IDEASEA_DH-RS2297-G02_698c68a617.png"
+      },
+      {
+        "name": "旭祥 H4-322G",
+        "brand": "旭祥",
+        "dedupedImage": "images_deduped/010_旭祥_H4-422G_931bd3b602.png"
+      }
+    ],
+    "prompt": "把多台服务器生成统一角度的系列矩阵图，白灰背景，产品大小一致，适合列表页 A/B 测试和品牌集合页。"
+  }
+]

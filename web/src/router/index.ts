@@ -50,7 +50,9 @@ const routes: RouteRecordRaw[] = [
       { path: 'ecommerce', component: Ecommerce,
         meta: { title: '电商板块', perm: 'self:ecommerce' } },
       { path: 'ecommerce-v2', component: () => import('@/views/personal/EcommerceWorkbench.vue'),
-        meta: { title: '电商生成工作台', perm: 'self:ecommerce' } },
+        meta: { title: '电商智能体', perm: 'self:ecommerce' } },
+      { path: 'ecommerce-mobile', component: () => import('@/views/personal/EcommerceMobileWorkbench.vue'),
+        meta: { title: '电商移动工作台', perm: 'self:ecommerce' } },
       { path: 'docs', component: () => import('@/views/personal/ApiDocs.vue'),
         meta: { title: '接口文档', perm: ['self:usage', 'self:image'] } },
       // 旧路径兼容

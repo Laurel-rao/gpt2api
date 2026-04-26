@@ -98,7 +98,7 @@ var Defs = []KeyDef{
 	// ---------- 通用 ----------
 	{Key: SiteName, Type: "string", Category: "site", Default: "GPT2API", Label: "站点名称", Desc: "展示在顶栏和登录页大标题", Public: true},
 	{Key: SiteDescription, Type: "string", Category: "site", Default: "企业级 OpenAI 兼容网关", Label: "副标题", Desc: "登录页宣传语", Public: true},
-	{Key: SiteLogoURL, Type: "url", Category: "site", Default: "", Label: "Logo URL", Desc: "空则使用默认图标", Public: true},
+	{Key: SiteLogoURL, Type: "url", Category: "site", Default: "", Label: "Logo", Desc: "空则使用默认图标", Public: true},
 	{Key: SiteFaviconURL, Type: "url", Category: "site", Default: "", Label: "网站图标 URL", Desc: "浏览器标签页图标，支持 .ico / png / svg；留空则回退到 Logo", Public: true},
 	{Key: SiteFooter, Type: "string", Category: "site", Default: "", Label: "页脚文案", Desc: "版权/备案号等(纯文本)", Public: true},
 	{Key: SiteContactEmail, Type: "email", Category: "site", Default: "", Label: "联系邮箱", Desc: "对外展示的客服邮箱", Public: true},

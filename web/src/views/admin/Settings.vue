@@ -78,6 +78,9 @@ function isBool(it: SettingItem) { return it.type === 'bool' }
 function isInt(it: SettingItem) { return it.type === 'int' }
 function isFloat(it: SettingItem) { return it.type === 'float' }
 function isFavicon(it: SettingItem) { return it.key === 'site.favicon_url' }
+function isLogo(it: SettingItem) { return it.key === 'site.logo_url' }
+function isSiteAsset(it: SettingItem) { return isFavicon(it) || isLogo(it) }
+function siteAssetName(it: SettingItem) { return isLogo(it) ? 'Logo' : '图标' }
 function inputType(it: SettingItem) {
   if (it.type === 'email') return 'email'
   if (it.type === 'url') return 'url'
@@ -90,7 +93,7 @@ async function onSiteAssetChange(it: SettingItem, uploadFile: any) {
   try {
     const res = await uploadSiteAsset(it.key, raw)
     draft[it.key] = res.url
-    ElMessage.success('图标上传成功')
+    ElMessage.success(`${siteAssetName(it)}上传成功`)
   } catch {
     // 错误由拦截器处理
   }
@@ -226,10 +229,10 @@ onMounted(load)
                     style="width: 240px"
                     @update:model-value="(v) => (draft[it.key] = String(v ?? 0))"
                   />
-                  <div v-else-if="isFavicon(it)" class="asset-upload">
-                    <div class="asset-preview">
-                      <img v-if="draft[it.key]" :src="draft[it.key]" alt="favicon" />
-                      <div v-else class="asset-preview__empty">暂无图标</div>
+                  <div v-else-if="isSiteAsset(it)" class="asset-upload">
+                    <div :class="['asset-preview', { 'asset-preview--logo': isLogo(it) }]">
+                      <img v-if="draft[it.key]" :src="draft[it.key]" :alt="siteAssetName(it)" />
+                      <div v-else class="asset-preview__empty">暂无{{ siteAssetName(it) }}</div>
                     </div>
                     <div class="asset-actions">
                       <el-upload
@@ -239,7 +242,7 @@ onMounted(load)
                         :on-change="(file) => onSiteAssetChange(it, file)"
                       >
                         <template #trigger>
-                          <el-button type="primary" plain>上传图标</el-button>
+                          <el-button type="primary" plain>上传{{ siteAssetName(it) }}</el-button>
                         </template>
                       </el-upload>
                       <el-button v-if="draft[it.key]" @click="draft[it.key] = ''">清空</el-button>
@@ -334,6 +337,10 @@ onMounted(load)
   align-items: center;
   justify-content: center;
   overflow: hidden;
+}
+.asset-preview--logo {
+  width: 156px;
+  height: 56px;
 }
 .asset-preview img {
   width: 100%;

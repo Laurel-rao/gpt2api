@@ -1,0 +1,802 @@
+{
+  "summary": {
+    "sourceImages": 396,
+    "exactUniqueImages": 117,
+    "exactDuplicateFiles": 279,
+    "perceptualUniqueImages": 114,
+    "perceptualDuplicateFiles": 282,
+    "duplicateClusters": 63,
+    "maxClusterSize": 27,
+    "tool": "macOS sips + 17x16 dHash/aHash equality",
+    "originalDir": "images",
+    "dedupedDir": "images_deduped"
+  },
+  "groups": [
+    {
+      "groupId": 1,
+      "dedupedImage": "images_deduped/001_昆仑_KUNLUN_KunLun 2280（2_32C，4_32G，2_480G+3_4TB，2_25GE，2_900W AC）_891255f758.png",
+      "representative": "images/001_昆仑_KUNLUN_KunLun 2280（2_32C，4_32G，2_480G+3_4TB，2_25GE，2_900W AC）_891255f758.png",
+      "duplicateCount": 2,
+      "duplicates": [
+        "images/387_昆仑_KUNLUN_KunLun 2280（2_24C，4_32G，2_480G+4_4TB，2_25GE，2_900W AC）_f1edd8b8ac.png",
+        "images/388_昆仑_KUNLUN_KunLun 2280（2_48C，4_64G，2_960G+3_4TB，2_25GE，2_2000W AC_ccea6e4f0e.png"
+      ]
+    },
+    {
+      "groupId": 2,
+      "dedupedImage": "images_deduped/002_新华三_H3C_H3C UniServer R4900 G6_4e738f27f2.png",
+      "representative": "images/002_新华三_H3C_H3C UniServer R4900 G6_4e738f27f2.png",
+      "duplicateCount": 7,
+      "duplicates": [
+        "images/118_新华三_H3C_H3C UniServer R4900 G6_3265bdf2bb.png",
+        "images/119_新华三_H3C_H3C UniServer R4900 G6_4632c81dfd.png",
+        "images/120_新华三_H3C_H3C UniServer R4900 G6_7fa6bcd325.png",
+        "images/121_新华三_H3C_H3C UniServer R4900 G6_b5dc0f47d6.png",
+        "images/122_新华三_H3C_H3C UniServer R4900 G6_ad2026150c.png",
+        "images/125_新华三_H3C_H3C UniServer R4900 G6_e440178dc9.png",
+        "images/128_新华三_H3C_H3C UniServer R4900 G6_3c818cc786.png"
+      ]
+    },
+    {
+      "groupId": 4,
+      "dedupedImage": "images_deduped/004_联想_LENOVO_联想问天WR5220 G3_d6701fc1cc.jpg",
+      "representative": "images/004_联想_LENOVO_联想问天WR5220 G3_d6701fc1cc.jpg",
+      "duplicateCount": 2,
+      "duplicates": [
+        "images/140_联想_LENOVO_联想问天WR5220 G3_96b4000994.jpg",
+        "images/165_联想_LENOVO_联想问天WR5220 G3_054213fbd4.jpg"
+      ]
+    },
+    {
+      "groupId": 5,
+      "dedupedImage": "images_deduped/005_广电五舟_S627K2_bd7c1c968c.png",
+      "representative": "images/005_广电五舟_S627K2_bd7c1c968c.png",
+      "duplicateCount": 2,
+      "duplicates": [
+        "images/196_广电五舟_S627K2_f01ba8b173.png",
+        "images/396_广电五舟_S627K2_8a52fd00ce.png"
+      ]
+    },
+    {
+      "groupId": 6,
+      "dedupedImage": "images_deduped/006_火蓝_Hoodblue_TS5112-H24_48d8b8f39a.jpg",
+      "representative": "images/006_火蓝_Hoodblue_TS5112-H24_48d8b8f39a.jpg",
+      "duplicateCount": 3,
+      "duplicates": [
+        "images/305_火蓝_Hoodblue_TS5112-H16_b1dbe720ad.jpg",
+        "images/306_火蓝_Hoodblue_TS6212-H48_2f99b9acdf.jpg",
+        "images/307_火蓝_Hoodblue_TS8212-H64_e702f50ebb.jpg"
+      ]
+    },
+    {
+      "groupId": 7,
+      "dedupedImage": "images_deduped/007_超聚变_2288H V7（2_4410Y，4_32G，2_480G，2_10GE，2_900W AC）_9043831af1.png",
+      "representative": "images/007_超聚变_2288H V7（2_4410Y，4_32G，2_480G，2_10GE，2_900W AC）_9043831af1.png",
+      "duplicateCount": 4,
+      "duplicates": [
+        "images/389_超聚变_2288H V7（1_4514Y，4_32G，2_960G+1_600G，2_10GE，2_900W AC）_1b61c8aa92.png",
+        "images/391_超聚变_2288H V7（2_6526Y，4_32G，2_960G，2_10GE，2_900W AC）_d064f78035.png",
+        "images/392_超聚变_2288H V7（2_6542Y，4_32G，2_960G，2_10GE，2_900W AC）_235069c65c.png",
+        "images/393_超聚变_2288H V7（2_4510，4_32G，2_960G，2_10GE，2_900W AC）_35b3f286b8.png"
+      ]
+    },
+    {
+      "groupId": 8,
+      "dedupedImage": "images_deduped/008_IDEASEA_DH-RS2297_3eb83eff75.png",
+      "representative": "images/008_IDEASEA_DH-RS2297_3eb83eff75.png",
+      "duplicateCount": 3,
+      "duplicates": [
+        "images/025_IDEASEA_DH-RS2297_95b0be66dc.png",
+        "images/026_IDEASEA_DH-RS2297_d53f1f6f85.png",
+        "images/027_IDEASEA_DH-RS2297_e445d48661.png"
+      ]
+    },
+    {
+      "groupId": 9,
+      "dedupedImage": "images_deduped/009_IDEASEA_DH-RS2297-G02_698c68a617.png",
+      "representative": "images/009_IDEASEA_DH-RS2297-G02_698c68a617.png",
+      "duplicateCount": 1,
+      "duplicates": [
+        "images/010_IDEASEA_DH-RS2297-G02_3c7bd72c00.png"
+      ]
+    },
+    {
+      "groupId": 10,
+      "dedupedImage": "images_deduped/010_旭祥_H4-422G_931bd3b602.png",
+      "representative": "images/011_旭祥_H4-422G_931bd3b602.png",
+      "duplicateCount": 1,
+      "duplicates": [
+        "images/012_旭祥_H4-322G_e52b58f0a1.png"
+      ]
+    },
+    {
+      "groupId": 11,
+      "dedupedImage": "images_deduped/011_旭祥_X4-222C_d17eb55451.png",
+      "representative": "images/013_旭祥_X4-222C_d17eb55451.png",
+      "duplicateCount": 15,
+      "duplicates": [
+        "images/014_旭祥_X4-222C_78c1f1aaf6.png",
+        "images/015_旭祥_X4-222C_1e3b999021.png",
+        "images/016_旭祥_X4-222C_6b1c45c732.png",
+        "images/017_旭祥_X4-222C_508bef1ea4.png",
+        "images/018_旭祥_X4-222C_ff1e7d0d7e.png",
+        "images/019_旭祥_X4-222C_4c31015759.png",
+        "images/020_旭祥_X3-222C_2f822bdbee.png",
+        "images/021_旭祥_X3-222C_ed75d7ccff.png",
+        "images/022_旭祥_X4-222C_bddfb254be.png",
+        "images/028_旭祥_X4-222C_e4fcc387ba.png",
+        "images/029_旭祥_X4-222C_6da2cb9c6e.png",
+        "images/030_旭祥_X3-222C_d9f4f392cb.png",
+        "images/031_旭祥_X4-222C_04b521e403.png",
+        "images/032_旭祥_X4-222C_657a67621c.png",
+        "images/033_旭祥_X4-222C_f7f9470274.png"
+      ]
+    },
+    {
+      "groupId": 12,
+      "dedupedImage": "images_deduped/012_旭祥_Z4-422G_02a07ca067.png",
+      "representative": "images/023_旭祥_Z4-422G_02a07ca067.png",
+      "duplicateCount": 4,
+      "duplicates": [
+        "images/024_旭祥_Z4-422G_b4c3b8a288.png",
+        "images/034_旭祥_Z4-422G_2d17779e51.png",
+        "images/035_旭祥_Z4-422G_58a4057d55.png",
+        "images/036_旭祥_X4-222C_60203a2a7a.png"
+      ]
+    },
+    {
+      "groupId": 13,
+      "dedupedImage": "images_deduped/013_中今_ZJ220_e2d71ab413.jpg",
+      "representative": "images/037_中今_ZJ220_e2d71ab413.jpg",
+      "duplicateCount": 4,
+      "duplicates": [
+        "images/043_中今_ZJ220_f174c32224.jpg",
+        "images/044_中今_ZJ220_f5d7053e88.jpg",
+        "images/046_中今_ZJ220_4db6b42b56.jpg",
+        "images/088_中今_ZJ220_bfa4b42f9c.jpg"
+      ]
+    },
+    {
+      "groupId": 14,
+      "dedupedImage": "images_deduped/014_中今_J681P_9d2c36a5be.jpg",
+      "representative": "images/038_中今_J681P_9d2c36a5be.jpg",
+      "duplicateCount": 5,
+      "duplicates": [
+        "images/039_中今_J481P_616effd625.jpg",
+        "images/040_中今_J222X_0f464e2f10.jpg",
+        "images/041_中今_J222X_9e2846a495.jpg",
+        "images/089_中今_J222X_831f4e5675.jpg",
+        "images/090_中今_J222X_5179f77370.jpg"
+      ]
+    },
+    {
+      "groupId": 15,
+      "dedupedImage": "images_deduped/015_中今_S212_8a4847f8cc.jpg",
+      "representative": "images/042_中今_S212_8a4847f8cc.jpg",
+      "duplicateCount": 4,
+      "duplicates": [
+        "images/045_中今_S212_dbb5d5cd84.jpg",
+        "images/091_中今_S212_74562a15b7.jpg",
+        "images/092_中今_S212_f04a489b28.jpg",
+        "images/094_中今_S212_ee0baaec87.jpg"
+      ]
+    },
+    {
+      "groupId": 16,
+      "dedupedImage": "images_deduped/016_华鲲振宇_TG225 B2_1ca4a27d2d.png",
+      "representative": "images/047_华鲲振宇_TG225 B2_1ca4a27d2d.png",
+      "duplicateCount": 3,
+      "duplicates": [
+        "images/048_华鲲振宇_HuaKun TG225 B1_f1fc45324c.png",
+        "images/049_华鲲振宇_TG225 B2_345b8bf543.png",
+        "images/051_华鲲振宇_HuaKun TG225 B1_77e6b43fb6.png"
+      ]
+    },
+    {
+      "groupId": 26,
+      "dedupedImage": "images_deduped/026_超益集伦_G284-X4_3f931c481a.png",
+      "representative": "images/060_超益集伦_G284-X4_3f931c481a.png",
+      "duplicateCount": 1,
+      "duplicates": [
+        "images/108_超益集伦_G284-X4_88900add31.png"
+      ]
+    },
+    {
+      "groupId": 27,
+      "dedupedImage": "images_deduped/027_超益集伦_G242-X4_096da210b6.png",
+      "representative": "images/061_超益集伦_G242-X4_096da210b6.png",
+      "duplicateCount": 2,
+      "duplicates": [
+        "images/062_超益集伦_G242-X4_ba81dce3ea.png",
+        "images/063_超益集伦_G242-X4_6260314a85.png"
+      ]
+    },
+    {
+      "groupId": 29,
+      "dedupedImage": "images_deduped/029_超益集伦_G242-H4_b0f7ce0c9f.png",
+      "representative": "images/065_超益集伦_G242-H4_b0f7ce0c9f.png",
+      "duplicateCount": 1,
+      "duplicates": [
+        "images/066_超益集伦_G242-H4_fac1cd70aa.png"
+      ]
+    },
+    {
+      "groupId": 31,
+      "dedupedImage": "images_deduped/031_深信服_SANGFOR_aServer-Z4-2405_3777b8a5e8.jpg",
+      "representative": "images/068_深信服_SANGFOR_aServer-Z4-2405_3777b8a5e8.jpg",
+      "duplicateCount": 1,
+      "duplicates": [
+        "images/079_深信服_SANGFOR_aServer-Z4-2605_686dbf2a46.jpg"
+      ]
+    },
+    {
+      "groupId": 32,
+      "dedupedImage": "images_deduped/032_深信服_SANGFOR_aServer-GH4-2205_cb47879e0f.png",
+      "representative": "images/069_深信服_SANGFOR_aServer-GH4-2205_cb47879e0f.png",
+      "duplicateCount": 3,
+      "duplicates": [
+        "images/072_深信服_SANGFOR_aServer-GH4-2605_8178ef078a.png",
+        "images/077_深信服_SANGFOR_aServer-GH4-2705_4d126412a1.png",
+        "images/078_深信服_SANGFOR_aServer-GH4-2805_770839b4bb.png"
+      ]
+    },
+    {
+      "groupId": 37,
+      "dedupedImage": "images_deduped/037_深信服_SANGFOR_aServer-GK2-2805_56cc4775b2.jpg",
+      "representative": "images/075_深信服_SANGFOR_aServer-GK2-2805_56cc4775b2.jpg",
+      "duplicateCount": 1,
+      "duplicates": [
+        "images/076_深信服_SANGFOR_aServer-GK2-2805_d4d52732d2.jpg"
+      ]
+    },
+    {
+      "groupId": 38,
+      "dedupedImage": "images_deduped/038_量光_LG588_bad60b902a.png",
+      "representative": "images/080_量光_LG588_bad60b902a.png",
+      "duplicateCount": 5,
+      "duplicates": [
+        "images/081_量光_LG588_cccf483a48.png",
+        "images/083_量光_LG588_b5fd1976fb.png",
+        "images/084_量光_LG588_6657d9fff5.png",
+        "images/085_量光_LG588_181722e869.png",
+        "images/086_量光_LG588_bd8ab1e17e.png"
+      ]
+    },
+    {
+      "groupId": 42,
+      "dedupedImage": "images_deduped/042_中今_J181_bcb9bb4e63.png",
+      "representative": "images/095_中今_J181_bcb9bb4e63.png",
+      "duplicateCount": 12,
+      "duplicates": [
+        "images/096_中今_J292_7468f8e972.png",
+        "images/097_中今_J282_dba817804f.png",
+        "images/098_中今_J292_0241017a11.png",
+        "images/099_中今_J292_64c1218b2d.png",
+        "images/100_中今_J282_57c8dce939.png",
+        "images/101_中今_J292_76a4a1923f.png",
+        "images/102_中今_J284_e85e1d5325.png",
+        "images/103_中今_J292_b16f7c807a.png",
+        "images/104_中今_J292_66880dfa83.png",
+        "images/105_中今_J292_ec5403389c.png",
+        "images/106_中今_J292_d908cfc924.png",
+        "images/107_中今_J292_3a6d602d1a.png"
+      ]
+    },
+    {
+      "groupId": 43,
+      "dedupedImage": "images_deduped/043_乂迅_AR2615-TD_69ece4cfa7.jpg",
+      "representative": "images/109_乂迅_AR2615-TD_69ece4cfa7.jpg",
+      "duplicateCount": 9,
+      "duplicates": [
+        "images/133_乂迅_AR2335-TD_5e7cf18fa7.jpg",
+        "images/150_乂迅_AR2325-TD_1d3f5d8b6b.jpg",
+        "images/156_乂迅_AR2325-TD_7fabe1de26.jpg",
+        "images/166_乂迅_AR2335-TD_07a0314208.jpg",
+        "images/251_乂迅_AR2625-TD_8e13311966.jpg",
+        "images/259_乂迅_AR2625-TD_6fee2487ba.jpg",
+        "images/265_乂迅_AR2625-TD_db8f875df2.jpg",
+        "images/267_乂迅_AR2625-TD_93972027aa.jpg",
+        "images/271_乂迅_AR2615-TD_bbb8e4471f.jpg"
+      ]
+    },
+    {
+      "groupId": 44,
+      "dedupedImage": "images_deduped/044_新华三_H3C_H3C UniServer R4970 G7_8e2842f5c6.png",
+      "representative": "images/110_新华三_H3C_H3C UniServer R4970 G7_8e2842f5c6.png",
+      "duplicateCount": 1,
+      "duplicates": [
+        "images/111_新华三_H3C_H3C UniServer R4970 G7_b4410ff9ea.png"
+      ]
+    },
+    {
+      "groupId": 45,
+      "dedupedImage": "images_deduped/045_新华三_H3C_H3C UniServer R4930 G7_1a21fc69d9.png",
+      "representative": "images/112_新华三_H3C_H3C UniServer R4930 G7_1a21fc69d9.png",
+      "duplicateCount": 5,
+      "duplicates": [
+        "images/113_新华三_H3C_H3C UniServer R4930 G7_c8bde18c66.png",
+        "images/114_新华三_H3C_H3C UniServer R4930 G7_6f168fb072.png",
+        "images/115_新华三_H3C_H3C UniServer R4930 G7_b463c2c2f6.png",
+        "images/116_新华三_H3C_H3C UniServer R4930 G7_5dfcabe735.png",
+        "images/117_新华三_H3C_H3C UniServer R4930 G7_38fc830eb3.png"
+      ]
+    },
+    {
+      "groupId": 47,
+      "dedupedImage": "images_deduped/047_新华三_H3C_H3C UniServer R4950 G6_4af8e9688b.png",
+      "representative": "images/124_新华三_H3C_H3C UniServer R4950 G6_4af8e9688b.png",
+      "duplicateCount": 3,
+      "duplicates": [
+        "images/126_新华三_H3C_H3C UniServer R4950 G6_3a2b6cd3a0.png",
+        "images/127_新华三_H3C_H3C UniServer R4950 G6_b241be03db.png",
+        "images/129_新华三_H3C_H3C UniServer R4950 G6_6e22284e5a.png"
+      ]
+    },
+    {
+      "groupId": 48,
+      "dedupedImage": "images_deduped/048_倍联德_BEILIANDE_SR2523-B01_ca0f64c42e.png",
+      "representative": "images/130_倍联德_BEILIANDE_SR2523-B01_ca0f64c42e.png",
+      "duplicateCount": 16,
+      "duplicates": [
+        "images/132_倍联德_BEILIANDE_SR2025-B01_3c7ff2725a.png",
+        "images/134_倍联德_BEILIANDE_SR2025-B01_51a1091d03.png",
+        "images/145_倍联德_BEILIANDE_SR2025-B01_c818077853.png",
+        "images/153_倍联德_BEILIANDE_SR2025-B01_81524d757f.png",
+        "images/157_倍联德_BEILIANDE_SR2025-B01_e5c80ba1ab.png",
+        "images/159_倍联德_BEILIANDE_SR2023-B01_255f8f5476.png",
+        "images/162_倍联德_BEILIANDE_SR2025-B01_9cfc190572.png",
+        "images/218_倍联德_BEILIANDE_SR2025-B01_7858388677.png",
+        "images/222_倍联德_BEILIANDE_SR2025-B01_8527f8c18a.png",
+        "images/239_倍联德_BEILIANDE_SR2025-B01_25bd8b183b.png",
+        "images/241_倍联德_BEILIANDE_SR2025-B01_24f98aab53.png",
+        "images/249_倍联德_BEILIANDE_SR2025-B01_81960967db.png",
+        "images/252_倍联德_BEILIANDE_SR2523-B01_686e4a9c88.png",
+        "images/255_倍联德_BEILIANDE_SR2525-B01_857b32ba4c.png",
+        "images/258_倍联德_BEILIANDE_SR2525-B01_b7c8688988.png",
+        "images/263_倍联德_BEILIANDE_SR2525-B01_cbc1520ba7.png"
+      ]
+    },
+    {
+      "groupId": 49,
+      "dedupedImage": "images_deduped/049_数聚红芯_H6520_a4cf9bcd0d.png",
+      "representative": "images/131_数聚红芯_H6520_a4cf9bcd0d.png",
+      "duplicateCount": 11,
+      "duplicates": [
+        "images/135_数聚红芯_H6520_1ccbbc4c84.png",
+        "images/144_数聚红芯_H6520_d830fcaa7e.png",
+        "images/147_数聚红芯_H6520_4b473b0333.png",
+        "images/149_数聚红芯_H6520_0638f60acb.png",
+        "images/152_数聚红芯_H6520_5879352595.png",
+        "images/161_数聚红芯_H6520_cc24a660d5.png",
+        "images/217_数聚红芯_H6520_344de97300.png",
+        "images/240_数聚红芯_H6520_0cda9dd27f.png",
+        "images/242_数聚红芯_H6520_66dbac765b.png",
+        "images/244_数聚红芯_H6520_e66e77d3b8.png",
+        "images/248_数聚红芯_H6520_cf1adb0a89.png"
+      ]
+    },
+    {
+      "groupId": 50,
+      "dedupedImage": "images_deduped/050_广电五舟_S627G5_1895ccc0b1.png",
+      "representative": "images/136_广电五舟_S627G5_1895ccc0b1.png",
+      "duplicateCount": 6,
+      "duplicates": [
+        "images/142_广电五舟_S627G5_847563b8e0.png",
+        "images/151_广电五舟_S627G5_ff48fe367c.png",
+        "images/164_广电五舟_S627G5_4b7f053a87.png",
+        "images/220_广电五舟_S627G5_22d0a21b52.png",
+        "images/243_广电五舟_S627G5_fe45da3647.png",
+        "images/250_广电五舟_S627G5_e656bc6802.png"
+      ]
+    },
+    {
+      "groupId": 51,
+      "dedupedImage": "images_deduped/051_九川_HF202ZQ4_0919bb6be9.png",
+      "representative": "images/137_九川_HF202ZQ4_0919bb6be9.png",
+      "duplicateCount": 26,
+      "duplicates": [
+        "images/138_九川_HF202ZQ4_d3dd0dc276.png",
+        "images/227_九川_HF202ZQ4_5b583826f6.png",
+        "images/228_九川_HF202ZQ4_3ab6eab1da.png",
+        "images/268_九川_HF429A-G_cbd1d2bcd5.png",
+        "images/335_九川_HF202ZQ4_13ac4cd1c9.png",
+        "images/337_九川_HF202ZQ4_222a1a643e.png",
+        "images/338_九川_HF202ZQ4_ab890616cd.png",
+        "images/339_九川_HF202ZQ4_f5c2b2a7b7.png",
+        "images/340_九川_HF202ZQ4_f67841f9f7.png",
+        "images/342_九川_HF204ZQ4_7cc3ba4dd4.png",
+        "images/346_九川_HF202ZQ4_dd3594b277.png",
+        "images/347_九川_HF202ZQ4_bb21e45574.png",
+        "images/348_九川_HF202ZQ4_9ac73296db.png",
+        "images/349_九川_HF202ZQ4_23d353664a.png",
+        "images/354_九川_HF202ZQ3_ad37f5c015.png",
+        "images/355_九川_HF202ZQ4_c139d9e156.png",
+        "images/356_九川_HF202ZQ3_ef6acba2ca.png",
+        "images/357_九川_HF202ZQ3_bb86941f1e.png",
+        "images/358_九川_HF202ZQ4_3acafa1359.png",
+        "images/362_九川_HF429A-G_9502e9e1b8.png",
+        "images/364_九川_HF427A-G_259c086e6f.png",
+        "images/365_九川_HF429A-G_664cbeef2b.png",
+        "images/366_九川_HF429A-G_eea1451cba.png",
+        "images/379_九川_HF202ZQ4_193c13a2d9.png",
+        "images/381_九川_HF202ZQ3_d5a19a2c2e.png",
+        "images/385_九川_HF202ZQ4_03a69096d8.png"
+      ]
+    },
+    {
+      "groupId": 54,
+      "dedupedImage": "images_deduped/054_锐捷_Ruijie_RG-CS6000-G3_9c03e15706.png",
+      "representative": "images/143_锐捷_Ruijie_RG-CS6000-G3_9c03e15706.png",
+      "duplicateCount": 2,
+      "duplicates": [
+        "images/148_锐捷_Ruijie_RG-CS6000-G3_7d8b279338.png",
+        "images/221_锐捷_Ruijie_RG-CS6000-G3_757077397f.png"
+      ]
+    },
+    {
+      "groupId": 55,
+      "dedupedImage": "images_deduped/055_威努特_WINICSSEC_威努特G3261_a7a3f30b01.png",
+      "representative": "images/146_威努特_WINICSSEC_威努特G3261_a7a3f30b01.png",
+      "duplicateCount": 2,
+      "duplicates": [
+        "images/163_威努特_WINICSSEC_威努特G3261_1530f2fda5.png",
+        "images/219_威努特_WINICSSEC_威努特G3261_6d9bced559.png"
+      ]
+    },
+    {
+      "groupId": 57,
+      "dedupedImage": "images_deduped/057_广电五舟_S627G4_7d68834759.png",
+      "representative": "images/155_广电五舟_S627G4_7d68834759.png",
+      "duplicateCount": 1,
+      "duplicates": [
+        "images/167_广电五舟_S627G4_84caf069b4.png"
+      ]
+    },
+    {
+      "groupId": 58,
+      "dedupedImage": "images_deduped/058_数聚红芯_H6320_fb1af540e8.png",
+      "representative": "images/158_数聚红芯_H6320_fb1af540e8.png",
+      "duplicateCount": 5,
+      "duplicates": [
+        "images/168_数聚红芯_H6320_f7ddcbef16.png",
+        "images/194_数聚红芯_H6228_ad4e7cec70.png",
+        "images/198_数聚红芯_H6228_6246cca409.png",
+        "images/205_数聚红芯_H6228_b82895b3fc.png",
+        "images/208_数聚红芯_H6228_712e09bfbf.png"
+      ]
+    },
+    {
+      "groupId": 60,
+      "dedupedImage": "images_deduped/060_数聚红芯_H6527_5459ee8d47.png",
+      "representative": "images/169_数聚红芯_H6527_5459ee8d47.png",
+      "duplicateCount": 3,
+      "duplicates": [
+        "images/174_数聚红芯_H6527_a9080a5a56.png",
+        "images/180_数聚红芯_H6527_69fe65f3db.png",
+        "images/202_数聚红芯_H6527_f11467a059.png"
+      ]
+    },
+    {
+      "groupId": 61,
+      "dedupedImage": "images_deduped/061_浪潮_INSPUR_CS5280F3_116c24f412.png",
+      "representative": "images/170_浪潮_INSPUR_CS5280F3_116c24f412.png",
+      "duplicateCount": 2,
+      "duplicates": [
+        "images/177_浪潮_INSPUR_CS5280F3_57d6441d60.png",
+        "images/178_浪潮_INSPUR_CS5280F3_9e5b7b2e64.png"
+      ]
+    },
+    {
+      "groupId": 65,
+      "dedupedImage": "images_deduped/065_倍联德_BEILIANDE_SR2723-B01_8bedd6e971.png",
+      "representative": "images/175_倍联德_BEILIANDE_SR2723-B01_8bedd6e971.png",
+      "duplicateCount": 4,
+      "duplicates": [
+        "images/181_倍联德_BEILIANDE_SR2723-B01_31c056b014.png",
+        "images/182_倍联德_BEILIANDE_SR2723-B01_65a4194562.png",
+        "images/190_倍联德_BEILIANDE_SR2923-B01_7d94ca5a95.png",
+        "images/203_倍联德_BEILIANDE_SR2723-B01_15b1ef4cf2.png"
+      ]
+    },
+    {
+      "groupId": 66,
+      "dedupedImage": "images_deduped/066_九川_HF415Z-G_c7182c59b3.jpg",
+      "representative": "images/176_九川_HF415Z-G_c7182c59b3.jpg",
+      "duplicateCount": 20,
+      "duplicates": [
+        "images/183_九川_HF415Z-G_8436617e0d.jpg",
+        "images/184_九川_HF419A-G_4593e4bb93.jpg",
+        "images/185_九川_HF415Z-G_198cf90bd6.jpg",
+        "images/186_九川_HF415Z-G_f5dd190bf7.jpg",
+        "images/200_九川_HF419A-G_0ff8dd0abe.jpg",
+        "images/201_九川_HF419A-G_5914f4adb1.jpg",
+        "images/207_九川_HF419A-G_a680e50f0b.jpg",
+        "images/213_九川_HF414Z-G_e6eefc4d51.jpg",
+        "images/214_九川_HF419A-G_8d7b65ac3a.jpg",
+        "images/215_九川_HF419A-G_1f5361c9f7.jpg",
+        "images/216_九川_HF414Z-G_2b623a6490.jpg",
+        "images/224_九川_HF419A-G_3e07656575.jpg",
+        "images/225_九川_HF417A-G_2788b6ff70.jpg",
+        "images/226_九川_HF417A-G_f1183beacf.jpg",
+        "images/235_九川_HF417A-G_2654eb5f18.jpg",
+        "images/236_九川_HF417A-G_5bca44c262.jpg",
+        "images/237_九川_HF417A-G_c749ed7a02.jpg",
+        "images/238_九川_HF417A-G_4bff8dd6a4.jpg",
+        "images/246_九川_HF417A-G_04e9ff6df9.jpg",
+        "images/247_九川_HF417A-G_e04d8d21a7.jpg"
+      ]
+    },
+    {
+      "groupId": 68,
+      "dedupedImage": "images_deduped/068_长城_Great Wall_擎天RK5260 V5_e367deaec6.png",
+      "representative": "images/187_长城_Great Wall_擎天RK5260 V5_e367deaec6.png",
+      "duplicateCount": 1,
+      "duplicates": [
+        "images/204_长城_Great Wall_擎天RK5260 V6_3b96392fa2.png"
+      ]
+    },
+    {
+      "groupId": 70,
+      "dedupedImage": "images_deduped/070_数聚红芯_H6426_06ab0aeee6.png",
+      "representative": "images/189_数聚红芯_H6426_06ab0aeee6.png",
+      "duplicateCount": 1,
+      "duplicates": [
+        "images/197_数聚红芯_H6426_4d0b6ecaab.png"
+      ]
+    },
+    {
+      "groupId": 71,
+      "dedupedImage": "images_deduped/071_长城_Great Wall_擎天RH6260 V6_735db996e4.png",
+      "representative": "images/191_长城_Great Wall_擎天RH6260 V6_735db996e4.png",
+      "duplicateCount": 1,
+      "duplicates": [
+        "images/230_长城_Great Wall_擎天RH5260 V6_edfaaaa016.png"
+      ]
+    },
+    {
+      "groupId": 73,
+      "dedupedImage": "images_deduped/073_浪潮_INSPUR_CS5280H3_480ccab10c.png",
+      "representative": "images/193_浪潮_INSPUR_CS5280H3_480ccab10c.png",
+      "duplicateCount": 3,
+      "duplicates": [
+        "images/229_浪潮_INSPUR_CS5280H3_8b585022a6.png",
+        "images/233_浪潮_INSPUR_CS5280H3_7dc6624993.png",
+        "images/245_浪潮_INSPUR_CS5280H3_00771c47b4.png"
+      ]
+    },
+    {
+      "groupId": 74,
+      "dedupedImage": "images_deduped/074_倍联德_BEILIANDE_SR2823-B02_7720a16b1f.png",
+      "representative": "images/195_倍联德_BEILIANDE_SR2823-B02_7720a16b1f.png",
+      "duplicateCount": 5,
+      "duplicates": [
+        "images/199_倍联德_BEILIANDE_SR2823-B01_bff0d91759.png",
+        "images/206_倍联德_BEILIANDE_SR2823-B02_f2dcad9f63.png",
+        "images/209_倍联德_BEILIANDE_SR2823-B02_9509775f39.png",
+        "images/210_倍联德_BEILIANDE_SR2823-B01_216480348b.png",
+        "images/223_倍联德_BEILIANDE_SR2823-B02_74f2601817.png"
+      ]
+    },
+    {
+      "groupId": 78,
+      "dedupedImage": "images_deduped/078_宏碁_acer_MR26H F2_0d2fd20892.jpg",
+      "representative": "images/234_宏碁_acer_MR26H F2_0d2fd20892.jpg",
+      "duplicateCount": 1,
+      "duplicates": [
+        "images/232_宏碁_acer_MR21H F2_c84456a387.jpg"
+      ]
+    },
+    {
+      "groupId": 79,
+      "dedupedImage": "images_deduped/079_广电五舟_S722E5_9e7a96d9e4.png",
+      "representative": "images/253_广电五舟_S722E5_9e7a96d9e4.png",
+      "duplicateCount": 1,
+      "duplicates": [
+        "images/264_广电五舟_S722E5_d0e782675e.png"
+      ]
+    },
+    {
+      "groupId": 80,
+      "dedupedImage": "images_deduped/080_数聚红芯_H6525_5460a33677.png",
+      "representative": "images/254_数聚红芯_H6525_5460a33677.png",
+      "duplicateCount": 3,
+      "duplicates": [
+        "images/256_数聚红芯_H6525_6b432c96c1.png",
+        "images/262_数聚红芯_H6525_e7240f50bc.png",
+        "images/266_数聚红芯_H6525_1414f9b105.png"
+      ]
+    },
+    {
+      "groupId": 81,
+      "dedupedImage": "images_deduped/081_乂迅_AT7210-RD_b096fd1778.jpg",
+      "representative": "images/257_乂迅_AT7210-RD_b096fd1778.jpg",
+      "duplicateCount": 2,
+      "duplicates": [
+        "images/261_乂迅_AT7730-RD_b803a1e891.jpg",
+        "images/270_乂迅_AT7310-RD_06d8464345.jpg"
+      ]
+    },
+    {
+      "groupId": 82,
+      "dedupedImage": "images_deduped/082_倍联德_BEILIANDE_ST4025-B01_4bbb193953.png",
+      "representative": "images/260_倍联德_BEILIANDE_ST4025-B01_4bbb193953.png",
+      "duplicateCount": 1,
+      "duplicates": [
+        "images/269_倍联德_BEILIANDE_ST4023-B01_15df4efab7.png"
+      ]
+    },
+    {
+      "groupId": 84,
+      "dedupedImage": "images_deduped/084_戴尔_DELL_Dell PowerEdge R760_068d130621.png",
+      "representative": "images/273_戴尔_DELL_Dell PowerEdge R760_068d130621.png",
+      "duplicateCount": 1,
+      "duplicates": [
+        "images/278_戴尔_DELL_Dell PowerEdge R760_114abbe6da.png"
+      ]
+    },
+    {
+      "groupId": 85,
+      "dedupedImage": "images_deduped/085_戴尔_DELL_Dell PowerEdge R760_b8870f6011.png",
+      "representative": "images/274_戴尔_DELL_Dell PowerEdge R760_b8870f6011.png",
+      "duplicateCount": 1,
+      "duplicates": [
+        "images/281_戴尔_DELL_Dell PowerEdge R760_227200ea27.png"
+      ]
+    },
+    {
+      "groupId": 86,
+      "dedupedImage": "images_deduped/086_戴尔_DELL_Dell PowerEdge R760xs_c591f41fde.png",
+      "representative": "images/275_戴尔_DELL_Dell PowerEdge R760xs_c591f41fde.png",
+      "duplicateCount": 3,
+      "duplicates": [
+        "images/276_戴尔_DELL_Dell PowerEdge R760xs_816964b3d3.png",
+        "images/277_戴尔_DELL_Dell PowerEdge R760xs_cb1d3fa8fe.png",
+        "images/279_戴尔_DELL_Dell PowerEdge R760xs_33f9942f6c.png"
+      ]
+    },
+    {
+      "groupId": 89,
+      "dedupedImage": "images_deduped/089_戴尔_DELL_Dell PowerEdge R7625_c0db90f993.png",
+      "representative": "images/283_戴尔_DELL_Dell PowerEdge R7625_c0db90f993.png",
+      "duplicateCount": 2,
+      "duplicates": [
+        "images/284_戴尔_DELL_Dell PowerEdge R7625_ef31ef6235.png",
+        "images/285_戴尔_DELL_Dell PowerEdge R7625_218ca5f896.png"
+      ]
+    },
+    {
+      "groupId": 90,
+      "dedupedImage": "images_deduped/090_元脑_NF5280-M7-A0-R0-00_70777b587e.png",
+      "representative": "images/286_元脑_NF5280-M7-A0-R0-00_70777b587e.png",
+      "duplicateCount": 6,
+      "duplicates": [
+        "images/287_元脑_NF5280-M7-A0-R0-00_bbc30c696d.png",
+        "images/333_元脑_NF5280-M7-A0-R0-00_518a59445a.png",
+        "images/336_元脑_NF5280-M7-A0-R0-00_758fbd8bdb.png",
+        "images/351_元脑_NF5280-M7-A0-R0-00_e6c0f07de7.png",
+        "images/352_元脑_NF5280-M7-A0-R0-00_f8575babef.png",
+        "images/361_元脑_NF5280-M7-A0-R0-00_9ac2712461.png"
+      ]
+    },
+    {
+      "groupId": 99,
+      "dedupedImage": "images_deduped/099_火蓝_Hoodblue_TS5212-F64_ccca9f4108.png",
+      "representative": "images/296_火蓝_Hoodblue_TS5212-F64_ccca9f4108.png",
+      "duplicateCount": 12,
+      "duplicates": [
+        "images/297_火蓝_Hoodblue_TS5212-Z32_5734b5fde7.png",
+        "images/298_火蓝_Hoodblue_TS5212-Z16_8d16244680.png",
+        "images/299_火蓝_Hoodblue_TS6212-F64_2803f32f01.png",
+        "images/309_火蓝_Hoodblue_TS5212-A128_9fabf066e3.png",
+        "images/310_火蓝_Hoodblue_TS5212-A64_b1c09471db.png",
+        "images/311_火蓝_Hoodblue_TS5212-A16_38ef0e39b8.png",
+        "images/312_火蓝_Hoodblue_TS5212-A96_0f2b25b9b1.png",
+        "images/313_火蓝_Hoodblue_TS6212-A32_9eb95cd49d.png",
+        "images/314_火蓝_Hoodblue_TS6212-G53_50e53a9baf.png",
+        "images/315_火蓝_Hoodblue_TS5112-G31_e787d4c935.png",
+        "images/316_火蓝_Hoodblue_TS6212-G51_24c051f50b.png",
+        "images/317_火蓝_Hoodblue_TS5212-G31_fe11dbaef3.png"
+      ]
+    },
+    {
+      "groupId": 100,
+      "dedupedImage": "images_deduped/100_火蓝_Hoodblue_TS8212-K80_8811cf6658.png",
+      "representative": "images/300_火蓝_Hoodblue_TS8212-K80_8811cf6658.png",
+      "duplicateCount": 5,
+      "duplicates": [
+        "images/301_火蓝_Hoodblue_TS6212-K64K_21437ee568.png",
+        "images/302_火蓝_Hoodblue_TS6212-K32_55b987d599.png",
+        "images/303_火蓝_Hoodblue_TS6212-K24_99d4cb05f9.png",
+        "images/304_火蓝_Hoodblue_TS1221-K48K_3a9ea432ed.png",
+        "images/308_火蓝_Hoodblue_TS6212-K48_20ed99d0c2.png"
+      ]
+    },
+    {
+      "groupId": 101,
+      "dedupedImage": "images_deduped/101_海康威视_HIKVISION_DS-VR220H-KB_T_b1a1238568.jpg",
+      "representative": "images/318_海康威视_HIKVISION_DS-VR220H-KB_T_b1a1238568.jpg",
+      "duplicateCount": 14,
+      "duplicates": [
+        "images/319_海康威视_HIKVISION_DS-VR220H-KB_U_12fafa71e6.jpg",
+        "images/320_海康威视_HIKVISION_DS-VR220H-KB_H_3b310467bb.jpg",
+        "images/321_海康威视_HIKVISION_DS-VF22R-C_2d0792dab1.jpg",
+        "images/322_海康威视_HIKVISION_DS-VZ22X-B_178268fd1b.jpg",
+        "images/323_海康威视_HIKVISION_DS-VE22S-D_R4C_U_Edge_39778def05.jpg",
+        "images/324_海康威视_HIKVISION_DS-VM22S-D_R8_5a390dec44.jpg",
+        "images/325_海康威视_HIKVISION_DS-VR220H-KB_L_855b4000d3.jpg",
+        "images/326_海康威视_HIKVISION_DS-VR220H-KB_M_5dc2651131.jpg",
+        "images/327_海康威视_HIKVISION_DS-VM21S-D_409423ba7d.jpg",
+        "images/328_海康威视_HIKVISION_DS-VM22S-B_fcc806b123.jpg",
+        "images/329_海康威视_HIKVISION_DS-VM22S_7483495f82.jpg",
+        "images/330_海康威视_HIKVISION_DS-VE22S-D_R8_434b6d8b94.jpg",
+        "images/331_海康威视_HIKVISION_DS-VE22S-D_R8C_e446cdd784.jpg",
+        "images/332_海康威视_HIKVISION_DS-VE22S-D_R4_70a3c9fcfb.jpg"
+      ]
+    },
+    {
+      "groupId": 102,
+      "dedupedImage": "images_deduped/102_九川_HF204ZQ4_760a482024.jpg",
+      "representative": "images/334_九川_HF204ZQ4_760a482024.jpg",
+      "duplicateCount": 1,
+      "duplicates": [
+        "images/341_九川_HF204ZQ4_e060a48552.jpg"
+      ]
+    },
+    {
+      "groupId": 104,
+      "dedupedImage": "images_deduped/104_元脑_NF5280-M7-A0-R0-00_55ccbc78a8.png",
+      "representative": "images/344_元脑_NF5280-M7-A0-R0-00_55ccbc78a8.png",
+      "duplicateCount": 6,
+      "duplicates": [
+        "images/350_元脑_NF5280-M7-A0-R0-00_538912877e.png",
+        "images/353_元脑_NF5280-M7-A0-R0-00_1f44a24bd2.png",
+        "images/363_元脑_NF5280-A7-A0-R0-00_c18d832154.png",
+        "images/367_元脑_NF5280-A7-A0-R0-00_cc6628d4a8.png",
+        "images/368_元脑_NF5280-A7-A0-R0-00_0fe4539baa.png",
+        "images/369_元脑_NF5280-A7-A0-R0-00_d159937ed1.png"
+      ]
+    },
+    {
+      "groupId": 106,
+      "dedupedImage": "images_deduped/106_九川_HF102E23_09e951ef15.png",
+      "representative": "images/359_九川_HF102E23_09e951ef15.png",
+      "duplicateCount": 2,
+      "duplicates": [
+        "images/360_九川_HF202ZQ4_78c51efa08.png",
+        "images/383_九川_HF202ZQ2_888b5cfe5a.png"
+      ]
+    },
+    {
+      "groupId": 108,
+      "dedupedImage": "images_deduped/108_神州鲲泰_KunTai R522_03fe4b0aa4.jpg",
+      "representative": "images/371_神州鲲泰_KunTai R522_03fe4b0aa4.jpg",
+      "duplicateCount": 5,
+      "duplicates": [
+        "images/372_神州鲲泰_KunTai R522_fd57e42875.jpg",
+        "images/373_神州鲲泰_KunTai R722_14d84314b5.jpg",
+        "images/374_神州鲲泰_KunTai R722_9b22badfc4.jpg",
+        "images/375_神州鲲泰_KunTai R722_c3ad8f2b8d.jpg",
+        "images/376_神州鲲泰_KunTai R722 K2_b9f5013979.jpg"
+      ]
+    },
+    {
+      "groupId": 109,
+      "dedupedImage": "images_deduped/109_苏泰_SUTAI_ST-RT400D_632548d166.png",
+      "representative": "images/377_苏泰_SUTAI_ST-RT400D_632548d166.png",
+      "duplicateCount": 2,
+      "duplicates": [
+        "images/380_苏泰_SUTAI_ST-RT300D_0c16d70c75.png",
+        "images/384_苏泰_SUTAI_ST-RT400D_47f0be664b.png"
+      ]
+    },
+    {
+      "groupId": 113,
+      "dedupedImage": "images_deduped/113_超聚变_2258 V7（2_AMD9654，4_64G，2_960G，2_10GE，2_1500W AC）_19de61436b.png",
+      "representative": "images/390_超聚变_2258 V7（2_AMD9654，4_64G，2_960G，2_10GE，2_1500W AC）_19de61436b.png",
+      "duplicateCount": 1,
+      "duplicates": [
+        "images/394_超聚变_2258 V7（2_AMD9354，8_32G，2_960G，2_10GE，2_1500W AC）_e4fd525897.png"
+      ]
+    }
+  ]
+}

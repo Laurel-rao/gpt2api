@@ -243,6 +243,31 @@ func (d *DAO) MarkTaskRetrying(ctx context.Context, taskID string) error {
 	return err
 }
 
+func (d *DAO) ResetTaskForRetry(ctx context.Context, taskID string) error {
+	tx, err := d.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.ExecContext(ctx, `
+UPDATE ecommerce_tasks
+   SET status='queued', progress=0, output_json=NULL, output_html='', error='',
+       started_at=NULL, finished_at=NULL
+ WHERE task_id=? AND status IN ('failed','canceled')`, taskID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM ecommerce_assets WHERE task_id=?`, taskID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (d *DAO) MarkTaskSuccess(ctx context.Context, taskID string, output json.RawMessage, html string) error {
 	_, err := d.db.ExecContext(ctx, `
 UPDATE ecommerce_tasks

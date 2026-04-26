@@ -150,6 +150,7 @@ func New(d *Deps) *gin.Engine {
 					eg.GET("/tasks/:id", d.EcommerceH.GetTask)
 					eg.GET("/tasks/:id/export", d.EcommerceH.ExportPoster)
 					eg.POST("/tasks/:id/cancel", d.EcommerceH.CancelTask)
+					eg.POST("/tasks/:id/retry", d.EcommerceH.RetryTask)
 					eg.POST("/tasks/:id/assets/:asset_id/retry", d.EcommerceH.RetryAsset)
 				}
 			}
