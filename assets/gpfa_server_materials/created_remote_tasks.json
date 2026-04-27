@@ -1,6 +1,6 @@
 {
   "created_at": "2026-04-26T08:18:25.611Z",
-  "base_url": "http://43.134.21.160:8080",
+  "base_url": "http://localhost:8080",
   "tasks": [
     {
       "scenario": "淘宝主图转化",
@@ -8,9 +8,8 @@
       "prompt": "转化优先",
       "style": "清爽白底",
       "itemName": "昆仑KunLun 2280（2*32C，4*32G，2*480G+3*4TB，2*25GE，2*900W AC）服务器",
-      "taskID": "ecm_8dcde117-fc4e-4d68-af3a-ed75d6c4762b",
-      "status": "queued",
-      "createdAt": "2026-04-26T16:18:16+08:00"
+      "taskID": "example-task-01",
+      "status": "queued"
     },
     {
       "scenario": "京东参数型详情页",
@@ -18,9 +17,8 @@
       "prompt": "质感品牌",
       "style": "科技极简",
       "itemName": "联想问天WR5220 G3/2xIntel Xeon Gold 6526Y (16C 2.8GHz 37.5MB缓存)/ 4x32GB内存/ 2x960GB SSD/1块双口10G网卡（含模块）/2x800W 热插拔冗余电源/三年保修/三年硬盘保留服务",
-      "taskID": "ecm_f1b36518-d61d-4add-898c-d8d728be4645",
-      "status": "queued",
-      "createdAt": "2026-04-26T16:18:18+08:00"
+      "taskID": "example-task-02",
+      "status": "queued"
     },
     {
       "scenario": "抖音直播带货页",
@@ -28,9 +26,8 @@
       "prompt": "直播带货",
       "style": "强促销",
       "itemName": "超聚变2288H V7（2*4410Y，4*32G，2*480G，2*10GE，2*900W AC）服务器",
-      "taskID": "ecm_d18e8417-a8e4-4848-9f26-1af111775f77",
-      "status": "queued",
-      "createdAt": "2026-04-26T16:18:20+08:00"
+      "taskID": "example-task-03",
+      "status": "queued"
     },
     {
       "scenario": "小红书种草内容",
@@ -38,9 +35,8 @@
       "prompt": "种草内容",
       "style": "生活方式",
       "itemName": "广电五舟S627K2通用服务器",
-      "taskID": "ecm_551df045-feef-4b8a-8dad-9bfa24422ea3",
-      "status": "queued",
-      "createdAt": "2026-04-26T16:18:21+08:00"
+      "taskID": "example-task-04",
+      "status": "queued"
     },
     {
       "scenario": "Amazon 跨境详情页",
@@ -48,9 +44,8 @@
       "prompt": "跨境电商",
       "style": "高端深色",
       "itemName": "新华三H3C UniServer R4900 G6/2U机架式服务器/2颗至强 6526Y(2.8GHz/16核/37.5MB)/4*32GB内存/2*960GB固态硬盘/双口10G网卡/3年原厂商保修服务",
-      "taskID": "ecm_9036e555-e5f0-4dab-a217-5b94f79612ad",
-      "status": "queued",
-      "createdAt": "2026-04-26T16:18:24+08:00"
+      "taskID": "example-task-05",
+      "status": "queued"
     }
   ]
 }

@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
-const baseURL = process.env.ECOMMERCE_BASE_URL || 'http://43.134.21.160:8080';
+const baseURL = process.env.ECOMMERCE_BASE_URL || 'http://localhost:8080';
 const token = process.env.ECOMMERCE_BEARER_TOKEN;
 
 if (!token) {
