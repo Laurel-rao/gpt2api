@@ -9,8 +9,16 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-REMOTE_HOST="${GPT2API_REMOTE_HOST:-43.134.21.160}"
-REMOTE_USER="${GPT2API_REMOTE_USER:-root}"
+LOCAL_ENV_FILE="${GPT2API_REMOTE_ENV_FILE:-$ROOT/deploy/remote-release.env}"
+if [ -f "$LOCAL_ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$LOCAL_ENV_FILE"
+  set +a
+fi
+
+REMOTE_HOST="${GPT2API_REMOTE_HOST:-}"
+REMOTE_USER="${GPT2API_REMOTE_USER:-deploy}"
 REMOTE_PORT="${GPT2API_REMOTE_PORT:-22}"
 REMOTE_DIR="${GPT2API_REMOTE_DIR:-/opt/gpt2api}"
 HTTP_PORT="${GPT2API_HTTP_PORT:-8080}"
@@ -45,8 +53,8 @@ usage() {
   rollback <backup_id>  回滚到指定备份；可加 --restore-db 一并恢复数据库
 
 选项:
-  --host <host>         远端主机，默认 43.134.21.160
-  --user <user>         SSH 用户，默认 root
+  --host <host>         远端主机；也可写入 deploy/remote-release.env
+  --user <user>         SSH 用户，默认 deploy
   --port <port>         SSH 端口，默认 22
   --remote-dir <dir>    远端项目目录，默认 /opt/gpt2api
   --http-port <port>    健康检查端口，默认 8080
@@ -60,6 +68,7 @@ usage() {
 环境变量:
   GPT2API_REMOTE_HOST / GPT2API_REMOTE_USER / GPT2API_REMOTE_PORT
   GPT2API_REMOTE_DIR / GPT2API_HTTP_PORT / GPT2API_KEEP_BACKUPS
+  GPT2API_REMOTE_ENV_FILE 可指定本地部署 env 文件，默认 deploy/remote-release.env
 
 示例:
   bash deploy/remote-release.sh deploy
@@ -82,11 +91,17 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "缺少命令: $1"
 }
 
+require_remote_host() {
+  [ -n "$REMOTE_HOST" ] || die "缺少远端主机: 请设置 GPT2API_REMOTE_HOST，或创建 deploy/remote-release.env，或使用 --host"
+}
+
 ssh_base() {
+  require_remote_host
   ssh -p "$REMOTE_PORT" -o BatchMode=yes -o StrictHostKeyChecking=no "${REMOTE_USER}@${REMOTE_HOST}" "$@"
 }
 
 rsync_base() {
+  require_remote_host
   rsync \
     --compress \
     --partial \
@@ -174,7 +189,11 @@ run_local_build() {
   log "执行本地预编译: deploy/build-local.sh ${args[*]:-}"
   (
     cd "$ROOT"
-    bash deploy/build-local.sh "${args[@]}"
+    if [ "${#args[@]}" -gt 0 ]; then
+      bash deploy/build-local.sh "${args[@]}"
+    else
+      bash deploy/build-local.sh
+    fi
   )
 }
 

@@ -17,8 +17,14 @@
 /configs/config.yaml
 /configs/*.local.yaml
 /deploy/.env
+/deploy/remote-release.env
 .env
 .env.local
+/web/.env.local
+/web/.env.*.local
+
+# 运行生成的远端任务回执,包含内网/公网地址或任务 ID 时不要提交
+/assets/gpfa_server_materials/created_remote_tasks*.local.json
 
 # =============================================================================
 # IDE
