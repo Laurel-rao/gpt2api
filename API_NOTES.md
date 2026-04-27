@@ -2,7 +2,7 @@
 
 > 本文记录我们目前复用的 `chatgpt.com` 后端接口，及其请求/响应关键字段。  
 > 所有接口都走同一个 `Bearer {AUTH_TOKEN}`，host 固定 `https://chatgpt.com`。  
-> 运行环境：`curl_cffi` + `impersonate="chrome124"`（chrome131 有时 TLS 握手失败，chrome124 稳定）。
+> 当前实现已迁移到 Go 服务；本文只保留接口字段与排查备忘。
 
 ---
 
@@ -99,7 +99,7 @@ oai-client-build-number: 5955942
 [8] GET  <signed_url>                                 → 下载图片 bytes
 ```
 
-> 复用现有会话（`FIXED_CONVERSATION_ID` 有值）时跳过 `[3]`，但 `[4][5]` 仍需每次调。
+> 复用现有会话时跳过 `[3]`，但 `[4][5]` 仍需每次调。
 
 ---
 
@@ -126,7 +126,7 @@ oai-client-build-number: 5955942
 }
 ```
 
-如果 `proofofwork.required=true`，需用本地 SHA3-512 暴力算 `openai-sentinel-proof-token`（见 `gen_image.py` 的 `generate_proof_token`）。
+如果 `proofofwork.required=true`，需用本地 SHA3-512 暴力算 `openai-sentinel-proof-token`。
 
 ---
 
@@ -256,21 +256,8 @@ polling 策略（见 `poll_conversation_for_images`）：
 2. **灰度桶**：`conduit_token` 每次请求都可能不同，服务端随机分桶。  
    当前账号 `accounts/check` 的 features 里 **缺 `gpt_image_1` / `image_gen_better_text` / `image_gen_v2`**，属于"非白名单账号"，灰度命中率极低；HAR 抓包那次是偶发灰度。
 3. **风控**：`blocked_features` 为空且 HTTP 未出现 403，就说明没被封。429 是瞬时限流，退避后即可恢复。
-4. **TLS**：`curl_cffi` 用 `impersonate="chrome124"` 稳定；`chrome131` 偶发 `TLS connect error`。
-5. **网络**：arxlabs.io 代理不稳时直接关掉 `PROXY_TEMPLATE`，走本机 Mihomo/Clash Verge TUN 直连更靠谱。
-
----
-
-## 5. 相关脚本索引
-
-| 脚本 | 用途 |
-|---|---|
-| `gen_image.py` | 主生图流程（含重试/轮询/下载） |
-| `_check_image_gen_quota.py` | **仅查 `image_gen` 余额**，不消耗额度 |
-| `_dump_acc.py` | 完整 dump `/accounts/check`，用于看 feature flag |
-| `_check_quota.py` | 遍历多个诊断接口（me/models/accounts/check） |
-| `_scan_har_gen.py` / `_scan_har_quota.py` | 扫 HAR 找接口/关键字段 |
-| `_har_gen_endpoints.py` / `_dump_init.py` | Dump HAR 里特定接口的完整请求响应 |
+4. **TLS**：Go 服务使用 uTLS 模拟浏览器 TLS 指纹；不同上游版本可能需要同步调整。
+5. **网络**：代理不稳时可切换账号池/代理池配置，避免把真实代理账号写入仓库。
 
 ---
 

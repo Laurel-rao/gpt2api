@@ -82,7 +82,7 @@ func NewUTLSTransport(proxyURL string, idleTimeout time.Duration) (http.RoundTri
 // Chrome 不同,即使 TLS ClientHello 用 uTLS 伪装成 Chrome,h2 层依然会被识别
 // 为自动化客户端,触发"Unusual activity has been detected"硬风控。
 //
-// 参考实现 gen_image.py 用 curl-cffi(impersonate chrome131),那个库同时伪装
+// 历史 Python 验证脚本曾用 curl-cffi(impersonate chrome131) 同时伪装
 // TLS + HTTP/2 指纹。本 transport 暂未接 tls-client,
 // 作为权宜之计:强制 http/1.1,上游对 h1 的指纹检测更宽松。
 var forceH1 = true

@@ -4,7 +4,7 @@
 -- ============================================================
 -- GPT-Image-2 上线(上游 chatgpt.com 灰度模型 gpt-5-3,system_hints=picture_v2)
 --
--- 协议参考 legacy/gen_image.py:init → prepare → f/conversation → poll → download
+-- 协议流程:init → prepare → f/conversation → poll → download
 -- 灰度命中判据:conversation.mapping 里 IMG2 tool 消息数 ≥ 2
 -- 价格:每次成功出图 50 积分(即 0.5 元,按 1 积分 = 0.01 元 + 100 倍放大存厘)
 -- ============================================================

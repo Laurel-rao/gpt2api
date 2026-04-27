@@ -1,4 +1,4 @@
-// Package chatgpt — POW 算法迁移自 gen_image.py
+// Package chatgpt 实现 chatgpt.com sentinel POW 算法。
 //
 // chatgpt.com sentinel 使用两种 POW token:
 //
@@ -120,7 +120,7 @@ func NewPOWConfig(userAgent string) *POWConfig {
 }
 
 // RequirementsToken 生成 /sentinel/chat-requirements 的 "p" 字段值。
-// 对齐 gen_image.py.get_requirements_token:固定难度 0fffff,前缀 gAAAAAC。
+// 固定难度 0fffff,前缀 gAAAAAC。
 func (c *POWConfig) RequirementsToken() string {
 	//nolint:gosec
 	seed := strconv.FormatFloat(rand.Float64(), 'f', -1, 64)
@@ -133,7 +133,7 @@ func (c *POWConfig) RequirementsToken() string {
 }
 
 // solveRequirements 高性能迭代:预拼 JSON 的三段字节前缀,只在内循环拼 d1/d2。
-// 严格对齐 gen_image.py._generate_answer。
+// 保持与上游 Web POW 生成逻辑一致。
 func (c *POWConfig) solveRequirements(seed, difficulty string) (string, bool) {
 	target, err := hex.DecodeString(difficulty)
 	if err != nil {
@@ -209,7 +209,7 @@ func (c *POWConfig) solveRequirements(seed, difficulty string) (string, bool) {
 }
 
 // SolveProofToken 按服务端挑战求解 proof token(header 用,前缀 gAAAAAB)。
-// 迁移自 gen_image.py.generate_proof_token 的轻量 13 元素 config。
+// 使用轻量 13 元素 config。
 func SolveProofToken(seed, difficulty, userAgent string) string {
 	if seed == "" || difficulty == "" {
 		return ""

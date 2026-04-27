@@ -580,7 +580,7 @@ func nullableUnix(t *time.Time) int64 {
 	return t.Unix()
 }
 
-// 含这些关键字时,追加中英双约束让上游出字更清楚(迁移自 gen_image.py)。
+// 含这些关键字时,追加中英双约束让上游出字更清楚。
 var textHintKeywords = []string{
 	"文字", "对话", "台词", "旁白", "标语", "字幕", "标题", "文案",
 	"招牌", "横幅", "海报文字", "弹幕", "气泡", "字体",

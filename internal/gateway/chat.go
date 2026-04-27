@@ -282,14 +282,13 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 	// "gpt-5-3"),本映射是 no-op。
 	upstreamModel = mapUpstreamModelSlug(upstreamModel)
 
-	// 对齐 Python 参考实现(gen_image.py,已验证可用)的真实顺序:
+	// 对齐上游 Web 调用的真实顺序:
 	//   (a) Bootstrap GET /                  —— 拿 __cf_bm / oai-did / _cfuvid cookie
 	//   (b) sentinel/chat-requirements       —— 拿 chat_token + proofofwork 描述
 	//   (c) f/conversation/prepare           —— 带 chat_token(!) + proof_token,拿 conduit_token
 	//   (d) f/conversation                   —— 带 chat_token + proof_token + conduit_token 发 SSE
 	//
-	// Python 参考实现 gen_image.py 的 prepare_fconversation 明确要 chat_token,
-	// 且不带 sentinel header 会让 prepare 返回空 conduit_token。
+	// prepare 阶段必须带 chat_token；不带 sentinel header 会让 prepare 返回空 conduit_token。
 
 	// (a) Bootstrap
 	bootCtx, cancelBoot := context.WithTimeout(c.Request.Context(), 15*time.Second)
@@ -334,7 +333,7 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 	}
 	// Turnstile 在新账号 / 新 device 场景几乎必现,但它实际上是"建议",
 	// 大多数情况下直接继续发 /conversation 也能被上游接受。这里只打 warn
-	// 日志,不阻断(参考 gen_image.py / chat2api 的通用做法)。
+	// 日志,不阻断(参考 Web/兼容实现的通用做法)。
 	if cr.Turnstile.Required {
 		logger.L().Warn("chat turnstile required, continue anyway",
 			zap.Uint64("account_id", lease.Account.ID))
