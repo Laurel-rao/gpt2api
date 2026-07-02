@@ -411,6 +411,7 @@ func New(d *Deps) *gin.Engine {
 					sg.POST("/test-imagegen", d.SettingsH.TestImageGen)
 					sg.POST("/test-textgen", d.SettingsH.TestTextGen)
 					sg.POST("/test-videogen", d.SettingsH.TestVideoGen)
+					sg.GET("/videogen-balance", d.SettingsH.VideoGenBalance)
 					sg.POST("/site-asset", d.SettingsH.UploadSiteAsset)
 				}
 			}

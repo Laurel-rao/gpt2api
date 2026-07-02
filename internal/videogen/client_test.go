@@ -53,6 +53,43 @@ func TestRuntimeConfigDefaultsToSeedanceDVModelID(t *testing.T) {
 	}
 }
 
+func TestBalanceUsesAccountBalanceEndpoint(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/account/balance" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer test-key" {
+			t.Fatalf("unexpected auth header: %q", r.Header.Get("Authorization"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(Balance{
+			Credits:         984816,
+			RechargeBalance: 7,
+			FreeQuotas: []FreeQuota{{
+				ModelID:        "uuid",
+				ModelName:      "Seedream 5.0",
+				RemainingCount: 3,
+			}},
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	client := NewClient(Config{BaseURL: srv.URL, APIKey: "test-key"})
+	got, err := client.Balance(context.Background())
+	if err != nil {
+		t.Fatalf("Balance error: %v", err)
+	}
+	if got.Credits != 984816 || got.RechargeBalance != 7 {
+		t.Fatalf("unexpected balance: %+v", got)
+	}
+	if len(got.FreeQuotas) != 1 || got.FreeQuotas[0].ModelName != "Seedream 5.0" || got.FreeQuotas[0].RemainingCount != 3 {
+		t.Fatalf("unexpected free quotas: %+v", got.FreeQuotas)
+	}
+	if got.DurationMs < 0 {
+		t.Fatalf("duration should be non-negative: %d", got.DurationMs)
+	}
+}
+
 func testClientWithModels(t *testing.T, models []Model) (*Client, *httptest.Server) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

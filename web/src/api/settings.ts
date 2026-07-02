@@ -52,6 +52,23 @@ export function testVideoGen(): Promise<{
   return http.post('/api/admin/settings/test-videogen', {})
 }
 
+export interface VideoGenFreeQuota {
+  model_id?: string
+  model_name?: string
+  remaining_count?: number
+}
+
+export interface VideoGenBalance {
+  credits: number
+  recharge_balance: number
+  free_quotas: VideoGenFreeQuota[]
+  duration_ms: number
+}
+
+export function fetchVideoGenBalance(silent = false): Promise<VideoGenBalance> {
+  return http.get('/api/admin/settings/videogen-balance', { silent } as any)
+}
+
 export function uploadSiteAsset(key: string, file: File): Promise<{ key: string; url: string }> {
   const form = new FormData()
   form.append('key', key)
@@ -63,5 +80,5 @@ export function uploadSiteAsset(key: string, file: File): Promise<{ key: string;
 
 // 匿名公开接口:返回登录页需要的站点元信息(site.name 等)。
 export function fetchSiteInfo(): Promise<Record<string, string>> {
-  return http.get('/api/public/site-info')
+  return http.get('/api/public/site-info', { silent: true } as any)
 }

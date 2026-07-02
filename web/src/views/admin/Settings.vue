@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, reactive, onMounted } from 'vue'
+import { ref, computed, reactive, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Refresh,
@@ -22,8 +22,10 @@ import {
   testImageGen,
   testTextGen,
   testVideoGen,
+  fetchVideoGenBalance,
   uploadSiteAsset,
   type SettingItem,
+  type VideoGenBalance,
   type VideoGenProbeModel,
 } from '@/api/settings'
 import { useSiteStore } from '@/stores/site'
@@ -102,7 +104,38 @@ function inputType(it: SettingItem) {
 const imageGenTesting = ref(false)
 const textGenTesting = ref(false)
 const videoGenTesting = ref(false)
+const videoGenBalanceLoading = ref(false)
+const videoGenBalance = ref<VideoGenBalance | null>(null)
+const videoGenBalanceLoaded = ref(false)
 const videoGenModels = ref<VideoGenProbeModel[]>([])
+const videoGenFreeQuotaTotal = computed(() => (
+  videoGenBalance.value?.free_quotas || []
+).reduce((sum, quota) => sum + Number(quota.remaining_count || 0), 0))
+
+function formatNumber(n: number | undefined | null) {
+  return Number(n || 0).toLocaleString('zh-CN')
+}
+
+async function loadVideoGenBalance(silent = false) {
+  videoGenBalanceLoading.value = true
+  try {
+    videoGenBalance.value = await fetchVideoGenBalance(silent)
+    videoGenBalanceLoaded.value = true
+    if (!silent) ElMessage.success('视频网关余额已刷新')
+  } catch {
+    videoGenBalance.value = null
+    videoGenBalanceLoaded.value = true
+  } finally {
+    videoGenBalanceLoading.value = false
+  }
+}
+
+function ensureVideoGenBalanceLoaded() {
+  if (activeTab.value === 'videogen' && !videoGenBalanceLoaded.value && !videoGenBalanceLoading.value) {
+    loadVideoGenBalance(true)
+  }
+}
+
 async function doTestImageGen() {
   if (dirtyCount.value > 0) {
     await ElMessageBox.confirm('当前有未保存修改。是否先保存后再探测?', '确认', {
@@ -158,6 +191,7 @@ async function doTestVideoGen() {
       draft['videogen.model'] = videoGenModels.value[0].value
     }
     ElMessage.success(`探测成功: ${res.model_name || '已连接'}, 可选视频模型 ${videoGenModels.value.length} 个 / 上游总模型 ${res.model_count} 个, ${res.duration_ms}ms`)
+    loadVideoGenBalance(true)
   } catch {
     // 拦截器已处理
   } finally {
@@ -222,6 +256,10 @@ async function save() {
     ElMessage.success(`已保存 ${Object.keys(diff).length} 项`)
     await load()
     useSiteStore().refresh()
+    if (Object.keys(diff).some((key) => key.startsWith('videogen.'))) {
+      videoGenBalanceLoaded.value = false
+      ensureVideoGenBalanceLoaded()
+    }
   } finally {
     saving.value = false
   }
@@ -257,7 +295,12 @@ async function submitTestMail() {
   }
 }
 
-onMounted(load)
+watch(activeTab, () => ensureVideoGenBalanceLoaded())
+
+onMounted(async () => {
+  await load()
+  ensureVideoGenBalanceLoaded()
+})
 </script>
 
 <template>
@@ -292,6 +335,12 @@ onMounted(load)
             :loading="videoGenTesting"
             @click="doTestVideoGen"
           >探测视频</el-button>
+          <el-button
+            v-if="activeTab === 'videogen'"
+            :icon="Refresh"
+            :loading="videoGenBalanceLoading"
+            @click="loadVideoGenBalance()"
+          >刷新余额</el-button>
           <el-button :disabled="dirtyCount === 0" @click="reset">重置</el-button>
           <el-button
             type="primary"
@@ -318,12 +367,45 @@ onMounted(load)
               v-if="!grouped[t.name] || grouped[t.name].length === 0"
               description="暂无可配置项"
             />
-            <el-form
-              v-else
-              label-width="170px"
-              label-position="right"
-              class="setting-form"
-            >
+            <template v-else>
+              <div v-if="t.name === 'videogen'" class="gateway-balance" v-loading="videoGenBalanceLoading">
+                <div class="balance-main">
+                  <div>
+                    <span>积分余额</span>
+                    <strong>{{ formatNumber(videoGenBalance?.credits) }}</strong>
+                  </div>
+                  <div>
+                    <span>充值余额</span>
+                    <strong>{{ formatNumber(videoGenBalance?.recharge_balance) }}</strong>
+                  </div>
+                  <div>
+                    <span>免费次数</span>
+                    <strong>{{ formatNumber(videoGenFreeQuotaTotal) }}</strong>
+                  </div>
+                </div>
+                <div class="balance-side">
+                  <template v-if="videoGenBalance?.free_quotas?.length">
+                    <el-tag
+                      v-for="quota in videoGenBalance.free_quotas"
+                      :key="`${quota.model_id || quota.model_name}-${quota.remaining_count}`"
+                      size="small"
+                      type="success"
+                      effect="plain"
+                    >
+                      {{ quota.model_name || quota.model_id || '未命名模型' }}：{{ quota.remaining_count || 0 }}
+                    </el-tag>
+                  </template>
+                  <span v-else class="balance-empty">
+                    {{ videoGenBalanceLoaded ? '暂无剩余免费次数' : '打开页签后自动获取余额' }}
+                  </span>
+                  <small v-if="videoGenBalance">耗时 {{ videoGenBalance.duration_ms }}ms</small>
+                </div>
+              </div>
+              <el-form
+                label-width="170px"
+                label-position="right"
+                class="setting-form"
+              >
               <el-form-item
                 v-for="it in grouped[t.name]"
                 :key="it.key"
@@ -417,7 +499,8 @@ onMounted(load)
                   <div v-if="it.desc" class="hint">{{ it.desc }}</div>
                 </div>
               </el-form-item>
-            </el-form>
+              </el-form>
+            </template>
           </div>
         </el-tab-pane>
       </el-tabs>
@@ -472,6 +555,49 @@ onMounted(load)
 .field-wrap {
   width: 100%;
 }
+.gateway-balance {
+  max-width: 920px;
+  margin: 0 0 18px 170px;
+  padding: 14px 16px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  background: var(--el-fill-color-extra-light);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.balance-main {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(96px, 1fr));
+  gap: 12px;
+  min-width: 360px;
+}
+.balance-main div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.balance-main span,
+.balance-side small,
+.balance-empty {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.balance-main strong {
+  font-size: 18px;
+  line-height: 1.25;
+  color: var(--el-text-color-primary);
+  font-weight: 700;
+}
+.balance-side {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 .hint {
   margin-top: 4px;
   font-size: 12px;
@@ -524,6 +650,18 @@ onMounted(load)
 }
 
 @media (max-width: 640px) {
+  .gateway-balance {
+    margin-left: 0;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .balance-main {
+    min-width: 0;
+    grid-template-columns: 1fr;
+  }
+  .balance-side {
+    justify-content: flex-start;
+  }
   .setting-form :deep(.el-form-item__label) {
     width: auto !important;
     padding-right: 8px !important;

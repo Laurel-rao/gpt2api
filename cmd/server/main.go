@@ -266,6 +266,9 @@ func main() {
 	settingsH.SetVideoGenProbe(func(ctx context.Context) (int64, int, string, []videogen.ProbeModel, error) {
 		return videoGenClient.ProbeModels(ctx)
 	})
+	settingsH.SetVideoGenBalance(func(ctx context.Context) (*videogen.Balance, error) {
+		return videoGenClient.Balance(ctx)
+	})
 
 	// 把 settings 注入到其它受控业务(可热更)
 	keySvc.SetSettings(settingsSvc)

@@ -113,6 +113,19 @@ type ProbeModel struct {
 	Value string `json:"value"`
 }
 
+type Balance struct {
+	Credits         int         `json:"credits"`
+	RechargeBalance int         `json:"recharge_balance"`
+	FreeQuotas      []FreeQuota `json:"free_quotas"`
+	DurationMs      int64       `json:"duration_ms"`
+}
+
+type FreeQuota struct {
+	ModelID        string `json:"model_id,omitempty"`
+	ModelName      string `json:"model_name,omitempty"`
+	RemainingCount int    `json:"remaining_count,omitempty"`
+}
+
 type generateResp struct {
 	TaskID   string `json:"task_id"`
 	ID       string `json:"id"`
@@ -180,6 +193,26 @@ func (c *Client) ListModels(ctx context.Context) ([]Model, error) {
 		return nil, err
 	}
 	return models, nil
+}
+
+func (c *Client) Balance(ctx context.Context) (*Balance, error) {
+	if c == nil {
+		return nil, errors.New("videogen client not configured")
+	}
+	cfg := c.accountConfig()
+	if strings.TrimSpace(cfg.APIKey) == "" {
+		return nil, errors.New("videogen api key is empty")
+	}
+	start := time.Now()
+	var balance Balance
+	if err := c.doJSON(ctx, http.MethodGet, cfg.BaseURL+"/account/balance", cfg.APIKey, nil, &balance); err != nil {
+		return nil, err
+	}
+	if balance.FreeQuotas == nil {
+		balance.FreeQuotas = []FreeQuota{}
+	}
+	balance.DurationMs = time.Since(start).Milliseconds()
+	return &balance, nil
 }
 
 func (c *Client) Generate(ctx context.Context, opt Options) (*Result, error) {
@@ -501,6 +534,22 @@ func (c *Client) runtimeConfig() Config {
 	}
 	cfg.AspectRatio = defaultString(cfg.AspectRatio, defaultAspectRatio)
 	cfg.Resolution = defaultString(cfg.Resolution, defaultResolution)
+	return cfg
+}
+
+func (c *Client) accountConfig() Config {
+	cfg := Config{
+		BaseURL: c.baseURL,
+		APIKey:  c.key(),
+	}
+	if c.provider != nil {
+		cfg.BaseURL = c.provider.VideoGenBaseURL()
+		cfg.APIKey = c.provider.VideoGenAPIKey()
+	}
+	cfg.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
+	if cfg.BaseURL == "" {
+		cfg.BaseURL = defaultBaseURL
+	}
 	return cfg
 }
 

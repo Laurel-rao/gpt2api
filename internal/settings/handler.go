@@ -26,12 +26,13 @@ import (
 //   - UploadSiteAsset POST /api/admin/settings/site-asset 上传 favicon/logo 到本地静态目录
 //   - Public  GET  /api/public/site-info        匿名可访问,返回 Public=true 的子集
 type Handler struct {
-	svc           *Service
-	mail          *mailer.Mailer
-	auditDAO      *audit.DAO
-	imageGenProbe func(context.Context) (durationMs int64, imageCount int, err error)
-	textGenProbe  func(context.Context) (durationMs int64, content string, err error)
-	videoGenProbe func(context.Context) (durationMs int64, modelCount int, modelName string, models []videogen.ProbeModel, err error)
+	svc             *Service
+	mail            *mailer.Mailer
+	auditDAO        *audit.DAO
+	imageGenProbe   func(context.Context) (durationMs int64, imageCount int, err error)
+	textGenProbe    func(context.Context) (durationMs int64, content string, err error)
+	videoGenProbe   func(context.Context) (durationMs int64, modelCount int, modelName string, models []videogen.ProbeModel, err error)
+	videoGenBalance func(context.Context) (*videogen.Balance, error)
 }
 
 func NewHandler(svc *Service, mail *mailer.Mailer, adao *audit.DAO) *Handler {
@@ -48,6 +49,10 @@ func (h *Handler) SetTextGenProbe(fn func(context.Context) (durationMs int64, co
 
 func (h *Handler) SetVideoGenProbe(fn func(context.Context) (durationMs int64, modelCount int, modelName string, models []videogen.ProbeModel, err error)) {
 	h.videoGenProbe = fn
+}
+
+func (h *Handler) SetVideoGenBalance(fn func(context.Context) (*videogen.Balance, error)) {
+	h.videoGenBalance = fn
 }
 
 // itemView 给前端使用的完整条目(带 schema,便于统一渲染)。
@@ -253,6 +258,26 @@ func (h *Handler) TestVideoGen(c *gin.Context) {
 		"model_name":  modelName,
 		"models":      models,
 	})
+}
+
+// VideoGenBalance GET /api/admin/settings/videogen-balance
+func (h *Handler) VideoGenBalance(c *gin.Context) {
+	if h.videoGenBalance == nil {
+		resp.Internal(c, "视频网关未初始化")
+		return
+	}
+	if h.svc.VideoGenAPIKey() == "" {
+		resp.BadRequest(c, "请先配置视频网关密钥")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+	balance, err := h.videoGenBalance(ctx)
+	if err != nil {
+		resp.Fail(c, resp.CodeUpstream, "余额获取失败:"+err.Error())
+		return
+	}
+	resp.OK(c, balance)
 }
 
 // UploadSiteAsset POST /api/admin/settings/site-asset
