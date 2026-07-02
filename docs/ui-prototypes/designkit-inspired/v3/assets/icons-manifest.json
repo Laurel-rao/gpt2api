@@ -1,0 +1,237 @@
+[
+  {
+    "name": "brand_ai_bot",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/brand_ai_bot.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "menu_home",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/menu_home.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "menu_briefcase",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/menu_briefcase.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "menu_chat",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/menu_chat.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "menu_layers",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/menu_layers.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "menu_model_hex",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/menu_model_hex.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "menu_database",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/menu_database.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "menu_checklist",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/menu_checklist.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "menu_settings",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/menu_settings.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "ecommerce_cart_bot",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/ecommerce_cart_bot.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "product_image",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/product_image.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "short_video",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/short_video.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "template_grid",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/template_grid.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "asset_folder",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/asset_folder.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "task_record_clock",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/task_record_clock.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "model_hex_gray",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/model_hex_gray.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "magic_wand",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/magic_wand.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "sparkle",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/sparkle.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "upload",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/upload.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "send_plane",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/send_plane.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "play_circle",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/play_circle.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "progress_submit",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/progress_submit.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "progress_queue",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/progress_queue.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "progress_running",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/progress_running.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "progress_done_blue",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/progress_done_blue.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "status_success",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/status_success.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "status_warning",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/status_warning.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "status_error",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/status_error.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "status_info",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/status_info.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "preview_eye",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/preview_eye.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "download",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/download.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "prompt_message",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/prompt_message.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "regenerate",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/regenerate.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "edit",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/edit.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "copy",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/copy.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "delete",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/delete.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "save",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/save.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "search",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/search.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "filter",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/filter.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "add",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/add.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "empty_inbox",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/empty_inbox.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "document_search",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/document_search.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "empty_box",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/empty_box.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "folder_upload",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/folder_upload.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "cloud_more",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/cloud_more.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "empty_sad",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/empty_sad.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  },
+  {
+    "name": "document_placeholder",
+    "file": "docs/ui-prototypes/designkit-inspired/v3/assets/icons-png/document_placeholder.png",
+    "source": "docs/ui-prototypes/designkit-inspired/v3/assets/icon-asset-sheet-white-bg.png"
+  }
+]

@@ -1,0 +1,10 @@
+{
+  "code": 502,
+  "reason": "Bad Gateway",
+  "headers": {
+    "Connection": "close",
+    "Content-Length": "0"
+  },
+  "body": "",
+  "body_length": 0
+}
