@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>灵境智创统一 UI 设计板</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --surface: #fff;
+      --surface-soft: #f8fafc;
+      --border: #dde5f2;
+      --border-soft: #e8eef7;
+      --text: #101828;
+      --muted: #64748b;
+      --subtle: #94a3b8;
+      --primary: #2563eb;
+      --primary-soft: #eaf1ff;
+      --mint: #14b8a6;
+      --mint-soft: #ddfbf6;
+      --amber: #f59e0b;
+      --orange: #f97316;
+      --danger: #ef4444;
+      --success: #16a34a;
+      --shadow: 0 18px 48px rgba(15, 23, 42, .08);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #e8edf5;
+      color: var(--text);
+      font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    }
+    .board {
+      width: 1920px;
+      min-height: 1420px;
+      padding: 24px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      background: linear-gradient(135deg, #f7faff 0%, #eef4ff 45%, #f7fbf8 100%);
+    }
+    .screen {
+      min-height: 560px;
+      border: 1px solid #d8e2f0;
+      border-radius: 18px;
+      background: var(--bg);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      display: grid;
+      grid-template-columns: 216px 1fr;
+    }
+    .landing {
+      grid-template-columns: 1fr;
+      padding: 28px 34px;
+      background:
+        radial-gradient(720px 320px at 15% 18%, rgba(37, 99, 235, .16), transparent 62%),
+        radial-gradient(620px 300px at 88% 20%, rgba(20, 184, 166, .18), transparent 62%),
+        #ffffff;
+    }
+    .nav {
+      height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 46px;
+    }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 760; }
+    .mark {
+      width: 34px;
+      height: 34px;
+      border-radius: 12px;
+      display: grid;
+      place-items: center;
+      color: white;
+      background: linear-gradient(135deg, var(--primary), var(--mint));
+      font-weight: 800;
+    }
+    .navlinks { display: flex; gap: 28px; color: var(--muted); font-size: 14px; }
+    .btn {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+      color: var(--text);
+      height: 38px;
+      padding: 0 16px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 650;
+    }
+    .btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+    .hero-grid {
+      display: grid;
+      grid-template-columns: .92fr 1.08fr;
+      gap: 38px;
+      align-items: center;
+    }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      height: 30px;
+      padding: 0 12px;
+      border-radius: 999px;
+      background: var(--primary-soft);
+      color: var(--primary);
+      font-size: 13px;
+      font-weight: 720;
+    }
+    .hero-title {
+      margin: 18px 0 16px;
+      font-size: 52px;
+      line-height: 1.08;
+      letter-spacing: 0;
+    }
+    .hero-copy { margin: 0 0 26px; color: var(--muted); font-size: 18px; line-height: 1.7; }
+    .hero-actions { display: flex; gap: 12px; }
+    .prompt-demo {
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      background: rgba(255,255,255,.88);
+      padding: 18px;
+      box-shadow: var(--shadow);
+    }
+    .tabs { display: flex; gap: 8px; margin-bottom: 14px; }
+    .tab {
+      height: 34px;
+      padding: 0 14px;
+      border-radius: 10px;
+      background: var(--surface-soft);
+      color: var(--muted);
+      display: inline-flex;
+      align-items: center;
+      font-size: 13px;
+      font-weight: 650;
+    }
+    .tab.active { background: var(--primary); color: #fff; }
+    .prompt-box {
+      min-height: 130px;
+      border: 1px solid #cfdaf0;
+      border-radius: 16px;
+      padding: 16px;
+      background: #fff;
+      color: #475569;
+      line-height: 1.7;
+    }
+    .prompt-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 14px; }
+    .chips { display: flex; gap: 8px; flex-wrap: wrap; }
+    .chip {
+      height: 28px;
+      border-radius: 999px;
+      padding: 0 10px;
+      background: var(--surface-soft);
+      color: var(--muted);
+      font-size: 12px;
+      display: inline-flex;
+      align-items: center;
+    }
+    .result-strip {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-top: 16px;
+    }
+    .result-card {
+      min-height: 112px;
+      border: 1px solid var(--border-soft);
+      border-radius: 16px;
+      padding: 12px;
+      background: linear-gradient(145deg, #fff, #f6faff);
+    }
+    .thumb {
+      height: 64px;
+      border-radius: 12px;
+      background:
+        linear-gradient(135deg, rgba(37,99,235,.18), rgba(20,184,166,.14)),
+        repeating-linear-gradient(45deg, #f8fafc 0 10px, #eef2f7 10px 20px);
+      margin-bottom: 8px;
+    }
+    .result-card b { display: block; font-size: 13px; }
+    .result-card span { color: var(--muted); font-size: 12px; }
+
+    .sidebar {
+      border-right: 1px solid var(--border);
+      background: rgba(255,255,255,.72);
+      padding: 20px 14px;
+    }
+    .side-brand { display: flex; align-items: center; gap: 10px; padding: 0 8px 20px; }
+    .side-brand small { display: block; color: var(--muted); font-weight: 500; margin-top: 2px; }
+    .side-group { margin-top: 16px; color: var(--subtle); font-size: 12px; padding: 0 10px 8px; }
+    .side-item {
+      height: 40px;
+      border-radius: 11px;
+      padding: 0 11px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #475569;
+      font-size: 14px;
+      font-weight: 650;
+      margin-bottom: 4px;
+    }
+    .side-item.active { background: var(--primary-soft); color: var(--primary); }
+    .doticon {
+      width: 22px;
+      height: 22px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      background: #eef2f7;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .active .doticon { background: var(--primary); color: #fff; }
+    .content { padding: 20px; overflow: hidden; }
+    .topline {
+      height: 42px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .topline h2 { margin: 0; font-size: 22px; }
+    .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 14px; }
+    .metric {
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: #fff;
+      padding: 14px;
+    }
+    .metric span { color: var(--muted); font-size: 12px; }
+    .metric b { display: block; margin-top: 6px; font-size: 24px; }
+    .metric em { color: var(--success); font-size: 12px; font-style: normal; }
+    .panel {
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      background: #fff;
+      padding: 16px;
+    }
+    .tool-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .tool {
+      min-height: 104px;
+      border: 1px solid var(--border-soft);
+      border-radius: 16px;
+      padding: 14px;
+      background: #fff;
+    }
+    .tool .doticon { margin-bottom: 12px; background: var(--mint-soft); color: #0f766e; }
+    .tool b { display: block; margin-bottom: 5px; }
+    .tool span { color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .workbench-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) 300px; gap: 14px; }
+    .composer { border-radius: 20px; }
+    .composer textarea {
+      width: 100%;
+      min-height: 128px;
+      resize: none;
+      border: 1px solid #cfdaf0;
+      border-radius: 16px;
+      padding: 14px;
+      color: #475569;
+      font: inherit;
+      line-height: 1.7;
+      outline: none;
+    }
+    .progress-list { display: grid; gap: 12px; }
+    .step { display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 10px; color: var(--muted); }
+    .step strong { color: var(--text); }
+    .step .circle {
+      width: 28px;
+      height: 28px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      background: var(--primary-soft);
+      color: var(--primary);
+      font-size: 12px;
+      font-weight: 760;
+    }
+    .step.done .circle { background: #dcfce7; color: var(--success); }
+    .video-preview {
+      height: 250px;
+      border-radius: 18px;
+      margin-top: 14px;
+      background:
+        linear-gradient(180deg, rgba(15,23,42,.1), rgba(15,23,42,.5)),
+        radial-gradient(circle at 50% 30%, #fbbf24, transparent 14%),
+        linear-gradient(135deg, #dbeafe, #f8fafc 42%, #ccfbf1);
+      display: flex;
+      align-items: flex-end;
+      padding: 16px;
+      color: #fff;
+      font-size: 22px;
+      font-weight: 780;
+      line-height: 1.25;
+    }
+    .gallery { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 14px; }
+    .asset {
+      border: 1px solid var(--border-soft);
+      border-radius: 16px;
+      overflow: hidden;
+      background: #fff;
+    }
+    .asset .thumb { height: 108px; border-radius: 0; margin: 0; }
+    .asset footer { padding: 10px 12px; display: flex; justify-content: space-between; font-size: 12px; }
+    .login-screen {
+      grid-template-columns: 1fr 380px;
+      background:
+        radial-gradient(580px 280px at 20% 20%, rgba(37,99,235,.18), transparent 60%),
+        radial-gradient(520px 260px at 78% 72%, rgba(20,184,166,.2), transparent 60%),
+        #f7faff;
+      padding: 46px;
+      gap: 36px;
+    }
+    .login-preview {
+      align-self: center;
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      background: rgba(255,255,255,.76);
+      padding: 22px;
+      box-shadow: var(--shadow);
+    }
+    .login-card {
+      align-self: center;
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      background: #fff;
+      padding: 26px;
+      box-shadow: var(--shadow);
+    }
+    .field {
+      height: 42px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 0 12px;
+      display: flex;
+      align-items: center;
+      color: var(--subtle);
+      margin: 10px 0;
+    }
+    .spec {
+      grid-column: 1 / -1;
+      min-height: 190px;
+      border: 1px solid #d8e2f0;
+      border-radius: 18px;
+      background: #fff;
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr 1fr;
+      overflow: hidden;
+    }
+    .spec-block { padding: 20px 24px; border-right: 1px solid var(--border-soft); }
+    .spec-block:last-child { border-right: 0; }
+    .swatches { display: flex; gap: 10px; margin-top: 18px; }
+    .swatch { width: 44px; height: 44px; border-radius: 12px; border: 1px solid var(--border); }
+    .space-demo { display: flex; align-items: end; gap: 12px; margin-top: 18px; }
+    .space-demo i { display: block; width: 34px; background: #eaf1ff; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <main class="board">
+    <section class="screen landing">
+      <header class="nav">
+        <div class="brand"><span class="mark">灵</span>灵境智创</div>
+        <nav class="navlinks"><span>电商智能体</span><span>商品短视频</span><span>资产库</span><span>接口文档</span></nav>
+        <div><span class="btn">登录</span> <span class="btn primary">进入控制台</span></div>
+      </header>
+      <div class="hero-grid">
+        <div>
+          <span class="eyebrow">AI Commerce Workspace</span>
+          <h1 class="hero-title">电商 AI<br />创作工作台</h1>
+          <p class="hero-copy">把商品资料变成主图、短视频、Listing 文案和详情页结构。一个入口完成从素材到交付的生成流程。</p>
+          <div class="hero-actions"><span class="btn primary">开始创建</span><span class="btn">查看演示</span></div>
+        </div>
+        <div class="prompt-demo">
+          <div class="tabs"><span class="tab active">商品主图</span><span class="tab">商品短视频</span><span class="tab">Listing 文案</span><span class="tab">A+ 详情页</span></div>
+          <div class="prompt-box">316 不锈钢煎锅，适合小红书和亚马逊，突出不粘、轻烟、轻量手柄。生成主图、短视频和五点描述。</div>
+          <div class="prompt-foot"><div class="chips"><span class="chip">上传参考图</span><span class="chip">选择模特</span><span class="chip">套用模板</span></div><span class="btn primary">开始生成</span></div>
+          <div class="result-strip">
+            <article class="result-card"><div class="thumb"></div><b>商品主图</b><span>4 张待交付</span></article>
+            <article class="result-card"><div class="thumb"></div><b>短视频</b><span>15 秒预览</span></article>
+            <article class="result-card"><div class="thumb"></div><b>Listing 文案</b><span>中文 / English</span></article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="screen login-screen">
+      <div class="login-preview">
+        <div class="side-brand"><span class="mark">灵</span><div><b>灵境智创</b><small>电商 AI 工作台</small></div></div>
+        <div class="panel">
+          <div class="tabs"><span class="tab active">提交</span><span class="tab">排队</span><span class="tab">生成</span><span class="tab">交付</span></div>
+          <div class="video-preview">主图、短视频、文案<br />一站式生成</div>
+          <div class="gallery"><div class="asset"><div class="thumb"></div><footer><b>主图</b><span>完成</span></footer></div><div class="asset"><div class="thumb"></div><footer><b>视频</b><span>48%</span></footer></div><div class="asset"><div class="thumb"></div><footer><b>文案</b><span>完成</span></footer></div><div class="asset"><div class="thumb"></div><footer><b>详情</b><span>待生成</span></footer></div></div>
+        </div>
+      </div>
+      <div class="login-card">
+        <div class="brand"><span class="mark">灵</span>灵境智创</div>
+        <h2 style="font-size:28px;margin:30px 0 8px;">欢迎回来</h2>
+        <p class="hero-copy" style="font-size:14px;margin-bottom:22px;">登录后继续管理你的电商生成任务、素材资产和 API 能力。</p>
+        <div class="field">邮箱 you@example.com</div>
+        <div class="field">密码 至少 6 位</div>
+        <div class="btn primary" style="width:100%;height:44px;margin-top:14px;">登录控制台</div>
+      </div>
+    </section>
+
+    <section class="screen">
+      <aside class="sidebar">
+        <div class="side-brand"><span class="mark">灵</span><div><b>灵境智创</b><small>电商 AI 工作台</small></div></div>
+        <div class="side-group">工作台</div>
+        <div class="side-item active"><span class="doticon">⌂</span>总览</div>
+        <div class="side-item"><span class="doticon">◎</span>在线体验</div>
+        <div class="side-group">创作中心</div>
+        <div class="side-item"><span class="doticon">✦</span>电商智能体</div>
+        <div class="side-item"><span class="doticon">▣</span>商品图生成</div>
+        <div class="side-item"><span class="doticon">▶</span>商品短视频</div>
+        <div class="side-group">资产中心</div>
+        <div class="side-item"><span class="doticon">□</span>资产库</div>
+      </aside>
+      <div class="content">
+        <div class="topline"><h2>今天的创作总览</h2><span class="btn primary">新建电商任务</span></div>
+        <div class="cards">
+          <div class="metric"><span>可用积分</span><b>23,480</b><em>余额健康</em></div>
+          <div class="metric"><span>今日请求</span><b>128</b><em>成功率 98.4%</em></div>
+          <div class="metric"><span>生成资产</span><b>46</b><em>近 14 天</em></div>
+          <div class="metric"><span>任务队列</span><b>3</b><em style="color:var(--amber)">2 个生成中</em></div>
+        </div>
+        <div class="panel">
+          <div class="topline" style="height:auto;margin-bottom:14px;"><h2>快捷入口</h2><span style="color:var(--muted);font-size:13px;">围绕创作任务组织能力</span></div>
+          <div class="tool-grid">
+            <article class="tool"><span class="doticon">✦</span><b>电商智能体</b><span>从商品资料生成图、视频、文案。</span></article>
+            <article class="tool"><span class="doticon">▣</span><b>商品图生成</b><span>主图、白底图、详情图一键生成。</span></article>
+            <article class="tool"><span class="doticon">▶</span><b>商品短视频</b><span>查看分段进度和视频预览。</span></article>
+            <article class="tool"><span class="doticon">□</span><b>资产库</b><span>复用商品和模特资产。</span></article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="screen">
+      <aside class="sidebar">
+        <div class="side-brand"><span class="mark">灵</span><div><b>灵境智创</b><small>电商 AI 工作台</small></div></div>
+        <div class="side-group">创作中心</div>
+        <div class="side-item active"><span class="doticon">✦</span>电商智能体</div>
+        <div class="side-item"><span class="doticon">▣</span>商品图生成</div>
+        <div class="side-item"><span class="doticon">▶</span>商品短视频</div>
+        <div class="side-group">资产中心</div>
+        <div class="side-item"><span class="doticon">□</span>资产库</div>
+        <div class="side-item"><span class="doticon">≡</span>任务记录</div>
+      </aside>
+      <div class="content">
+        <div class="topline"><h2>电商智能体</h2><span class="btn">保存草稿</span></div>
+        <div class="workbench-grid">
+          <div>
+            <div class="panel composer">
+              <div class="tabs"><span class="tab active">商品主图</span><span class="tab">商品短视频</span><span class="tab">Listing 文案</span><span class="tab">竞品调研</span></div>
+              <textarea>输入商品名、卖点、规格、价格、目标人群和平台要求，让 AI 生成可直接交付的电商素材。</textarea>
+              <div class="prompt-foot"><div class="chips"><span class="chip">上传参考图</span><span class="chip">商品资产</span><span class="chip">模特资产</span><span class="chip">风格模板</span></div><span class="btn primary">开始生成</span></div>
+            </div>
+            <div class="gallery">
+              <div class="asset"><div class="thumb"></div><footer><b>主图</b><span>完成</span></footer></div>
+              <div class="asset"><div class="thumb"></div><footer><b>场景图</b><span>完成</span></footer></div>
+              <div class="asset"><div class="thumb"></div><footer><b>白底图</b><span>生成中</span></footer></div>
+              <div class="asset"><div class="thumb"></div><footer><b>详情图</b><span>排队中</span></footer></div>
+            </div>
+          </div>
+          <div>
+            <div class="panel">
+              <h2 style="margin:0 0 14px;">当前任务</h2>
+              <div class="progress-list">
+                <div class="step done"><span class="circle">✓</span><strong>提交</strong><span>14:10</span></div>
+                <div class="step done"><span class="circle">✓</span><strong>排队中</strong><span>12 秒</span></div>
+                <div class="step"><span class="circle">3</span><strong>生成中</strong><span>48%</span></div>
+                <div class="step"><span class="circle">4</span><strong>完成</strong><span>等待</span></div>
+              </div>
+              <div class="video-preview">不粘锅<br />煎蛋不粘 轻松滑动</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="spec">
+      <div class="spec-block"><b>Color</b><div class="swatches"><span class="swatch" style="background:#2563eb"></span><span class="swatch" style="background:#14b8a6"></span><span class="swatch" style="background:#f59e0b"></span><span class="swatch" style="background:#ef4444"></span><span class="swatch" style="background:#f6f8fb"></span></div></div>
+      <div class="spec-block"><b>Spacing</b><div class="space-demo"><i style="height:16px"></i><i style="height:24px"></i><i style="height:32px"></i><i style="height:48px"></i><i style="height:64px"></i></div></div>
+      <div class="spec-block"><b>Typography</b><p style="font-size:52px;margin:16px 0 0;font-weight:760;">Aa</p><span style="color:var(--muted)">PingFang SC / 14 / 20 / 28 / 42</span></div>
+      <div class="spec-block"><b>Radius</b><div class="swatches"><span class="swatch" style="border-radius:8px"></span><span class="swatch" style="border-radius:12px"></span><span class="swatch" style="border-radius:16px"></span><span class="swatch" style="border-radius:18px"></span></div></div>
+    </section>
+  </main>
+</body>
+</html>
