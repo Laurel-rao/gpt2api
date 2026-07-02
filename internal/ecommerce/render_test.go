@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	imgpkg "github.com/432539/gpt2api/internal/image"
+	"github.com/432539/gpt2api/internal/videogen"
 )
 
 func TestRenderTemplate(t *testing.T) {
@@ -554,6 +555,43 @@ func TestVideoReferenceImagesUseProductAnchorDataURL(t *testing.T) {
 		t.Fatalf("prompt should reference product anchor: %s", prompt)
 	}
 }
+
+func TestComputeVideoBillingCostUsesPlatformCreditsRatio(t *testing.T) {
+	got := computeVideoBillingCost(1.25, 10)
+	if got != 125000 {
+		t.Fatalf("video billing cost = %d", got)
+	}
+	if computeVideoBillingCost(0, 10) != 0 {
+		t.Fatal("zero platform cost should not bill")
+	}
+}
+
+func TestVideoBillingCompletedCostRules(t *testing.T) {
+	r := NewRunner(nil, nil, nil, nil, nil, nil, nil, 0)
+	r.SetBilling(nil, staticVideoRatio{ratio: 10})
+	if cost, _ := r.completedVideoBillingCost(&videogen.Result{
+		CostType:   "credits",
+		CostDetail: videogen.CostDetail{Price: 1.25},
+	}); cost != 125000 {
+		t.Fatalf("credits cost = %d", cost)
+	}
+	if cost, err := r.completedVideoBillingCost(&videogen.Result{
+		CostType:   "credits",
+		CostDetail: videogen.CostDetail{Price: 0},
+	}); err == nil || cost != 0 {
+		t.Fatalf("credits without price should fail, cost=%d err=%v", cost, err)
+	}
+	if cost, err := r.completedVideoBillingCost(&videogen.Result{
+		CostType:   "free_quota",
+		CostDetail: videogen.CostDetail{Price: 0},
+	}); err != nil || cost != 0 {
+		t.Fatalf("free quota should not bill, cost=%d err=%v", cost, err)
+	}
+}
+
+type staticVideoRatio struct{ ratio float64 }
+
+func (s staticVideoRatio) VideoGenBillingRatio() float64 { return s.ratio }
 
 func TestRunnerImageConcurrencyDefault(t *testing.T) {
 	r := NewRunner(nil, nil, nil, nil, nil, nil, nil, 0)

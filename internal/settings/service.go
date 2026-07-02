@@ -450,6 +450,13 @@ func (s *Service) VideoGenResolution() string {
 	return firstNonEmpty(strings.TrimSpace(s.GetString(VideoGenResolution)), "720p")
 }
 func (s *Service) VideoGenGenerateAudio() bool { return s.GetBool(VideoGenGenerateAudio) }
+func (s *Service) VideoGenBillingRatio() float64 {
+	n := s.GetFloat(VideoGenBillingRatio)
+	if n <= 0 {
+		return 10
+	}
+	return n
+}
 
 // -- billing / recharge --
 func (s *Service) RechargeEnabled() bool { return s.GetBool(RechargeEnabled) }

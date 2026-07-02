@@ -1,15 +1,17 @@
 // Package billing 实现「预扣+结算+退款」的积分计费闭环。
 //
 // 数据模型:
-//   users.credit_balance - 可用余额(厘)
-//   users.credit_frozen  - 冻结额度(厘)
-//   users.version        - 乐观锁版本号
-//   credit_transactions  - 流水(freeze/unfreeze/consume/refund ...)
+//
+//	users.credit_balance - 可用余额(厘)
+//	users.credit_frozen  - 冻结额度(厘)
+//	users.version        - 乐观锁版本号
+//	credit_transactions  - 流水(freeze/unfreeze/consume/refund ...)
 //
 // 流程:
-//   PreDeduct(userID, estCost, refID)   // balance -= est; frozen += est
-//   Settle(userID, est, actual, refID)  // frozen -= est; balance += (est-actual); 计 consume
-//   Refund(userID, est, refID)          // frozen -= est; balance += est
+//
+//	PreDeduct(userID, estCost, refID)   // balance -= est; frozen += est
+//	Settle(userID, est, actual, refID)  // frozen -= est; balance += (est-actual); 计 consume
+//	Refund(userID, est, refID)          // frozen -= est; balance += est
 package billing
 
 import (
@@ -90,7 +92,7 @@ func (e *Engine) PreDeduct(ctx context.Context, userID, keyID uint64, amount int
 // Settle 结算:expected=预扣金额,actual=真实消耗。
 //
 //	若 actual <= expected: 退差额(frozen -= expected, balance += (expected-actual));
-//	若 actual >  expected: 需要补扣差额,若余额不足尽量扣到 0(业务上一般 expected 已取上限,不太会进入这里)。
+//	若 actual >  expected: 需要补扣差额,余额不足则返回 ErrInsufficient。
 func (e *Engine) Settle(ctx context.Context, userID, keyID uint64, expected, actual int64, refID, remark string) error {
 	if expected <= 0 && actual <= 0 {
 		return nil
@@ -104,28 +106,45 @@ func (e *Engine) Settle(ctx context.Context, userID, keyID uint64, expected, act
 		var balanceDelta int64
 		var frozenDelta int64
 
+		var balanceGuard string
+		var guardArgs []interface{}
 		if refund >= 0 {
 			// 退差额:frozen -= expected, balance += refund
 			frozenDelta = -expected
 			balanceDelta = refund
 		} else {
-			// 补扣:frozen -= expected, balance -= (-refund) 若不足则允许负数? 保守地从 balance 扣到 0。
+			// 补扣:frozen -= expected, balance -= (-refund)
 			frozenDelta = -expected
 			balanceDelta = refund // 负值
+			balanceGuard = " AND credit_balance >= ?"
+			guardArgs = append(guardArgs, -refund)
 		}
 
+		args := []interface{}{balanceDelta, frozenDelta, userID, frozenDelta}
+		args = append(args, guardArgs...)
 		res, err := tx.ExecContext(ctx,
 			`UPDATE users
              SET credit_balance = credit_balance + ?,
                  credit_frozen  = credit_frozen  + ?,
                  version        = version + 1
-             WHERE id = ? AND credit_frozen + ? >= 0 AND deleted_at IS NULL`,
-			balanceDelta, frozenDelta, userID, frozenDelta)
+             WHERE id = ? AND credit_frozen + ? >= 0 AND deleted_at IS NULL`+balanceGuard,
+			args...)
 		if err != nil {
 			return err
 		}
 		n, _ := res.RowsAffected()
 		if n == 0 {
+			if refund < 0 {
+				var balance, frozen int64
+				if err := tx.QueryRowxContext(ctx,
+					`SELECT credit_balance, credit_frozen FROM users WHERE id = ? AND deleted_at IS NULL`,
+					userID).Scan(&balance, &frozen); err != nil {
+					return err
+				}
+				if balance < -refund {
+					return ErrInsufficient
+				}
+			}
 			return ErrConflict
 		}
 
@@ -187,6 +206,38 @@ func (e *Engine) Refund(ctx context.Context, userID, keyID uint64, expected int6
              (user_id, key_id, type, amount, balance_after, ref_id, remark)
              VALUES (?, ?, ?, ?, ?, ?, ?)`,
 			userID, keyID, KindRefund, expected, balanceAfter, refID, remark)
+		return err
+	})
+}
+
+// Consume 直接消费可用余额,用于无法预扣但已经拿到真实消耗的异步回补场景。
+func (e *Engine) Consume(ctx context.Context, userID, keyID uint64, amount int64, refID, remark string) error {
+	if amount <= 0 {
+		return nil
+	}
+	return e.runTx(ctx, func(tx *sqlx.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`UPDATE users
+             SET credit_balance = credit_balance - ?, version = version + 1
+             WHERE id = ? AND credit_balance >= ? AND deleted_at IS NULL`,
+			amount, userID, amount)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return ErrInsufficient
+		}
+		var balanceAfter int64
+		if err := tx.QueryRowxContext(ctx,
+			`SELECT credit_balance FROM users WHERE id = ?`, userID).Scan(&balanceAfter); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx,
+			`INSERT INTO credit_transactions
+             (user_id, key_id, type, amount, balance_after, ref_id, remark)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			userID, keyID, KindConsume, -amount, balanceAfter, refID, remark)
 		return err
 	})
 }

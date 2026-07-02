@@ -90,6 +90,30 @@ func TestBalanceUsesAccountBalanceEndpoint(t *testing.T) {
 	}
 }
 
+func TestTaskCostDetailPriceParsesNumberAndString(t *testing.T) {
+	for name, raw := range map[string]string{
+		"number": `{"price":1.25,"model_name":"Seedance"}`,
+		"string": `{"price":"2.5","model_name":"Seedance"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var cost struct {
+				ModelName string          `json:"model_name"`
+				Price     json.RawMessage `json:"price"`
+			}
+			if err := json.Unmarshal([]byte(raw), &cost); err != nil {
+				t.Fatal(err)
+			}
+			task := taskResp{}
+			task.CostDetail.ModelName = cost.ModelName
+			task.CostDetail.Price = cost.Price
+			got := task.costDetail()
+			if got.ModelName != "Seedance" || got.Price <= 0 {
+				t.Fatalf("unexpected cost detail: %+v", got)
+			}
+		})
+	}
+}
+
 func testClientWithModels(t *testing.T, models []Model) (*Client, *httptest.Server) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

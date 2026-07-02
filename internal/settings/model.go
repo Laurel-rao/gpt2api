@@ -111,6 +111,7 @@ const (
 	VideoGenAspectRatio   = "videogen.aspect_ratio"
 	VideoGenResolution    = "videogen.resolution"
 	VideoGenGenerateAudio = "videogen.generate_audio"
+	VideoGenBillingRatio  = "videogen.billing_ratio"
 
 	// 计费与充值
 	BillingCreditPerCNY        = "billing.credit_per_cny"
@@ -213,6 +214,7 @@ var Defs = []KeyDef{
 	{Key: VideoGenAspectRatio, Type: "string", Category: "videogen", Default: "16:9", Label: "默认画幅", Desc: "如 16:9 / 9:16 / 1:1"},
 	{Key: VideoGenResolution, Type: "string", Category: "videogen", Default: "720p", Label: "默认分辨率", Desc: "如 720p / 1080p，取决于模型支持"},
 	{Key: VideoGenGenerateAudio, Type: "bool", Category: "videogen", Default: "false", Label: "生成音频", Desc: "开启后请求视频模型同时生成音频，取决于模型支持"},
+	{Key: VideoGenBillingRatio, Type: "float", Category: "videogen", Default: "10", Label: "视频扣费倍率", Desc: "用户实际扣费 = 视频平台任务 cost_detail.price × 此倍率；单位按平台积分换算为站内积分，默认 10 倍"},
 
 	// ---------- 计费与充值 ----------
 	{Key: BillingCreditPerCNY, Type: "int", Category: "billing", Default: "10000", Label: "1 元 = N 积分·厘", Desc: "展示用换算;默认 10000"},

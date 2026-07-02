@@ -253,6 +253,7 @@ func main() {
 	imageGenClient.SetConfigProvider(settingsSvc)
 	textGenClient.SetConfigProvider(settingsSvc)
 	videoGenClient.SetConfigProvider(settingsSvc)
+	ecommerceRunner.SetBilling(billEngine, settingsSvc)
 	settingsH.SetImageGenProbe(func(ctx context.Context) (int64, int, error) {
 		res, err := imageGenClient.Probe(ctx)
 		if err != nil {

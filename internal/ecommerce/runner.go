@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"net/http"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/432539/gpt2api/internal/billing"
 	"github.com/432539/gpt2api/internal/channel"
 	imgpkg "github.com/432539/gpt2api/internal/image"
 	modelpkg "github.com/432539/gpt2api/internal/model"
@@ -42,6 +44,10 @@ type ImageAccountResolver interface {
 	ProxyURL(ctx context.Context, accountID uint64) string
 }
 
+type VideoBillingRatioProvider interface {
+	VideoGenBillingRatio() float64
+}
+
 type Runner struct {
 	dao              *DAO
 	models           *modelpkg.Registry
@@ -53,6 +59,8 @@ type Runner struct {
 	imageRun         *imgpkg.Runner
 	textGen          *textgen.Client
 	videoGen         *videogen.Client
+	billing          *billing.Engine
+	billingRatio     VideoBillingRatioProvider
 	appBaseURL       string
 	imageConcurrency int
 	imageSem         chan struct{}
@@ -90,6 +98,11 @@ func (r *Runner) SetVideoGenClient(client *videogen.Client) {
 	r.videoGen = client
 }
 
+func (r *Runner) SetBilling(engine *billing.Engine, ratioProvider VideoBillingRatioProvider) {
+	r.billing = engine
+	r.billingRatio = ratioProvider
+}
+
 func (r *Runner) SetAppBaseURL(baseURL string) {
 	r.appBaseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 }
@@ -112,8 +125,23 @@ func (r *Runner) SyncVideoAsset(ctx context.Context, asset Asset) error {
 		if strings.TrimSpace(result.ResultURL) == "" {
 			return nil
 		}
-		fileID := "videogen:" + firstNonEmpty(result.TaskID, asset.ImageTaskID)
-		return r.dao.UpdateAssetResult(ctx, asset.ID, StatusSuccess, firstNonEmpty(result.TaskID, asset.ImageTaskID), strings.TrimSpace(result.ResultURL), fileID, "")
+		task, err := r.dao.GetTask(ctx, asset.TaskID)
+		if err != nil {
+			return err
+		}
+		expectedCost := int64(0)
+		if frozen, err := r.dao.AssetVideoFrozenAmount(ctx, asset.ID); err != nil {
+			return err
+		} else {
+			expectedCost = frozen
+		}
+		upstreamTaskID := firstNonEmpty(result.TaskID, asset.ImageTaskID)
+		if err := r.billCompletedVideo(task.UserID, asset.ID, upstreamTaskID, expectedCost, result); err != nil {
+			r.refundVideoCost(task.UserID, asset.ID, upstreamTaskID, expectedCost, "videogen sync billing error")
+			return r.dao.UpdateAssetResult(ctx, asset.ID, StatusFailed, firstNonEmpty(result.TaskID, asset.ImageTaskID), "", "", err.Error())
+		}
+		fileID := "videogen:" + upstreamTaskID
+		return r.dao.UpdateAssetResult(ctx, asset.ID, StatusSuccess, upstreamTaskID, strings.TrimSpace(result.ResultURL), fileID, "")
 	case "failed":
 		msg := strings.TrimSpace(result.ErrorMessage)
 		if msg == "" {
@@ -473,7 +501,7 @@ func (r *Runner) RetryAsset(ctx context.Context, taskID string, assetID uint64, 
 		if err := r.dao.MarkAssetRetrying(ctx, assetID, vidTaskID, assetPrompt); err != nil {
 			return err
 		}
-		if err := r.runVideoAsset(ctx, taskID, assetID, vidTaskID, assetPrompt, videoRefs); err != nil {
+		if err := r.runVideoAsset(ctx, taskID, assetID, task.UserID, vidTaskID, assetPrompt, videoRefs); err != nil {
 			_ = r.dao.UpdateAssetResult(context.Background(), assetID, StatusFailed, vidTaskID, "", "", err.Error())
 			return r.finalizeTaskAfterRetry(context.Background(), taskID, out, "视频重试失败: "+err.Error())
 		}
@@ -612,7 +640,7 @@ func (r *Runner) GenerateVideo(ctx context.Context, taskID string, extraPrompt s
 	if err := r.dao.MarkTaskRetrying(ctx, taskID); err != nil {
 		return err
 	}
-	if err := r.runVideoAsset(ctx, taskID, asset.ID, vidTaskID, assetPrompt, videoRefs); err != nil {
+	if err := r.runVideoAsset(ctx, taskID, asset.ID, task.UserID, vidTaskID, assetPrompt, videoRefs); err != nil {
 		_ = r.dao.UpdateAssetResult(context.Background(), asset.ID, StatusFailed, vidTaskID, "", "", err.Error())
 		return r.finalizeTaskAfterRetry(context.Background(), taskID, out, "视频生成失败: "+err.Error())
 	}
@@ -635,19 +663,36 @@ func (r *Runner) generateVideoAsset(ctx context.Context, taskID string, platform
 	if err := r.dao.CreateAsset(ctx, asset); err != nil {
 		return err
 	}
-	if err := r.runVideoAsset(ctx, taskID, asset.ID, vidTaskID, assetPrompt, r.videoReferences(ctx, taskID, whiteRefs)); err != nil {
+	task, err := r.dao.GetTask(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	if err := r.runVideoAsset(ctx, taskID, asset.ID, task.UserID, vidTaskID, assetPrompt, r.videoReferences(ctx, taskID, whiteRefs)); err != nil {
 		_ = r.dao.UpdateAssetResult(context.Background(), asset.ID, StatusFailed, vidTaskID, "", "", err.Error())
 		return err
 	}
 	return nil
 }
 
-func (r *Runner) runVideoAsset(ctx context.Context, taskID string, assetID uint64, vidTaskID, prompt string, refs []imgpkg.ReferenceImage) error {
+func (r *Runner) runVideoAsset(ctx context.Context, taskID string, assetID uint64, userID uint64, vidTaskID, prompt string, refs []imgpkg.ReferenceImage) error {
 	if r.videoGen == nil {
 		return errors.New("视频网关未初始化")
 	}
+	expectedCost, ratio := r.estimateVideoCost()
+	if err := r.preDeductVideoCost(ctx, userID, assetID, vidTaskID, expectedCost); err != nil {
+		return err
+	}
+	refunded := false
+	refund := func(reason string) {
+		if refunded || expectedCost <= 0 {
+			return
+		}
+		refunded = true
+		r.refundVideoCost(userID, assetID, vidTaskID, expectedCost, reason)
+	}
 	images, err := videoReferenceImages(refs)
 	if err != nil {
+		refund("videogen reference error")
 		return err
 	}
 	if len(images) == 0 {
@@ -674,18 +719,161 @@ func (r *Runner) runVideoAsset(ctx context.Context, taskID string, assetID uint6
 		},
 	})
 	if err != nil {
+		refund("videogen refund")
 		return err
 	}
 	if strings.TrimSpace(res.ResultURL) == "" {
+		refund("videogen empty result")
 		return errors.New("视频结果为空")
 	}
 	upstreamTaskID := firstNonEmpty(res.TaskID, vidTaskID)
+	actualCost := computeVideoBillingCost(res.CostDetail.Price, ratio)
+	if actualCost <= 0 && strings.EqualFold(strings.TrimSpace(res.CostType), "credits") {
+		refund("videogen no cost")
+		return errors.New("视频任务未返回有效扣费金额")
+	}
+	if err := r.billCompletedVideo(userID, assetID, upstreamTaskID, expectedCost, res); err != nil {
+		refund("videogen billing error")
+		return err
+	}
 	fileID := "videogen:" + upstreamTaskID
 	if err := r.dao.UpdateAssetResult(context.Background(), assetID, StatusSuccess, upstreamTaskID, strings.TrimSpace(res.ResultURL), fileID, ""); err != nil {
 		return err
 	}
 	_ = r.dao.UpdateTaskProgress(context.Background(), taskID, 95)
 	return nil
+}
+
+func (r *Runner) estimateVideoCost() (int64, float64) {
+	if r.billing == nil {
+		return 0, 0
+	}
+	ratio := 10.0
+	if r.billingRatio != nil {
+		ratio = r.billingRatio.VideoGenBillingRatio()
+	}
+	if ratio <= 0 {
+		ratio = 10
+	}
+	return computeVideoBillingCost(1, ratio), ratio
+}
+
+func (r *Runner) preDeductVideoCost(ctx context.Context, userID, assetID uint64, vidTaskID string, expectedCost int64) error {
+	if r.billing == nil {
+		return errors.New("视频计费未初始化")
+	}
+	if expectedCost <= 0 {
+		return errors.New("视频计费倍率配置无效")
+	}
+	if err := r.billing.PreDeduct(ctx, userID, 0, expectedCost, videoBillingRef(assetID, vidTaskID), "videogen prepay"); err != nil {
+		if errors.Is(err, billing.ErrInsufficient) {
+			return errors.New("积分不足，请前往「账单与充值」充值后再试")
+		}
+		return fmt.Errorf("视频计费预扣失败: %w", err)
+	}
+	return nil
+}
+
+func (r *Runner) billCompletedVideo(userID, assetID uint64, upstreamTaskID string, expectedCost int64, res *videogen.Result) error {
+	if r.billing == nil {
+		return errors.New("视频计费未初始化")
+	}
+	actualCost, err := r.completedVideoBillingCost(res)
+	if err != nil {
+		return err
+	}
+	if actualCost <= 0 {
+		if expectedCost > 0 {
+			if err := r.billing.Settle(context.Background(), userID, 0, expectedCost, 0, videoBillingRef(assetID, upstreamTaskID), videoBillingRemark(res)); err != nil {
+				return fmt.Errorf("视频计费退款失败: %w", err)
+			}
+		}
+		return nil
+	}
+	refID := videoBillingRef(assetID, upstreamTaskID)
+	billed, err := r.dao.MarkAssetVideoBilled(context.Background(), assetID, actualCost)
+	if err != nil {
+		return fmt.Errorf("视频扣费标记失败: %w", err)
+	}
+	if !billed {
+		logger.L().Info("ecommerce video asset billing already handled",
+			zap.Uint64("asset_id", assetID),
+			zap.String("upstream_task_id", upstreamTaskID),
+			zap.Int64("actual_cost", actualCost))
+		return nil
+	}
+	if expectedCost > 0 {
+		if err := r.billing.Settle(context.Background(), userID, 0, expectedCost, actualCost, refID, videoBillingRemark(res)); err != nil {
+			_ = r.dao.ClearAssetVideoBilling(context.Background(), assetID)
+			if errors.Is(err, billing.ErrInsufficient) {
+				return errors.New("积分不足，请前往「账单与充值」充值后再试")
+			}
+			return fmt.Errorf("视频计费结算失败: %w", err)
+		}
+		return nil
+	}
+	if err := r.billing.Consume(context.Background(), userID, 0, actualCost, refID, videoBillingRemark(res)); err != nil {
+		_ = r.dao.ClearAssetVideoBilling(context.Background(), assetID)
+		if errors.Is(err, billing.ErrInsufficient) {
+			return errors.New("积分不足，请前往「账单与充值」充值后再试")
+		}
+		return fmt.Errorf("视频计费扣费失败: %w", err)
+	}
+	return nil
+}
+
+func (r *Runner) completedVideoBillingCost(res *videogen.Result) (int64, error) {
+	ratio := 10.0
+	if r.billingRatio != nil {
+		ratio = r.billingRatio.VideoGenBillingRatio()
+	}
+	if ratio <= 0 {
+		ratio = 10
+	}
+	actualCost := computeVideoBillingCost(res.CostDetail.Price, ratio)
+	if actualCost <= 0 {
+		if strings.EqualFold(strings.TrimSpace(res.CostType), "credits") {
+			return 0, errors.New("视频任务未返回有效扣费金额")
+		}
+		return 0, nil
+	}
+	return actualCost, nil
+}
+
+func (r *Runner) refundVideoCost(userID, assetID uint64, upstreamTaskID string, expectedCost int64, reason string) {
+	if r.billing == nil || expectedCost <= 0 {
+		return
+	}
+	if err := r.billing.Refund(context.Background(), userID, 0, expectedCost, videoBillingRef(assetID, upstreamTaskID), reason); err != nil {
+		logger.L().Warn("ecommerce video billing refund failed",
+			zap.Uint64("asset_id", assetID),
+			zap.Error(err))
+	}
+}
+
+func computeVideoBillingCost(platformCredits float64, ratio float64) int64 {
+	if platformCredits <= 0 || ratio <= 0 || math.IsNaN(platformCredits) || math.IsNaN(ratio) || math.IsInf(platformCredits, 0) || math.IsInf(ratio, 0) {
+		return 0
+	}
+	return int64(platformCredits*ratio*10000 + 0.5)
+}
+
+func videoBillingRef(assetID uint64, taskID string) string {
+	return truncate(fmt.Sprintf("videogen:%d:%s", assetID, strings.TrimSpace(taskID)), 64)
+}
+
+func videoBillingRemark(res *videogen.Result) string {
+	if res == nil {
+		return "videogen settle"
+	}
+	modelName := strings.TrimSpace(res.CostDetail.ModelName)
+	if modelName == "" {
+		modelName = strings.TrimSpace(res.ModelID)
+	}
+	if modelName == "" {
+		modelName = "unknown"
+	}
+	return truncate(fmt.Sprintf("videogen settle cost_type=%s model=%s price=%.4f", strings.TrimSpace(res.CostType), modelName, res.CostDetail.Price), 255)
 }
 
 func outputFromTask(task *TaskRow) Output {

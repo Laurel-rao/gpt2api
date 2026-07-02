@@ -22,7 +22,7 @@ import {
   type EcommerceStyleTemplate,
   type EcommerceTask,
 } from '@/api/ecommerce'
-import { formatDateTime } from '@/utils/format'
+import { formatCredit, formatDateTime } from '@/utils/format'
 import { getCachedImageObjectURL, peekCachedImageObjectURL } from '@/utils/imageCache'
 
 const MAX_IMAGES = 4
@@ -391,6 +391,11 @@ function canGenerateVideo() {
   return !!activeTask.value && !running.value && !hasWorkingCurrentAsset.value && !generatingVideo.value
 }
 
+function errorMessage(err: unknown, fallback: string) {
+  const anyErr = err as any
+  return anyErr?.response?.data?.message || anyErr?.message || fallback
+}
+
 function markBrokenAsset(asset: EcommerceAsset) {
   const next = new Set(brokenAssetIDs.value)
   next.add(asset.id)
@@ -693,6 +698,7 @@ async function retryAsset(asset: EcommerceAsset) {
     ElMessage.success(isVideoAsset(asset) ? '已重新提交视频生成' : '已重新提交图片生成')
   } catch (err) {
     console.error('retry ecommerce asset failed:', err)
+    ElMessage.error(errorMessage(err, isVideoAsset(asset) ? '视频重新生成失败' : '图片重新生成失败'))
   } finally {
     retryingAssetID.value = 0
   }
@@ -709,6 +715,7 @@ async function generateVideo() {
     ElMessage.success('视频生成已提交')
   } catch (err) {
     console.error('generate ecommerce video failed:', err)
+    ElMessage.error(errorMessage(err, '视频生成提交失败'))
   } finally {
     generatingVideo.value = false
   }
@@ -1394,6 +1401,8 @@ onBeforeUnmount(() => {
               <span>任务：{{ shortTaskID(videoAsset.image_task_id || videoAsset.file_id || '-') }}</span>
               <span>生成 {{ videoElapsedText() }}</span>
               <span>排队 {{ videoQueueText() }}</span>
+              <span v-if="videoAsset.credit_cost > 0">扣费 {{ formatCredit(videoAsset.credit_cost) }} 积分</span>
+              <span v-else-if="isAssetWorking(videoAsset.status)">完成后按实际消耗结算</span>
             </div>
             <div class="video-stepper" :class="{ failed: videoAsset?.status === 'failed' || videoAsset?.status === 'canceled' }">
               <div

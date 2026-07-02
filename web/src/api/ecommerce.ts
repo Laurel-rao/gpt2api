@@ -60,6 +60,7 @@ export interface EcommerceAsset {
   prompt: string
   status: string
   progress: number
+  credit_cost: number
   error?: string
   created_at: string
   started_at?: string | null

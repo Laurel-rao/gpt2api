@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -92,6 +94,8 @@ type Result struct {
 	Status       string
 	Progress     int
 	ResultURL    string
+	CostType     string
+	CostDetail   CostDetail
 	ErrorMessage string
 	DurationMs   int64
 }
@@ -126,6 +130,12 @@ type FreeQuota struct {
 	RemainingCount int    `json:"remaining_count,omitempty"`
 }
 
+type CostDetail struct {
+	ModelName string          `json:"model_name,omitempty"`
+	Price     float64         `json:"price,omitempty"`
+	Raw       json.RawMessage `json:"-"`
+}
+
 type generateResp struct {
 	TaskID   string `json:"task_id"`
 	ID       string `json:"id"`
@@ -134,10 +144,16 @@ type generateResp struct {
 }
 
 type taskResp struct {
-	ID           string `json:"id"`
-	ModelID      string `json:"model_id"`
-	Status       string `json:"status"`
-	Progress     int    `json:"progress"`
+	ID         string `json:"id"`
+	ModelID    string `json:"model_id"`
+	Status     string `json:"status"`
+	Progress   int    `json:"progress"`
+	Prompt     string `json:"prompt"`
+	CostType   string `json:"cost_type"`
+	CostDetail struct {
+		ModelName string          `json:"model_name"`
+		Price     json.RawMessage `json:"price"`
+	} `json:"cost_detail"`
 	ResultURL    string `json:"result_url"`
 	ErrorMessage string `json:"error_message"`
 }
@@ -305,6 +321,8 @@ func (c *Client) GetTask(ctx context.Context, taskID string) (*Result, error) {
 		Status:       task.Status,
 		Progress:     clampProgress(task.Progress),
 		ResultURL:    strings.TrimSpace(task.ResultURL),
+		CostType:     strings.TrimSpace(task.CostType),
+		CostDetail:   task.costDetail(),
 		ErrorMessage: task.ErrorMessage,
 	}, nil
 }
@@ -372,6 +390,8 @@ func (c *Client) pollTask(ctx context.Context, cfg Config, taskID string, onProg
 			Status:       task.Status,
 			Progress:     progress,
 			ResultURL:    strings.TrimSpace(task.ResultURL),
+			CostType:     strings.TrimSpace(task.CostType),
+			CostDetail:   task.costDetail(),
 			ErrorMessage: task.ErrorMessage,
 		}
 		if onProgress != nil {
@@ -397,6 +417,32 @@ func (c *Client) pollTask(ctx context.Context, cfg Config, taskID string, onProg
 		case <-ticker.C:
 		}
 	}
+}
+
+func (t taskResp) costDetail() CostDetail {
+	return CostDetail{
+		ModelName: strings.TrimSpace(t.CostDetail.ModelName),
+		Price:     parseJSONNumber(t.CostDetail.Price),
+		Raw:       t.CostDetail.Price,
+	}
+}
+
+func parseJSONNumber(raw json.RawMessage) float64 {
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0
+	}
+	var f float64
+	if err := json.Unmarshal(raw, &f); err == nil && !math.IsNaN(f) && !math.IsInf(f, 0) {
+		return f
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+		if err == nil && !math.IsNaN(f) && !math.IsInf(f, 0) {
+			return f
+		}
+	}
+	return 0
 }
 
 func clampProgress(progress int) int {

@@ -144,6 +144,7 @@ type Asset struct {
 	Prompt      string     `db:"prompt" json:"prompt"`
 	Status      string     `db:"status" json:"status"`
 	Progress    int        `db:"progress" json:"progress"`
+	CreditCost  int64      `db:"credit_cost" json:"credit_cost"`
 	Error       string     `db:"error,omitempty" json:"error,omitempty"`
 	CreatedAt   time.Time  `db:"created_at" json:"created_at"`
 	StartedAt   *time.Time `db:"started_at" json:"started_at,omitempty"`
