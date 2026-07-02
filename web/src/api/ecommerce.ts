@@ -239,8 +239,8 @@ export function listEcommerceLibraryAssets(params: {
   review_status?: EcommerceLibraryReviewStatus | ''
   limit?: number
   offset?: number
-} = {}): Promise<{ items: EcommerceLibraryAsset[]; total: number; limit: number; offset: number }> {
-  return http.get('/api/me/ecommerce/library/assets', { params })
+} = {}, silent = false): Promise<{ items: EcommerceLibraryAsset[]; total: number; limit: number; offset: number }> {
+  return http.get('/api/me/ecommerce/library/assets', { params, silent } as any)
 }
 
 export function getEcommerceLibraryAsset(assetID: string): Promise<EcommerceLibraryAssetDetail> {

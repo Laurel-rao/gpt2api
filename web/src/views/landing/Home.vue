@@ -10,12 +10,16 @@ const user = useUserStore()
 const ui = useUIStore()
 const site = useSiteStore()
 
-const siteName = computed(() => site.get('site.name', 'GPT2API'))
+const siteName = computed(() => site.get('site.name', '灵境智创'))
 const siteLogo = computed(() => site.get('site.logo_url', ''))
 const siteFooter = computed(() => site.get('site.footer', ''))
 const allowRegister = computed(() => site.allowRegister())
 const loggedIn = computed(() => user.isLoggedIn)
 
+function goCreate() {
+  if (loggedIn.value) router.push('/personal/ecommerce-v2')
+  else router.push('/login?redirect=/personal/ecommerce-v2')
+}
 function goPlay() {
   if (loggedIn.value) router.push('/personal/play')
   else router.push('/login?redirect=/personal/play')
@@ -33,25 +37,25 @@ onMounted(() => {
   onScroll()
 })
 
-// 三张卖点卡,全部围绕"图"
+// 工具货架：围绕电商创作任务组织能力
 const features = [
   {
-    icon: 'MagicStick',
-    color: '#409eff',
-    title: 'IMG2 正式版直出',
-    desc: '全面对齐 <code>picture_v2</code> 正式协议,SSE 够数即返回,60s 短轮询补齐。<b>速度优先 · 不悄悄重试</b>,出错第一时间暴露给调用方。',
+    icon: 'ShoppingBag',
+    color: '#2563EB',
+    title: '电商智能体',
+    desc: '输入商品资料、卖点、规格和平台要求，统一生成商品图、短视频、Listing 文案和详情页结构。',
   },
   {
-    icon: 'Picture',
-    color: '#a855f7',
-    title: '批量 · 多比例 · 预设',
-    desc: '10 种常用宽高比一键切换(21:9 / 16:9 / 4:3 / 1:1 / 9:16 …),<b>N 张批量成图</b>,提示词预设库,浏览器里直接出图。',
+    icon: 'VideoPlay',
+    color: '#14B8A6',
+    title: '商品短视频',
+    desc: '把已生成的商品素材继续变成 9:16 短视频，展示提交、排队、生成中、完成的全过程。',
   },
   {
-    icon: 'Connection',
-    color: '#67c23a',
-    title: 'OpenAI 零改造接入',
-    desc: '<code>/v1/images/generations</code> · <code>/v1/images/edits</code> 原样对齐官方 SDK,<b>切网关只改 base_url</b>,一行代码即可接入。',
+    icon: 'Collection',
+    color: '#F59E0B',
+    title: '素材资产库',
+    desc: '沉淀商品、模特、参考图和生成结果，让团队复用可控资产，而不是每次从零开始。',
   },
 ]
 </script>
@@ -66,6 +70,12 @@ const features = [
           <span v-else class="logo-mark">{{ (siteName[0] || 'G').toUpperCase() }}</span>
           <span class="logo-name">{{ siteName }}</span>
         </a>
+        <nav class="menu">
+          <a @click="goCreate">电商智能体</a>
+          <a @click="goPlay">在线体验</a>
+          <a @click="router.push('/login?redirect=/personal/ecommerce-assets')">资产库</a>
+          <a @click="router.push('/login?redirect=/personal/docs')">接口文档</a>
+        </nav>
         <div class="nav-actions">
           <el-button
             link :title="ui.isDark ? '切换到亮色' : '切换到暗色'"
@@ -86,46 +96,71 @@ const features = [
       </div>
     </header>
 
-    <!-- ============= Hero:只讲 GPT IMAGE2 出图 ============= -->
+    <!-- ============= Hero:AI 电商创作工作台 ============= -->
     <section id="hero" class="hero">
       <div class="hero-bg"></div>
       <div class="hero-inner">
         <div class="hero-text">
           <div class="eyebrow">
             <span class="dot"></span>
-            gpt-image-2 · 官方级终稿直出
+            AI Commerce Workspace
           </div>
           <h1 class="hero-title">
-            <span class="gradient-text">GPT IMAGE2</span><br/>
-            一键出高清终稿
+            电商 AI<br/>
+            创作工作台
           </h1>
           <p class="hero-sub">
-            基于 chatgpt.com 逆向的 <b>gpt-image-2</b> 网关<br/>
-            <b>IMG2 终稿直出</b> · 多比例 / 批量 N 张 / OpenAI SDK 零改造
+            把商品资料变成主图、短视频、Listing 文案和详情页结构。<br/>
+            一个入口完成从素材到交付的生成流程。
           </p>
           <div class="hero-cta">
-            <el-button size="large" type="primary" round @click="goPlay">
-              <el-icon><VideoPlay /></el-icon> 立即体验在线生图
+            <el-button size="large" type="primary" round @click="goCreate">
+              <el-icon><MagicStick /></el-icon> 开始创建
+            </el-button>
+            <el-button size="large" round @click="goPlay">
+              查看在线体验
             </el-button>
           </div>
         </div>
 
-        <div class="hero-preview">
-          <div class="preview-glow"></div>
-          <div class="preview-frame">
-            <div class="frame-bar">
-              <span class="dot red"></span>
-              <span class="dot yellow"></span>
-              <span class="dot green"></span>
-              <span class="frame-url">/personal/play · gpt-image-2 终稿直出</span>
+        <div class="hero-workbench">
+          <div class="prompt-tabs">
+            <span class="active">商品主图</span>
+            <span>商品短视频</span>
+            <span>Listing 文案</span>
+            <span>A+ 详情页</span>
+          </div>
+          <div class="prompt-card">
+            <p>316 不锈钢煎锅，适合小红书和亚马逊，突出不粘、轻烟、轻量手柄。生成主图、短视频和五点描述。</p>
+            <div class="prompt-actions">
+              <span>上传参考图</span>
+              <span>选择模特</span>
+              <span>套用模板</span>
+              <el-button type="primary" @click="goCreate">开始生成</el-button>
             </div>
-            <img src="/screenshots/playground-xiaoqiao.png" alt="gpt-image-2 单次调用产出多张高清终稿" />
+          </div>
+          <div class="result-strip">
+            <article>
+              <div class="preview-thumb"></div>
+              <b>商品主图</b>
+              <span>4 张待交付</span>
+            </article>
+            <article>
+              <div class="preview-thumb video"></div>
+              <b>短视频</b>
+              <span>15 秒预览</span>
+            </article>
+            <article>
+              <div class="preview-thumb copy"></div>
+              <b>Listing 文案</b>
+              <span>中文 / English</span>
+            </article>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- ============= 三张卖点卡(全围绕"图") ============= -->
+    <!-- ============= 工具货架 ============= -->
     <section class="section features">
       <div class="feature-grid">
         <div v-for="f in features" :key="f.title" class="feature-card">
@@ -137,8 +172,8 @@ const features = [
         </div>
       </div>
       <div class="features-cta">
-        <el-button size="large" type="primary" round @click="goPlay">
-          立即开始出图 <el-icon><ArrowRight /></el-icon>
+        <el-button size="large" type="primary" round @click="goCreate">
+          打开电商智能体 <el-icon><ArrowRight /></el-icon>
         </el-button>
       </div>
     </section>
@@ -156,15 +191,15 @@ const features = [
 // ========= 全局色变量(同时适配亮 / 暗) =========
 .landing {
   --lp-bg: #ffffff;
-  --lp-bg-soft: #f7fbff;
-  --lp-text: #1f2330;
-  --lp-text-soft: #606266;
-  --lp-text-mute: #909399;
-  --lp-border: rgba(15, 23, 42, 0.08);
-  --lp-card: rgba(255, 255, 255, 0.65);
+  --lp-bg-soft: var(--lc-bg);
+  --lp-text: var(--lc-text);
+  --lp-text-soft: var(--lc-muted);
+  --lp-text-mute: var(--lc-subtle);
+  --lp-border: var(--lc-border);
+  --lp-card: rgba(255, 255, 255, 0.72);
   --lp-card-solid: #ffffff;
-  --lp-nav-bg: rgba(255, 255, 255, 0.72);
-  --lp-nav-border: rgba(15, 23, 42, 0.08);
+  --lp-nav-bg: rgba(255, 255, 255, 0.78);
+  --lp-nav-border: var(--lc-border-soft);
 
   min-height: 100vh;
   background: var(--lp-bg);
@@ -186,19 +221,6 @@ const features = [
   --lp-card-solid: #111a2b;
   --lp-nav-bg: rgba(15, 22, 38, 0.72);
   --lp-nav-border: rgba(255, 255, 255, 0.07);
-}
-
-.gradient-text {
-  background: linear-gradient(135deg, #409eff 0%, #a855f7 55%, #67c23a 100%);
-  background-size: 200% 200%;
-  background-clip: text;
-  -webkit-background-clip: text;
-  color: transparent;
-  animation: grad-flow 6s ease-in-out infinite;
-}
-@keyframes grad-flow {
-  0%, 100% { background-position: 0% 50%; }
-  50%      { background-position: 100% 50%; }
 }
 
 // ========= 顶部导航 =========
@@ -237,11 +259,11 @@ const features = [
   color: var(--lp-text);
   .logo-img { width: 32px; height: 32px; border-radius: 8px; object-fit: contain; }
   .logo-mark {
-    width: 32px; height: 32px; border-radius: 9px;
+    width: 34px; height: 34px; border-radius: 12px;
     display: inline-flex; align-items: center; justify-content: center;
     color: #fff; font-weight: 800; font-size: 15px;
-    background: linear-gradient(135deg, #409eff, #a855f7);
-    box-shadow: 0 4px 12px #409eff40;
+    background: linear-gradient(135deg, var(--lc-primary), var(--lc-mint));
+    box-shadow: 0 8px 18px rgba(37, 99, 235, .18);
   }
   .logo-name { font-size: 17px; font-weight: 700; letter-spacing: 0.3px; }
 }
@@ -274,16 +296,16 @@ const features = [
 .hero {
   position: relative;
   overflow: hidden;
-  padding: 60px 24px 70px;
+  padding: 74px 24px 58px;
 }
 .hero-bg {
   position: absolute;
   inset: -10% -10% 0 -10%;
   pointer-events: none;
   background:
-    radial-gradient(900px 420px at 15% 25%, #a5c9ff66, transparent 60%),
-    radial-gradient(800px 420px at 85% 15%, #c084fc55, transparent 60%),
-    radial-gradient(600px 400px at 70% 90%, #b1f1b255, transparent 60%);
+    radial-gradient(900px 420px at 15% 25%, rgba(37, 99, 235, .14), transparent 62%),
+    radial-gradient(800px 420px at 85% 15%, rgba(20, 184, 166, .16), transparent 62%),
+    linear-gradient(180deg, #ffffff, #f8fbff);
   z-index: 0;
 }
 .landing.dark .hero-bg {
@@ -298,7 +320,7 @@ const features = [
   max-width: 1240px;
   margin: 0 auto;
   display: grid;
-  grid-template-columns: 1.1fr 1fr;
+  grid-template-columns: .92fr 1.08fr;
   gap: 56px;
   align-items: center;
 }
@@ -309,22 +331,23 @@ const features = [
   padding: 6px 12px;
   border-radius: 999px;
   border: 1px solid var(--lp-border);
-  background: var(--lp-card);
+  background: var(--lc-primary-soft);
   backdrop-filter: blur(6px);
   font-size: 12px;
-  color: var(--lp-text-soft);
+  color: var(--lc-primary);
+  font-weight: 720;
   .dot {
     width: 6px; height: 6px; border-radius: 50%;
-    background: #67c23a;
-    box-shadow: 0 0 0 4px #67c23a33;
+    background: var(--lc-mint);
+    box-shadow: 0 0 0 4px rgba(20, 184, 166, .18);
   }
 }
 .hero-title {
-  font-size: clamp(40px, 5.4vw, 64px);
+  font-size: clamp(42px, 5.2vw, 64px);
   line-height: 1.1;
   margin: 22px 0 18px;
   font-weight: 800;
-  letter-spacing: -0.5px;
+  letter-spacing: 0;
 }
 .hero-sub {
   font-size: 16px;
@@ -359,50 +382,105 @@ const features = [
   .dot-sep { color: var(--lp-text-mute); }
 }
 
-.hero-preview {
+.hero-workbench {
   position: relative;
-  .preview-glow {
-    position: absolute;
-    inset: -30px;
-    background: radial-gradient(closest-side, #a855f744, transparent 70%);
-    filter: blur(20px);
-    pointer-events: none;
-  }
-  .preview-frame {
-    position: relative;
-    background: var(--lp-card-solid);
-    border: 1px solid var(--lp-border);
-    border-radius: 14px;
-    overflow: hidden;
-    box-shadow:
-      0 30px 60px -20px rgba(168, 85, 247, 0.35),
-      0 20px 40px rgba(15, 23, 42, 0.12);
-    transform: perspective(1200px) rotateY(-4deg) rotateX(2deg);
-    transition: transform .3s;
-  }
-  .preview-frame:hover {
-    transform: perspective(1200px) rotateY(0) rotateX(0);
-  }
-  .frame-bar {
-    display: flex;
+  border: 1px solid var(--lp-border);
+  border-radius: 22px;
+  background: rgba(255,255,255,.88);
+  padding: 20px;
+  box-shadow: var(--lc-shadow-popover);
+}
+.prompt-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+  span {
+    min-height: 34px;
+    display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--lp-border);
+    border-radius: 10px;
+    padding: 0 14px;
+    color: var(--lp-text-soft);
     background: var(--lp-bg-soft);
-    .dot {
-      width: 10px; height: 10px; border-radius: 50%;
-      &.red    { background: #ff5f57; }
-      &.yellow { background: #febc2e; }
-      &.green  { background: #28c840; }
-    }
-    .frame-url {
-      margin-left: 10px;
-      font-size: 12px;
-      color: var(--lp-text-mute);
-    }
+    font-size: 13px;
+    font-weight: 700;
   }
-  img { display: block; width: 100%; height: auto; }
+  .active {
+    color: #fff;
+    background: var(--lc-primary);
+  }
+}
+.prompt-card {
+  border: 1px solid #cfdaf0;
+  border-radius: 16px;
+  background: #fff;
+  padding: 16px;
+  p {
+    min-height: 78px;
+    color: #475569;
+    font-size: 15px;
+    line-height: 1.75;
+  }
+}
+.prompt-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+  span {
+    height: 28px;
+    border-radius: 999px;
+    padding: 0 10px;
+    display: inline-flex;
+    align-items: center;
+    color: var(--lp-text-soft);
+    background: var(--lp-bg-soft);
+    font-size: 12px;
+  }
+  .el-button { margin-left: auto; }
+}
+.result-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+  article {
+    min-width: 0;
+    border: 1px solid var(--lp-border);
+    border-radius: 16px;
+    background: linear-gradient(145deg, #fff, #f6faff);
+    padding: 12px;
+  }
+  b, span {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  b { font-size: 13px; }
+  span { margin-top: 2px; color: var(--lp-text-soft); font-size: 12px; }
+}
+.preview-thumb {
+  height: 76px;
+  border-radius: 12px;
+  margin-bottom: 8px;
+  background:
+    linear-gradient(135deg, rgba(37,99,235,.18), rgba(20,184,166,.14)),
+    repeating-linear-gradient(45deg, #f8fafc 0 10px, #eef2f7 10px 20px);
+  &.video {
+    background:
+      radial-gradient(circle at 54% 38%, rgba(245,158,11,.55), transparent 18%),
+      linear-gradient(135deg, #dbeafe, #ccfbf1);
+  }
+  &.copy {
+    background:
+      linear-gradient(#e2e8f0 0 0) 14px 18px / 70% 7px no-repeat,
+      linear-gradient(#e2e8f0 0 0) 14px 36px / 56% 7px no-repeat,
+      linear-gradient(#e2e8f0 0 0) 14px 54px / 82% 7px no-repeat,
+      #f8fafc;
+  }
 }
 
 // ========= 三张卖点卡 =========
@@ -412,8 +490,8 @@ const features = [
 }
 .features {
   background:
-    radial-gradient(800px 300px at 20% 10%, #409eff11, transparent 60%),
-    radial-gradient(800px 300px at 80% 90%, #a855f711, transparent 60%);
+    radial-gradient(800px 300px at 20% 10%, rgba(37, 99, 235, .07), transparent 60%),
+    radial-gradient(800px 300px at 80% 90%, rgba(20, 184, 166, .09), transparent 60%);
 }
 .feature-grid {
   max-width: 1140px;
@@ -425,7 +503,7 @@ const features = [
 .feature-card {
   background: var(--lp-card-solid);
   border: 1px solid var(--lp-border);
-  border-radius: 14px;
+  border-radius: 16px;
   padding: 26px 24px;
   transition: transform .2s, box-shadow .2s, border-color .2s;
 }
@@ -433,7 +511,7 @@ const features = [
   transform: translateY(-4px);
   border-color: transparent;
   box-shadow:
-    0 20px 40px -12px rgba(64, 158, 255, 0.22),
+    0 20px 40px -12px rgba(37, 99, 235, 0.16),
     0 8px 24px rgba(15, 23, 42, 0.08);
 }
 .feature-icon {
@@ -490,7 +568,7 @@ const features = [
 // ========= 响应式 =========
 @media (max-width: 1100px) {
   .hero-inner { grid-template-columns: 1fr; }
-  .hero-preview { order: 2; margin-top: 30px; }
+  .hero-workbench { order: 2; margin-top: 30px; }
 }
 @media (max-width: 900px) {
   .feature-grid { grid-template-columns: 1fr; }
@@ -502,6 +580,8 @@ const features = [
   .nav-actions .btn-login { display: none; }
   .menu { display: none; }
   .hero-cta .el-button { width: 100%; }
+  .result-strip { grid-template-columns: 1fr; }
+  .prompt-actions .el-button { width: 100%; margin-left: 0; }
   .footer-inner { line-height: 2; }
 }
 </style>

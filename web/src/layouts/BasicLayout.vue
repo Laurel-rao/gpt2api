@@ -14,7 +14,7 @@ const site = useSiteStore()
 const router = useRouter()
 const route = useRoute()
 
-const siteName = computed(() => site.get('site.name', 'GPT2API'))
+const siteName = computed(() => site.get('site.name', '灵境智创'))
 const siteLogo = computed(() => site.get('site.logo_url', ''))
 const siteFooter = computed(() => site.get('site.footer', ''))
 
@@ -52,8 +52,8 @@ const menuIcon = computed(() => {
 // 侧栏实际是否折叠(移动端抽屉展开时不折叠)
 const sideCollapsed = computed(() => isMobile.value ? false : collapsed.value)
 
-// 侧栏宽度(桌面端动态;移动端固定 240px 由 CSS 管理)
-const asideWidth = computed(() => isMobile.value ? '0px' : (collapsed.value ? '64px' : '220px'))
+// 侧栏宽度(桌面端动态;移动端固定 252px 由 CSS 管理)
+const asideWidth = computed(() => isMobile.value ? '0px' : (collapsed.value ? '72px' : '236px'))
 
 const activePath = computed(() => route.path)
 
@@ -119,14 +119,17 @@ watch(() => store.isLoggedIn, (v) => { if (v) loadMenu() })
       <div class="logo" :class="{ 'has-site-logo': siteLogo, 'logo-collapsed': sideCollapsed }">
         <img v-if="siteLogo" :src="siteLogo" class="logo-img" alt="logo" />
         <span v-else class="mark">{{ (siteName[0] || 'G').toUpperCase() }}</span>
-        <span v-if="!sideCollapsed && !siteLogo" class="title">{{ siteName }}</span>
+        <span v-if="!sideCollapsed && !siteLogo" class="title">
+          <b>{{ siteName }}</b>
+          <small>电商 AI 工作台</small>
+        </span>
       </div>
       <el-menu
         :default-active="activePath"
         :collapse="sideCollapsed"
         background-color="transparent"
-        text-color="#cfd3dc"
-        active-text-color="#ffffff"
+        text-color="#475569"
+        active-text-color="#2563eb"
         class="side-menu"
         router
       >
@@ -175,7 +178,7 @@ watch(() => store.isLoggedIn, (v) => { if (v) loadMenu() })
           </el-tooltip>
           <el-dropdown trigger="click" @command="(c: string) => c === 'logout' ? logout() : goto(c)">
             <span class="user-entry">
-              <el-avatar :size="28" style="background:#409eff">
+              <el-avatar :size="28" style="background:linear-gradient(135deg,#2563eb,#14b8a6)">
                 {{ (user?.nickname || user?.email || 'U').slice(0, 1).toUpperCase() }}
               </el-avatar>
               <span class="nick">{{ user?.nickname || user?.email }}</span>
@@ -216,13 +219,23 @@ watch(() => store.isLoggedIn, (v) => { if (v) loadMenu() })
 
 <style scoped lang="scss">
 // ─── 根容器 ──────────────────────────────────────────────────────────────────
-.layout-root { height: 100vh; overflow: hidden; }
+.layout-root {
+  height: 100vh;
+  overflow: hidden;
+  color: var(--lc-text);
+  background:
+    radial-gradient(900px 420px at 18% -12%, rgba(37, 99, 235, .12), transparent 62%),
+    radial-gradient(760px 360px at 96% 0%, rgba(20, 184, 166, .12), transparent 60%),
+    var(--lc-bg);
+}
 
 .right-container { min-width: 0; flex: 1; overflow: hidden; }
 
 // ─── 侧栏 ────────────────────────────────────────────────────────────────────
 .sidebar {
   background: var(--gp-sidebar-bg);
+  border-right: 1px solid var(--lc-border);
+  backdrop-filter: blur(18px);
   transition: width .22s ease;
   overflow-x: hidden;
   display: flex !important;
@@ -240,7 +253,7 @@ watch(() => store.isLoggedIn, (v) => { if (v) loadMenu() })
   left: 0;
   top: 0;
   height: 100vh;
-  width: 240px !important;  // 覆盖 :width 绑定
+  width: 252px !important;  // 覆盖 :width 绑定
   z-index: 1001;
   transform: translateX(-100%);
   transition: transform .25s ease, box-shadow .25s ease;
@@ -248,14 +261,14 @@ watch(() => store.isLoggedIn, (v) => { if (v) loadMenu() })
 }
 .sidebar-mobile.sidebar-open {
   transform: translateX(0);
-  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.35);
+  box-shadow: 18px 0 48px rgba(15, 23, 42, 0.18);
 }
 
 // 移动端遮罩
 .sidebar-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
+  background: rgba(15, 23, 42, 0.32);
   z-index: 1000;
 }
 .overlay-fade-enter-active, .overlay-fade-leave-active { transition: opacity .25s; }
@@ -263,29 +276,50 @@ watch(() => store.isLoggedIn, (v) => { if (v) loadMenu() })
 
 // ─── Logo ─────────────────────────────────────────────────────────────────────
 .logo {
-  height: 60px;
+  min-height: 72px;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 16px;
-  color: #fff;
-  font-weight: 700;
-  letter-spacing: 1px;
+  padding: 0 18px;
+  color: var(--lc-text);
+  font-weight: 760;
+  letter-spacing: 0;
   flex-shrink: 0;
   .logo-img {
-    width: 32px; height: 32px; border-radius: 8px;
+    width: 32px; height: 32px; border-radius: 10px;
     object-fit: contain; background: #fff;
   }
   .mark {
     display: inline-flex;
-    width: 32px; height: 32px;
-    border-radius: 8px;
-    background: linear-gradient(135deg,#409eff,#67c23a);
+    width: 34px; height: 34px;
+    border-radius: 12px;
+    background: linear-gradient(135deg,var(--lc-primary),var(--lc-mint));
     align-items: center; justify-content: center;
+    color: #fff;
     font-size: 14px;
     flex-shrink: 0;
   }
-  .title { font-size: 16px; white-space: nowrap; overflow: hidden; }
+  .title {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    b {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-size: 16px;
+      line-height: 20px;
+    }
+    small {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: var(--lc-muted);
+      font-size: 12px;
+      font-weight: 500;
+      line-height: 16px;
+    }
+  }
 }
 .logo.has-site-logo {
   padding: 0 12px;
@@ -310,7 +344,39 @@ watch(() => store.isLoggedIn, (v) => { if (v) loadMenu() })
 
 .side-menu {
   border-right: none !important;
-  --el-menu-hover-bg-color: rgba(255,255,255,0.06);
+  padding: 0 12px 12px;
+  background: transparent !important;
+  --el-menu-hover-bg-color: rgba(37, 99, 235, 0.06);
+  :deep(.el-menu-item),
+  :deep(.el-sub-menu__title) {
+    height: 42px;
+    margin: 3px 0;
+    border-radius: 12px;
+    color: #475569;
+    font-weight: 650;
+  }
+  :deep(.el-menu-item.is-active) {
+    position: relative;
+    color: var(--lc-primary);
+    background: var(--lc-primary-soft);
+  }
+  :deep(.el-menu-item.is-active::before) {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 10px;
+    bottom: 10px;
+    width: 3px;
+    border-radius: 999px;
+    background: var(--lc-primary);
+  }
+  :deep(.el-sub-menu .el-menu-item) {
+    min-width: 0;
+    padding-left: 42px !important;
+  }
+  :deep(.el-icon) {
+    color: inherit;
+  }
 }
 
 // ─── 顶栏 ─────────────────────────────────────────────────────────────────────
@@ -318,17 +384,18 @@ watch(() => store.isLoggedIn, (v) => { if (v) loadMenu() })
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 56px;
-  min-height: 56px;
-  background: var(--el-bg-color);
-  color: var(--el-text-color-primary);
-  border-bottom: 1px solid var(--el-border-color-light);
-  padding: 0 18px;
+  height: 60px;
+  min-height: 60px;
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--lc-text);
+  border-bottom: 1px solid var(--lc-border);
+  padding: 0 22px;
+  backdrop-filter: blur(18px);
   flex-shrink: 0;
   .left { display: flex; align-items: center; gap: 10px; min-width: 0; }
   .crumb {
     font-size: 16px;
-    font-weight: 600;
+    font-weight: 720;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -338,7 +405,7 @@ watch(() => store.isLoggedIn, (v) => { if (v) loadMenu() })
     align-items: center;
     gap: 8px;
     cursor: pointer;
-    color: var(--el-text-color-primary);
+    color: var(--lc-text);
     .nick {
       font-size: 14px;
       max-width: 120px;
@@ -393,13 +460,13 @@ watch(() => store.isLoggedIn, (v) => { if (v) loadMenu() })
   bottom: 0;
   padding: 10px 16px;
   text-align: center;
-  border-top: 1px solid rgba(255,255,255,0.07);
+  border-top: 1px solid var(--lc-border-soft);
   background: var(--gp-sidebar-bg);
   flex-shrink: 0;
   .ver-text {
     display: inline-block;
     font-size: 11px;
-    color: rgba(255,255,255,0.28);
+    color: var(--lc-subtle);
     letter-spacing: 0.5px;
     user-select: none;
     white-space: nowrap;

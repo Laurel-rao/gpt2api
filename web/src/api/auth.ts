@@ -1,4 +1,7 @@
 import { http } from './http'
+import type { AxiosRequestConfig } from 'axios'
+
+export type AuthRequestConfig = AxiosRequestConfig & { silent?: boolean }
 
 export interface LoginReq {
   email: string
@@ -29,8 +32,8 @@ export interface UserInfo {
   last_login_at?: string
 }
 
-export function login(req: LoginReq): Promise<LoginResp> {
-  return http.post('/api/auth/login', req)
+export function login(req: LoginReq, config?: AuthRequestConfig): Promise<LoginResp> {
+  return http.post('/api/auth/login', req, config)
 }
 
 export function register(req: { email: string; password: string; nickname?: string }): Promise<UserInfo> {

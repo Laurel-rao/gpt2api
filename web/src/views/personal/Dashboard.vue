@@ -4,7 +4,7 @@ import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import {
   Refresh, Wallet, Key, ChatLineRound, PictureFilled,
-  DataAnalysis, Collection, Promotion,
+  DataAnalysis, Collection, Promotion, ShoppingBag, VideoPlay, Box,
 } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import { listKeys } from '@/api/apikey'
@@ -49,13 +49,14 @@ async function loadAll() {
       meApi.listMyUsageLogs({ limit: 6, offset: 0 }),
       meApi.listMyCreditLogs({ limit: 3, offset: 0 }),
     ])
-    keyTotal.value = keys.total
-    keyActive.value = keys.list.filter((k) => k.enabled).length
-    modelCount.value = models.total
+    const keyList = Array.isArray(keys.list) ? keys.list : []
+    keyTotal.value = keys.total || keyList.length
+    keyActive.value = keyList.filter((k) => k.enabled).length
+    modelCount.value = models.total || (Array.isArray(models.items) ? models.items.length : 0)
     stats14.value = s14
     stats1.value = s1
-    recentLogs.value = logs.items
-    recentCredits.value = credits.items
+    recentLogs.value = Array.isArray(logs.items) ? logs.items : []
+    recentCredits.value = Array.isArray(credits.items) ? credits.items : []
   } finally {
     loading.value = false
   }
@@ -64,8 +65,8 @@ async function loadAll() {
 // ---------- 派生指标 ----------
 const todayOverall = computed(() => stats1.value?.overall)
 const monthOverall = computed(() => stats14.value?.overall) // 近 14 天,作为"近期"展示
-const daily = computed(() => stats14.value?.daily || [])
-const topModels = computed(() => (stats14.value?.by_model || []).slice(0, 3))
+const daily = computed(() => (Array.isArray(stats14.value?.daily) ? stats14.value!.daily : []))
+const topModels = computed(() => (Array.isArray(stats14.value?.by_model) ? stats14.value!.by_model : []).slice(0, 3))
 
 function successRate(o?: meApi.UsageOverall | null): string {
   if (!o || o.requests === 0) return '—'
@@ -172,6 +173,33 @@ const creditTypeLabel: Record<string, string> = {
 
 // ---------- 导航 CTA ----------
 function go(p: string) { router.push(p) }
+
+const quickTools = [
+  {
+    title: '电商智能体',
+    desc: '从商品资料生成主图、短视频、文案。',
+    icon: ShoppingBag,
+    path: '/personal/ecommerce-v2',
+  },
+  {
+    title: '在线体验',
+    desc: '快速测试模型、图片和接口效果。',
+    icon: ChatLineRound,
+    path: '/personal/play',
+  },
+  {
+    title: '资产库',
+    desc: '复用商品、模特和生成素材。',
+    icon: Box,
+    path: '/personal/ecommerce-assets',
+  },
+  {
+    title: '商品短视频',
+    desc: '查看分段进度和视频预览。',
+    icon: VideoPlay,
+    path: '/personal/ecommerce-v2',
+  },
+]
 </script>
 
 <template>
@@ -179,18 +207,19 @@ function go(p: string) { router.push(p) }
     <!-- ====== 顶部横幅 ====== -->
     <div class="hero-card">
       <div class="hero-main">
-        <div class="hero-greet">
-          <span class="wave">👋</span>
-          {{ greeting }},{{ user?.nickname || user?.email?.split('@')[0] || '同学' }}
-        </div>
+        <div class="hero-kicker">AI Commerce Workspace</div>
+        <div class="hero-greet">{{ greeting }}，{{ user?.nickname || user?.email?.split('@')[0] || '同学' }}</div>
         <div class="hero-sub">
-          欢迎回到 <b>云芯 API</b> 控制台 ·
+          欢迎回到 <b>灵境智创</b> 工作台 ·
           当前角色 <el-tag size="small" effect="plain">{{ store.role || '-' }}</el-tag>
           <span v-if="user?.last_login_at" class="muted">
             · 上次登录 {{ formatDateTime(user?.last_login_at) }}
           </span>
         </div>
         <div class="hero-actions">
+          <el-button type="primary" :icon="ShoppingBag" @click="go('/personal/ecommerce-v2')">
+            新建电商任务
+          </el-button>
           <el-button type="primary" :icon="Wallet" @click="go('/personal/billing')">
             充值积分
           </el-button>
@@ -207,6 +236,25 @@ function go(p: string) { router.push(p) }
         <div class="balance-label">可用积分</div>
         <div class="balance-value">{{ balance }}</div>
         <div class="balance-sub">冻结中 {{ frozen }}</div>
+      </div>
+    </div>
+
+    <div class="quick-workbench card-block">
+      <div class="flex-between quick-head">
+        <div>
+          <h3 class="page-title">快捷入口</h3>
+          <div class="muted">围绕创作任务组织能力，先创建、再复用、最后交付。</div>
+        </div>
+        <el-button text :icon="Promotion" @click="go('/personal/ecommerce-v2')">
+          打开工作台
+        </el-button>
+      </div>
+      <div class="quick-grid">
+        <button v-for="tool in quickTools" :key="tool.title" class="quick-card" type="button" @click="go(tool.path)">
+          <span class="quick-icon"><el-icon><component :is="tool.icon" /></el-icon></span>
+          <b>{{ tool.title }}</b>
+          <small>{{ tool.desc }}</small>
+        </button>
       </div>
     </div>
 
@@ -533,13 +581,15 @@ code {
 /* ==== Hero ==== */
 .hero-card {
   position: relative;
-  border-radius: 12px;
-  padding: 16px 22px;
-  color: #fff;
+  border: 1px solid var(--lc-border);
+  border-radius: 18px;
+  padding: 22px 24px;
+  color: var(--lc-text);
   background:
-    radial-gradient(circle at 85% 20%, rgba(255, 255, 255, 0.18), transparent 60%),
-    linear-gradient(135deg, #4c6ef5 0%, #7c3aed 55%, #db2777 100%);
-  box-shadow: 0 6px 24px rgba(76, 110, 245, 0.25);
+    radial-gradient(520px 220px at 84% 10%, rgba(20, 184, 166, .14), transparent 64%),
+    radial-gradient(620px 260px at 10% 8%, rgba(37, 99, 235, .12), transparent 62%),
+    rgba(255, 255, 255, .86);
+  box-shadow: var(--lc-shadow-card);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -554,28 +604,40 @@ code {
   right: -60px; top: -60px;
   width: 220px; height: 220px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(37, 99, 235, 0.06);
   pointer-events: none;
 }
 .hero-main { flex: 1 1 360px; min-width: 0; }
+.hero-kicker {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  border-radius: 999px;
+  padding: 0 12px;
+  color: var(--lc-primary);
+  background: var(--lc-primary-soft);
+  font-size: 12px;
+  font-weight: 760;
+  margin-bottom: 10px;
+}
 .hero-greet {
-  font-size: 20px;
-  font-weight: 600;
-  letter-spacing: 0.5px;
-  .wave { display: inline-block; transform: translateY(-1px); margin-right: 4px; }
+  font-size: 24px;
+  line-height: 32px;
+  font-weight: 760;
+  letter-spacing: 0;
 }
 .hero-sub {
   margin-top: 6px;
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.82);
-  b { color: #fff; }
+  color: var(--lc-muted);
+  b { color: var(--lc-text); }
   :deep(.el-tag) {
     margin: 0 2px;
-    background: rgba(255, 255, 255, 0.18);
-    border-color: rgba(255, 255, 255, 0.35);
-    color: #fff;
+    background: var(--lc-primary-soft);
+    border-color: transparent;
+    color: var(--lc-primary);
   }
-  .muted { color: rgba(255, 255, 255, 0.7); font-size: 12.5px; }
+  .muted { color: var(--lc-subtle); font-size: 12.5px; }
 }
 .hero-actions {
   margin-top: 12px;
@@ -584,19 +646,19 @@ code {
   gap: 10px;
   :deep(.el-button) { font-weight: 500; }
   :deep(.el-button.is-text) {
-    color: rgba(255, 255, 255, 0.9);
-    &:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+    color: var(--lc-muted);
+    &:hover { background: var(--lc-primary-soft); color: var(--lc-primary); }
   }
 }
 .hero-balance {
   min-width: 180px;
   padding: 12px 20px;
-  background: rgba(255, 255, 255, 0.14);
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: 10px;
+  background: #fff;
+  border: 1px solid var(--lc-border);
+  border-radius: 16px;
   backdrop-filter: blur(6px);
   text-align: right;
-  .balance-label { font-size: 12px; color: rgba(255, 255, 255, 0.8); }
+  .balance-label { font-size: 12px; color: var(--lc-muted); }
   .balance-value {
     font-size: 26px;
     font-weight: 700;
@@ -604,7 +666,60 @@ code {
     line-height: 1.15;
     letter-spacing: 0.5px;
   }
-  .balance-sub { font-size: 12px; color: rgba(255, 255, 255, 0.72); }
+  .balance-sub { font-size: 12px; color: var(--lc-muted); }
+}
+
+.quick-workbench {
+  margin-bottom: 12px;
+}
+.quick-head .page-title {
+  margin: 0 0 4px;
+}
+.quick-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+.quick-card {
+  min-width: 0;
+  min-height: 112px;
+  border: 1px solid var(--lc-border-soft);
+  border-radius: 16px;
+  padding: 14px;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .18s ease, background .18s ease, box-shadow .18s ease;
+  b,
+  small {
+    display: block;
+  }
+  b {
+    color: var(--lc-text);
+    font-size: 15px;
+    margin: 10px 0 5px;
+  }
+  small {
+    color: var(--lc-muted);
+    font-size: 12px;
+    line-height: 1.55;
+  }
+  &:hover {
+    border-color: rgba(37, 99, 235, .28);
+    background: linear-gradient(180deg, #fff, #f8fbff);
+    box-shadow: var(--lc-shadow-card);
+  }
+}
+.quick-icon {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  color: var(--lc-mint-strong);
+  background: var(--lc-mint-soft);
 }
 
 /* ==== KPI 卡 ==== */
@@ -615,17 +730,16 @@ code {
   align-items: center;
   gap: 10px;
   padding: 10px 14px;
-  border-radius: 10px;
+  border-radius: 14px;
   background: var(--el-bg-color);
-  border: 1px solid var(--el-border-color-lighter);
+  border: 1px solid var(--lc-border);
   transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
   position: relative;
   overflow: hidden;
 }
 .kpi:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.06);
-  border-color: var(--el-border-color);
+  box-shadow: var(--lc-shadow-card);
+  border-color: rgba(37, 99, 235, .24);
 }
 .kpi .kpi-icon {
   width: 36px; height: 36px;

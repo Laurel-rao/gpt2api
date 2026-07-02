@@ -23,6 +23,10 @@ export const http: AxiosInstance = axios.create({
   timeout: 30_000,
 })
 
+function isSilentRequest(config?: AxiosRequestConfig) {
+  return Boolean((config as AxiosRequestConfig & { silent?: boolean } | undefined)?.silent)
+}
+
 /** access token 持久化 key(Pinia store 也复用) */
 export const TOKEN_KEY = 'gpt2api.access'
 export const REFRESH_KEY = 'gpt2api.refresh'
@@ -49,7 +53,9 @@ http.interceptors.response.use(
         return payload.data as any
       }
       const msg = payload.message || `请求失败 (code=${payload.code})`
-      ElMessage.error(msg)
+      if (!isSilentRequest(response.config)) {
+        ElMessage.error(msg)
+      }
       return Promise.reject(new Error(msg))
     }
     return response.data
@@ -57,6 +63,9 @@ http.interceptors.response.use(
   (error: AxiosError<ApiEnvelope>) => {
     const status = error.response?.status
     const msg = error.response?.data?.message || error.message || '网络错误'
+    if (isSilentRequest(error.config)) {
+      return Promise.reject(error)
+    }
     if (status === 401) {
       // 登录接口 401 = 账号密码错误,不要清 token 也不要跳转,直接给明确提示。
       // 后端返回的是英文 "invalid email or password",这里本地化为中文。

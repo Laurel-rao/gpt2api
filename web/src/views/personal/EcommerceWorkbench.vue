@@ -36,6 +36,8 @@ const canceling = ref(false)
 const exporting = ref(false)
 const downloadingAll = ref(false)
 const generatingVideo = ref(false)
+const libraryAssetsLoading = ref(false)
+const libraryAssetsLoaded = ref(false)
 const tasksLoading = ref(false)
 const tasksTotal = ref(0)
 const retryingTaskID = ref('')
@@ -490,12 +492,27 @@ async function loadOptions() {
 }
 
 async function loadLibraryAssets() {
-  const [products, models] = await Promise.all([
-    listEcommerceLibraryAssets({ kind: 'product', limit: 100 }),
-    listEcommerceLibraryAssets({ kind: 'model', limit: 100 }),
-  ])
-  productLibraryAssets.value = products.items || []
-  modelLibraryAssets.value = models.items || []
+  if (libraryAssetsLoaded.value || libraryAssetsLoading.value) return
+  libraryAssetsLoading.value = true
+  try {
+    const [products, models] = await Promise.all([
+      listEcommerceLibraryAssets({ kind: 'product', limit: 100 }, true),
+      listEcommerceLibraryAssets({ kind: 'model', limit: 100 }, true),
+    ])
+    productLibraryAssets.value = products.items || []
+    modelLibraryAssets.value = models.items || []
+  } catch (err) {
+    console.warn('ecommerce library assets unavailable:', err)
+    productLibraryAssets.value = []
+    modelLibraryAssets.value = []
+  } finally {
+    libraryAssetsLoaded.value = true
+    libraryAssetsLoading.value = false
+  }
+}
+
+function onLibrarySelectVisible(visible: boolean) {
+  if (visible) loadLibraryAssets()
 }
 
 async function loadTasks(reset = true) {
@@ -551,7 +568,8 @@ function onTaskListWheel(event: WheelEvent) {
 async function initialize() {
   loading.value = true
   try {
-    await Promise.all([loadOptions(), loadLibraryAssets(), loadTasks()])
+    await loadOptions()
+    await loadTasks()
     if (!activeTask.value && tasks.value[0]) {
       await openTask(tasks.value[0])
     }
@@ -1093,7 +1111,14 @@ onBeforeUnmount(() => {
 
         <div class="library-picker-grid">
           <el-form-item label="商品资产">
-            <el-select v-model="form.product_asset_id" placeholder="可选：从资产库选择商品" filterable clearable>
+            <el-select
+              v-model="form.product_asset_id"
+              placeholder="可选：从资产库选择商品"
+              filterable
+              clearable
+              :loading="libraryAssetsLoading"
+              @visible-change="onLibrarySelectVisible"
+            >
               <el-option v-for="asset in productLibraryAssets" :key="asset.asset_id" :label="asset.name" :value="asset.asset_id">
                 <div class="asset-option">
                   <img v-if="asset.cover_url" :src="asset.cover_url" :alt="asset.name" />
@@ -1104,7 +1129,14 @@ onBeforeUnmount(() => {
             </el-select>
           </el-form-item>
           <el-form-item label="模特资产">
-            <el-select v-model="form.model_asset_id" placeholder="可选：从资产库选择模特" filterable clearable>
+            <el-select
+              v-model="form.model_asset_id"
+              placeholder="可选：从资产库选择模特"
+              filterable
+              clearable
+              :loading="libraryAssetsLoading"
+              @visible-change="onLibrarySelectVisible"
+            >
               <el-option v-for="asset in modelLibraryAssets" :key="asset.asset_id" :label="asset.name" :value="asset.asset_id">
                 <div class="asset-option">
                   <img v-if="asset.cover_url" :src="asset.cover_url" :alt="asset.name" />
@@ -1739,30 +1771,31 @@ onBeforeUnmount(() => {
 
 <style scoped lang="scss">
 .commerce-workbench {
-  --ink: #0f1115;
-  --muted: #667085;
-  --subtle: #98a2b3;
-  --line: #e5e7eb;
-  --paper: #ffffff;
-  --wash: #fafafa;
-  --page: #f5f2ec;
-  --green: #148b7f;
-  --green-strong: #04786d;
-  --amber: #f59e0b;
-  --red: #ef4444;
-  --shadow: 0 12px 32px rgba(16, 24, 40, 0.08);
+  --ink: var(--lc-text);
+  --muted: var(--lc-muted);
+  --subtle: var(--lc-subtle);
+  --line: var(--lc-border);
+  --paper: var(--lc-surface);
+  --wash: var(--lc-surface-soft);
+  --page: var(--lc-bg);
+  --green: var(--lc-mint);
+  --green-strong: var(--lc-mint-strong);
+  --amber: var(--lc-amber);
+  --red: var(--lc-danger);
+  --shadow: var(--lc-shadow-card);
   box-sizing: border-box;
   width: 100%;
   min-height: calc(100vh - 60px);
   display: grid;
-  grid-template-columns: minmax(320px, 360px) minmax(0, 1fr) minmax(286px, 320px);
-  gap: 12px;
-  padding: 12px;
+  grid-template-columns: minmax(340px, 390px) minmax(0, 1fr) minmax(286px, 320px);
+  gap: 14px;
+  padding: 18px;
   overflow-x: hidden;
   color: var(--ink);
   background:
-    linear-gradient(90deg, rgba(20, 139, 127, 0.05), transparent 34%),
-    linear-gradient(180deg, #fbfaf7, var(--page));
+    radial-gradient(900px 420px at 8% -8%, rgba(37, 99, 235, .10), transparent 62%),
+    radial-gradient(760px 360px at 96% 0%, rgba(20, 184, 166, .11), transparent 60%),
+    var(--page);
   font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
@@ -1776,26 +1809,28 @@ onBeforeUnmount(() => {
 .surface {
   min-width: 0;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 16px;
   background: rgba(255, 255, 255, 0.92);
   box-shadow: var(--shadow);
 }
 
 .surface-inset {
   border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fcfbf8;
+  border-radius: 14px;
+  background: var(--wash);
 }
 
 .composer-card,
 .current-task,
 .asset-section,
 .side-block {
-  padding: 14px;
+  padding: 16px;
 }
 
 .composer-card {
   align-self: start;
+  position: sticky;
+  top: 16px;
 }
 
 .task-column {
@@ -1831,7 +1866,7 @@ onBeforeUnmount(() => {
 .kicker {
   display: inline-flex;
   margin-bottom: 4px;
-  color: var(--green);
+  color: var(--lc-primary);
   font-size: 12px;
   font-weight: 700;
 }
@@ -1844,8 +1879,8 @@ p {
 }
 
 h1 {
-  font-size: 22px;
-  line-height: 28px;
+  font-size: 26px;
+  line-height: 34px;
   font-weight: 800;
 }
 
@@ -1877,7 +1912,7 @@ h3 {
 
 .lang-chip {
   color: #fff;
-  background: var(--green);
+  background: linear-gradient(135deg, var(--lc-primary), var(--green));
 }
 
 .time-pill {
@@ -1886,8 +1921,8 @@ h3 {
 }
 
 .status-chip.success {
-  color: #04786d;
-  background: #e6f8f6;
+  color: var(--green-strong);
+  background: var(--lc-mint-soft);
 }
 
 .status-chip.warning {
@@ -2010,7 +2045,7 @@ h3 {
 .brief-form :deep(.el-input__wrapper),
 .brief-form :deep(.el-select__wrapper),
 .brief-form :deep(.el-textarea__inner) {
-  border-radius: 8px;
+  border-radius: 12px;
   background: #fff;
   box-shadow: 0 0 0 1px var(--line) inset;
 }
@@ -2018,7 +2053,7 @@ h3 {
 .brief-form :deep(.el-input__wrapper.is-focus),
 .brief-form :deep(.el-select__wrapper.is-focused),
 .brief-form :deep(.el-textarea__inner:focus) {
-  box-shadow: 0 0 0 1px var(--green) inset, 0 0 0 3px rgba(20, 139, 127, 0.12);
+  box-shadow: 0 0 0 1px var(--lc-primary) inset, 0 0 0 3px rgba(37, 99, 235, 0.12);
 }
 
 .required-label::after {
@@ -2059,7 +2094,7 @@ h3 {
   position: relative;
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 12px;
   padding: 0;
   background: #f3f4f6;
   cursor: pointer;
@@ -2097,7 +2132,7 @@ h3 {
   place-content: center;
   gap: 2px;
   padding: 0;
-  border-radius: 8px;
+  border-radius: 12px;
   border-color: #d0d5dd;
   background: #fff;
   color: var(--muted);
@@ -2125,13 +2160,13 @@ h3 {
 
 .primary-submit {
   width: 100%;
-  min-height: 32px;
-  height: 32px;
+  min-height: 42px;
+  height: 42px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 12px;
   font-weight: 800;
-  background: linear-gradient(180deg, #14b8a6, var(--green-strong));
-  box-shadow: 0 10px 22px rgba(20, 139, 127, 0.22);
+  background: linear-gradient(135deg, var(--lc-primary), var(--green));
+  box-shadow: 0 12px 24px rgba(37, 99, 235, 0.22);
 }
 
 .cost-hint {
@@ -2195,9 +2230,9 @@ h3 {
 
 .progress-panel {
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 14px;
   padding: 12px;
-  background: #fcfbf8;
+  background: var(--wash);
 }
 
 .progress-summary {
@@ -2221,7 +2256,7 @@ h3 {
 }
 
 .collapsible-card:hover {
-  border-color: rgba(20, 139, 127, 0.34);
+  border-color: rgba(37, 99, 235, 0.28);
 }
 
 .collapse-head {
@@ -2317,7 +2352,7 @@ h3 {
 
 .step-item.done::before,
 .step-item.active::before {
-  background: var(--green);
+  background: var(--lc-primary);
 }
 
 .step-dot {
@@ -2336,9 +2371,9 @@ h3 {
 }
 
 .step-item.done .step-dot {
-  border-color: var(--green);
+  border-color: var(--lc-primary);
   color: #fff;
-  background: var(--green);
+  background: var(--lc-primary);
 }
 
 .step-item.active .step-dot {
@@ -2376,7 +2411,7 @@ h3 {
 }
 
 .progress-panel :deep(.el-progress-bar__inner) {
-  background: linear-gradient(90deg, var(--green), #25c7b8);
+  background: linear-gradient(90deg, var(--lc-primary), var(--green));
 }
 
 .task-error {
@@ -2393,7 +2428,7 @@ h3 {
 .copy-card {
   min-width: 0;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 14px;
   padding: 12px;
   background: #fff;
 }
@@ -2433,10 +2468,10 @@ h3 {
 }
 
 .tag-list span {
-  border-radius: 6px;
+  border-radius: 999px;
   padding: 4px 8px;
   color: #344054;
-  background: #f5f2ec;
+  background: var(--lc-primary-soft);
   font-size: 12px;
   line-height: 18px;
 }
@@ -2462,7 +2497,7 @@ h3 {
 }
 
 .detail-section-grid article {
-  border-radius: 8px;
+  border-radius: 12px;
   padding: 10px;
   background: #fff;
 }
@@ -2488,10 +2523,10 @@ h3 {
   grid-template-columns: minmax(0, 1fr) minmax(220px, 320px);
   gap: 12px;
   border: 1px solid rgba(20, 139, 127, 0.22);
-  border-radius: 8px;
+  border-radius: 16px;
   padding: 12px;
   margin-bottom: 12px;
-  background: #f8fffd;
+  background: linear-gradient(180deg, #ffffff, #f8fcff);
 }
 
 .video-panel-main {
@@ -2647,8 +2682,8 @@ h3 {
 }
 
 .video-actions :deep(.el-button--primary) {
-  border-color: var(--green);
-  background: linear-gradient(180deg, #14b8a6, var(--green-strong));
+  border-color: var(--lc-primary);
+  background: linear-gradient(135deg, var(--lc-primary), var(--green));
 }
 
 .video-error {
@@ -2664,7 +2699,7 @@ h3 {
   justify-items: center;
   gap: 8px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 14px;
   overflow: hidden;
   color: var(--green);
   background: #ffffff;
@@ -2728,7 +2763,7 @@ h3 {
   grid-template-rows: auto auto 140px auto auto;
   gap: 8px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 14px;
   padding: 10px;
   background: #fff;
 }
@@ -2764,7 +2799,7 @@ h3 {
   height: 140px;
   box-sizing: border-box;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 12px;
   overflow: hidden;
   background: #f8fafc;
 }
@@ -2858,6 +2893,7 @@ h3 {
 
 .side-block {
   min-width: 0;
+  align-self: start;
 }
 
 .task-count {
@@ -2902,7 +2938,7 @@ h3 {
   align-items: start;
   gap: 8px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 14px;
   padding: 7px;
   background: #fff;
   text-align: left;
@@ -2924,8 +2960,8 @@ h3 {
 }
 
 .task-list-item.active {
-  border-color: var(--green);
-  box-shadow: 0 0 0 3px rgba(20, 139, 127, 0.12);
+  border-color: var(--lc-primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
 }
 
 .task-list-more {
@@ -3078,7 +3114,7 @@ h3 {
   display: flex;
   align-items: center;
   gap: 14px;
-  border-radius: 8px;
+  border-radius: 14px;
   padding: 12px;
   background: #f7f8fa;
 }
@@ -3132,8 +3168,8 @@ h3 {
 }
 
 .export-actions :deep(.el-button--primary) {
-  border-color: var(--green);
-  background: linear-gradient(180deg, #14b8a6, var(--green-strong));
+  border-color: var(--lc-primary);
+  background: linear-gradient(135deg, var(--lc-primary), var(--green));
 }
 
 .asset-dialog-body {
@@ -3282,13 +3318,13 @@ h3 {
     padding: 12px;
   }
 
-  .task-column {
+  .composer-card {
     order: 1;
+    position: static;
   }
 
-  .composer-card {
+  .task-column {
     order: 2;
-    position: static;
   }
 
   .delivery-card {

@@ -23,8 +23,8 @@ export const useUserStore = defineStore(
       localStorage.setItem(REFRESH_KEY, tp.refresh_token)
     }
 
-    async function login(email: string, password: string) {
-      const data = await authApi.login({ email, password })
+    async function login(email: string, password: string, options?: { silent?: boolean }) {
+      const data = await authApi.login({ email, password }, options)
       setTokens(data.token)
       user.value = data.user
       // 登录后拉一次 me(得到 permissions),顺便拉 menu
