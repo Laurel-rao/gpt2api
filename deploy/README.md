@@ -17,7 +17,7 @@
 | 迁移工具(linux/amd64) | `deploy/bin/goose` |
 | 前端 Vite 产物(nginx 托管) | `web/dist/` |
 
-所以**第一次部署 / 代码更新后,都要先在宿主机跑一次预编译脚本**;后端变更后再 `docker compose build server`,前端变更只需重建 `web/dist` 并重启 nginx。
+所以**第一次部署**要先在宿主机跑一次预编译脚本。日常从本机把改动发到远端/测试环境时,默认使用仓库根目录的 `deploy/quick-remote-sync.sh`:它会本地构建与测试、同步源码和 `web/dist`、远端测试与编译、重建 compose 并检查 `/healthz`。只有在服务器本机手工更新时,才按后端变更 `docker compose build server`、前端变更重启 nginx 的方式操作。
 
 ## 快速开始
 
@@ -65,11 +65,33 @@ docker compose logs -f server  # 观察迁移 + 启动日志
 
 | 场景 | 做什么 |
 |------|--------|
-| 只改了前端 | `cd web && npm run build` → `cd ../deploy && docker compose restart nginx` |
-| 只改了后端 | `bash deploy/build-local.sh` → `cd deploy && docker compose build server && docker compose up -d server` |
-| `git pull` 新版 | `bash deploy/build-local.sh` → `docker compose build server && docker compose up -d` |
+| 远端/测试环境日常发布 | `bash deploy/quick-remote-sync.sh [相关文件...]` |
+| 只改了前端且只在服务器本机操作 | `cd web && npm run build` → `cd ../deploy && docker compose restart nginx` |
+| 只改了后端且只在服务器本机操作 | `bash deploy/build-local.sh` → `cd deploy && docker compose build server && docker compose up -d server` |
+| `git pull` 新版到服务器本机 | `bash deploy/build-local.sh` → `docker compose build server && docker compose up -d` |
 | 只改了 `.env` | `docker compose up -d`(环境变量变化 compose 会自动感知并重建容器) |
 | 想秒重启 | `docker compose restart server` |
+
+`quick-remote-sync.sh` 默认读取 `deploy/remote-release.env`,并会执行:
+
+1. 本地 `npm run build`
+2. 本地 `go test ./internal/ecommerce ./internal/videogen ./internal/settings ./cmd/server`
+3. `rsync` 指定源码文件和 `web/dist` 到远端
+4. 远端 `go test`、`CGO_ENABLED=0 go build`
+5. `docker compose build server && docker compose up -d server nginx`
+6. `/healthz` 检查
+
+新增文件、SQL 迁移、路由、菜单、前端页面等不在默认清单里时,要追加到命令末尾。例如:
+
+```bash
+bash deploy/quick-remote-sync.sh \
+  internal/ecommerce/library_handler.go \
+  internal/ecommerce/library_media.go \
+  web/src/views/personal/EcommerceAssets.vue \
+  sql/migrations/20260701000400_ecommerce_library_assets.sql
+```
+
+如果最后一次 `curl` 正好撞上 nginx 重启瞬间报 connection reset,补跑 `curl http://<服务器IP>:8080/healthz` 和远端 `docker compose ps`。需要完整应用/数据库备份和自动回滚时,再使用 `deploy/remote-release.sh`。
 
 默认暴露端口:
 

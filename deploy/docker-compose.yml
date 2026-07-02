@@ -68,8 +68,10 @@ services:
       GPT2API_MYSQL_DSN: "${MYSQL_USER:-gpt2api}:${MYSQL_PASSWORD:-gpt2api}@tcp(mysql:3306)/${MYSQL_DATABASE:-gpt2api}?parseTime=true&loc=Local&charset=utf8mb4&collation=utf8mb4_unicode_ci"
       GPT2API_REDIS_ADDR: "redis:6379"
       GPT2API_BACKUP_DIR: /app/data/backups
+      GPT2API_ECOMMERCE_ASSET_DIR: /app/data/ecommerce-assets
       GPT2API_BACKUP_RETENTION: ${BACKUP_RETENTION:-30}
       GPT2API_BACKUP_ALLOW_RESTORE: ${BACKUP_ALLOW_RESTORE:-false}
+      AZT_API_KEY: ${AZT_API_KEY:-}
       # 强烈建议在 .env 中覆盖下列两项
       GPT2API_JWT_SECRET: ${JWT_SECRET:-dev_secret_change_me_in_production_please_32b}
       GPT2API_CRYPTO_AES_KEY: ${CRYPTO_AES_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
@@ -85,6 +87,7 @@ services:
       - ../configs:/app/configs:ro
       - backups:/app/data/backups
       - site_assets:/app/data/site-assets
+      - ecommerce_assets:/app/data/ecommerce-assets
       - ./logs:/app/logs
     command: ["/app/gpt2api", "-c", "/app/configs/config.yaml"]
 
@@ -106,3 +109,4 @@ volumes:
   redis_data:
   backups:
   site_assets:
+  ecommerce_assets:

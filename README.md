@@ -256,7 +256,7 @@ powershell -NoProfile -File deploy\build-local.ps1
 -rw-r--r-- ... web/dist/index.html
 ```
 
-> 改完后端代码后**重跑 `build-local` 再 `docker compose build server`**;改前端只跑 `cd web && npm run build`,nginx 会直接读取新的 `web/dist`。
+> 首次部署仍按上面流程走。日常把本地改动发布到远端/测试环境时,默认使用 `bash deploy/quick-remote-sync.sh [相关文件...]`:脚本会本地构建与测试、同步源码和 `web/dist` 到远端、远端 `go test` + `go build`、重建 compose 并做 `/healthz` 检查。不要优先手工传整包。
 > 有同事反馈 `go get` / `npm install` 慢,可以先 `go env -w GOPROXY=https://goproxy.cn,direct` 和 `npm config set registry https://registry.npmmirror.com`。
 
 ### 4. 配置 `.env` 与启动容器
@@ -316,13 +316,32 @@ docker compose logs -f server
 
 ### 6. 日常更新流程速查
 
+默认远端发布命令:
+
+```bash
+# 同步默认后端/前端电商相关文件并发布
+bash deploy/quick-remote-sync.sh
+
+# 有新增或默认清单外的文件时,把完整相关文件追加到命令末尾
+bash deploy/quick-remote-sync.sh \
+  internal/ecommerce/library_handler.go \
+  internal/ecommerce/library_media.go \
+  web/src/views/personal/EcommerceAssets.vue \
+  sql/migrations/20260701000400_ecommerce_library_assets.sql
+```
+
+`quick-remote-sync.sh` 默认读取 `deploy/remote-release.env` 里的 `GPT2API_REMOTE_HOST` / `GPT2API_REMOTE_USER` / `GPT2API_REMOTE_DIR`。如果只想跳过重复的本地构建和测试,确认刚跑过验证后再加 `--skip-local-build`。
+
 | 场景 | 命令 |
 |------|------|
-| **仅改了前端** | `cd web && npm run build` → `cd ../deploy && docker compose restart nginx` |
-| **仅改了后端** | `bash deploy/build-local.sh`(会顺带重建前端产物)→ `cd deploy && docker compose build server && docker compose up -d server` |
-| **拉 main 新版** | `git pull` → `bash deploy/build-local.sh` → `docker compose build server && docker compose up -d` |
+| **远端/测试环境日常发布** | `bash deploy/quick-remote-sync.sh [相关文件...]` |
+| **仅改了前端且只在服务器本机操作** | `cd web && npm run build` → `cd ../deploy && docker compose restart nginx` |
+| **仅改了后端且只在服务器本机操作** | `bash deploy/build-local.sh` → `cd deploy && docker compose build server && docker compose up -d server` |
+| **拉 main 新版到服务器本机** | `git pull` → `bash deploy/build-local.sh` → `docker compose build server && docker compose up -d` |
 | **只重启不重建** | `docker compose restart server` |
 | **想回滚上一版** | `docker compose down server nginx` → 恢复 `deploy/bin/gpt2api` + `web/dist` 备份 → `docker compose build server && docker compose up -d` |
+
+> 如果 quick 脚本最后一步刚好撞上 nginx 重启,出现一次 `curl: Recv failure: Connection reset by peer`,不要直接判失败;补跑 `curl http://<服务器IP>:8080/healthz` 和远端 `docker compose ps` 确认。需要完整远端应用/数据库备份和自动回滚时,再使用 `bash deploy/remote-release.sh deploy`。
 
 ### 7. 五分钟跑通第一次生图
 
@@ -601,7 +620,7 @@ scheduler:
 
 #### 为什么能稳住高并发?
 
-1. **串行 lease + Redis 锁**:每个账号同一时刻只有 1 个请求在飞,`min_interval_sec` 保证两次请求之间的最小间隔,风控曲线平滑;
+1. **多槽 lease + Redis 锁**:每个账号默认最多 3 个请求同时在飞,`min_interval_sec` 控制释放后的下一轮节奏,风控曲线仍然可控;
 2. **代理强绑定**:每个账号锁死一个代理,IP 指纹不混用,触发风控的只是个别账号,其它账号不受牵连;
 3. **熔断自恢复**:账号消耗到阈值 / 收到 429 / 拿到警告页,自动进入冷却,冷却结束自动复活,无需人工干预;
 4. **横向扩展**:`docker compose up --scale server=3` 即可多副本;Redis 锁天然跨节点,MySQL + backups 卷共享即可;

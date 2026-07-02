@@ -70,6 +70,8 @@ venv/
 *.tar.gz
 /_tmp/
 /tmp/
+/output/
+/exports/
 
 # 历史部署产物(运维自己 build 即可,不要带进仓库)
 /deploy/bin/
