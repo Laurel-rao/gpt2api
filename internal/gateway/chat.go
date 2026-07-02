@@ -1,12 +1,12 @@
 // Package gateway 实现 OpenAI 兼容的 /v1/* 入口。
 //
 // 职责:
-//   1. 鉴权(API Key,IP/模型白名单)
-//   2. 查模型 → 预扣积分
-//   3. 通过调度器拿账号 Lease
-//   4. 转译请求体 → 调用 chatgpt.com 上游
-//   5. 转译响应(流式 or 聚合) → OpenAI 协议
-//   6. 结算(真实 tokens) / 失败退款 / 释放账号锁 / 更新风控状态
+//  1. 鉴权(API Key,IP/模型白名单)
+//  2. 查模型 → 预扣积分
+//  3. 通过调度器拿账号 Lease
+//  4. 转译请求体 → 调用 chatgpt.com 上游
+//  5. 转译响应(流式 or 聚合) → OpenAI 协议
+//  6. 结算(真实 tokens) / 失败退款 / 释放账号锁 / 更新风控状态
 package gateway
 
 import (
@@ -29,6 +29,7 @@ import (
 	modelpkg "github.com/432539/gpt2api/internal/model"
 	"github.com/432539/gpt2api/internal/ratelimit"
 	"github.com/432539/gpt2api/internal/scheduler"
+	"github.com/432539/gpt2api/internal/textgen"
 	"github.com/432539/gpt2api/internal/upstream/chatgpt"
 	"github.com/432539/gpt2api/internal/usage"
 	"github.com/432539/gpt2api/internal/user"
@@ -59,6 +60,8 @@ type Handler struct {
 		GatewayUpstreamTimeoutSec() int
 		GatewaySSEReadTimeoutSec() int
 	}
+
+	TextGen *textgen.Client
 }
 
 // upstreamTimeout 返回当前应使用的上游非流式超时。未注入时回退 60s。
@@ -195,6 +198,11 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 
 	// 优先走外置渠道。本地模型若配置了渠道映射,直接由适配器调用 OpenAI/Gemini
 	// 兼容接口并按 SSE 返回。handled=true 时已完成响应,直接收尾。
+	if h.TextGen != nil && h.TextGen.Enabled() {
+		if handled := h.dispatchChatToTextGen(c, ak, m, &req, rec, ratio, rpmCap, tpmCap, startAt); handled {
+			return
+		}
+	}
 	if h.Channels != nil {
 		if handled := h.dispatchChatToChannel(c, ak, m, &req, rec, ratio, rpmCap, tpmCap, startAt); handled {
 			return

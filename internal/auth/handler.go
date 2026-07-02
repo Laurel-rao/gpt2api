@@ -32,7 +32,7 @@ type refreshReq struct {
 }
 
 type loginResp struct {
-	User  *user.User       `json:"user"`
+	User  *user.User        `json:"user"`
 	Token *pkgjwt.TokenPair `json:"token"`
 }
 
@@ -102,4 +102,12 @@ func (h *Handler) Refresh(c *gin.Context) {
 		return
 	}
 	resp.OK(c, pair)
+}
+
+// POST /api/auth/logout
+//
+// JWT 是无状态的,服务端没有会话需要销毁。这里返回成功,让新旧前端都可以
+// 把“退出登录”当作一个幂等操作处理,即使本地 token 已经过期也不会卡在 401/403。
+func (h *Handler) Logout(c *gin.Context) {
+	resp.OK(c, gin.H{"ok": true})
 }

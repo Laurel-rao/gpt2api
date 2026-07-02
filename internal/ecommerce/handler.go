@@ -40,6 +40,7 @@ type promptReq struct {
 	Name          string `json:"name"`
 	ContentPrompt string `json:"content_prompt"`
 	ImagePrompt   string `json:"image_prompt"`
+	VideoPrompt   string `json:"video_prompt"`
 	Remark        string `json:"remark"`
 	Enabled       *bool  `json:"enabled"`
 }
@@ -57,8 +58,11 @@ type createTaskReq struct {
 	PlatformID       uint64   `json:"platform_id"`
 	PromptTemplateID uint64   `json:"prompt_template_id"`
 	StyleTemplateID  uint64   `json:"style_template_id"`
+	Language         string   `json:"language"`
 	Requirement      string   `json:"requirement"`
 	ReferenceImages  []string `json:"reference_images"`
+	ProductAssetID   string   `json:"product_asset_id"`
+	ModelAssetID     string   `json:"model_asset_id"`
 }
 
 type retryAssetReq struct {
@@ -109,9 +113,19 @@ func (h *Handler) CreateTask(c *gin.Context) {
 		resp.BadRequest(c, "最多上传 4 张参考图")
 		return
 	}
-	if _, err := h.dao.GetPlatform(c.Request.Context(), req.PlatformID); err != nil {
+	productAsset, modelAsset, err := h.resolveTaskLibraryAssets(c.Request.Context(), uid, req.ProductAssetID, req.ModelAssetID)
+	if err != nil {
+		resp.BadRequest(c, err.Error())
+		return
+	}
+	platform, err := h.dao.GetPlatform(c.Request.Context(), req.PlatformID)
+	if err != nil {
 		resp.BadRequest(c, "平台不存在")
 		return
+	}
+	language := cleanLanguage(req.Language, nil)
+	if strings.TrimSpace(req.Language) == "" {
+		language = cleanLanguage(platform.Language, platform.FieldSchema.RawMessage())
 	}
 	if _, err := h.dao.GetPromptTemplate(c.Request.Context(), req.PromptTemplateID); err != nil {
 		resp.BadRequest(c, "提示词模板不存在")
@@ -121,15 +135,23 @@ func (h *Handler) CreateTask(c *gin.Context) {
 		resp.BadRequest(c, "风格模板不存在")
 		return
 	}
-	refBytes, _ := json.Marshal(req.ReferenceImages)
+	mergedRefs := h.mergeTaskReferenceImages(req.ReferenceImages, productAsset, modelAsset)
+	if len(mergedRefs) > maxReferenceImages {
+		mergedRefs = mergedRefs[:maxReferenceImages]
+	}
+	refBytes, _ := json.Marshal(mergedRefs)
+	requirement := buildRequirementWithLibraryAssets(req.Requirement, productAsset, modelAsset)
 	t := &Task{
 		TaskID:           NewTaskID(),
 		UserID:           uid,
 		PlatformID:       req.PlatformID,
 		PromptTemplateID: req.PromptTemplateID,
 		StyleTemplateID:  req.StyleTemplateID,
-		Requirement:      req.Requirement,
+		Language:         language,
+		Requirement:      requirement,
 		ReferenceImages:  RawJSON(refBytes),
+		ProductAssetID:   assetIDOrEmpty(productAsset),
+		ModelAssetID:     assetIDOrEmpty(modelAsset),
 		Status:           StatusQueued,
 		Progress:         0,
 	}
@@ -279,6 +301,50 @@ func (h *Handler) RetryAsset(c *gin.Context) {
 	resp.OK(c, gin.H{"task_id": taskID, "asset_id": assetID, "status": StatusQueued})
 }
 
+func (h *Handler) GenerateVideo(c *gin.Context) {
+	uid := middleware.UserID(c)
+	if uid == 0 {
+		resp.Unauthorized(c, "not logged in")
+		return
+	}
+	var req retryAssetReq
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		resp.BadRequest(c, "invalid request")
+		return
+	}
+	taskID := c.Param("id")
+	row, err := h.dao.GetTask(c.Request.Context(), taskID)
+	if err != nil {
+		writeErr(c, err)
+		return
+	}
+	if row.UserID != uid {
+		resp.NotFound(c, "任务不存在")
+		return
+	}
+	if row.Status == StatusQueued || row.Status == StatusRunning {
+		resp.BadRequest(c, "任务主流程正在生成中，请稍后再生成视频")
+		return
+	}
+	if row.Status == StatusCanceled {
+		resp.BadRequest(c, "任务已中断，不能生成视频")
+		return
+	}
+	if h.runner == nil || !h.runner.VideoEnabled() {
+		resp.BadRequest(c, "视频网关未启用或未配置密钥")
+		return
+	}
+	if latest, err := h.dao.GetLatestAssetByType(c.Request.Context(), taskID, AssetVideo); err == nil && (latest.Status == StatusQueued || latest.Status == StatusRunning) {
+		resp.BadRequest(c, "视频正在生成中")
+		return
+	} else if err != nil && !errors.Is(err, ErrNotFound) {
+		resp.Internal(c, err.Error())
+		return
+	}
+	h.runner.EnqueueVideo(taskID, truncate(strings.TrimSpace(req.Prompt), 1000))
+	resp.OK(c, gin.H{"task_id": taskID, "status": StatusQueued})
+}
+
 func (h *Handler) CancelTask(c *gin.Context) {
 	uid := middleware.UserID(c)
 	if uid == 0 {
@@ -307,6 +373,32 @@ func (h *Handler) CancelTask(c *gin.Context) {
 	resp.OK(c, v)
 }
 
+func (h *Handler) DeleteTask(c *gin.Context) {
+	uid := middleware.UserID(c)
+	if uid == 0 {
+		resp.Unauthorized(c, "not logged in")
+		return
+	}
+	taskID := c.Param("id")
+	row, err := h.dao.GetTask(c.Request.Context(), taskID)
+	if err != nil {
+		writeErr(c, err)
+		return
+	}
+	if row.UserID != uid {
+		resp.NotFound(c, "任务不存在")
+		return
+	}
+	if row.Status == StatusQueued || row.Status == StatusRunning {
+		_ = h.runner.CancelTask(c.Request.Context(), taskID)
+	}
+	if err := h.dao.DeleteTask(c.Request.Context(), taskID, uid); err != nil {
+		writeErr(c, err)
+		return
+	}
+	resp.OK(c, gin.H{"deleted": taskID, "deleted_by": uid})
+}
+
 func (h *Handler) taskView(ctx context.Context, taskID string, includeRefs bool) (gin.H, error) {
 	row, err := h.dao.GetTask(ctx, taskID)
 	if err != nil {
@@ -320,10 +412,30 @@ func (h *Handler) taskViewFromRow(ctx context.Context, row *TaskRow, includeRefs
 	if err != nil {
 		return nil, err
 	}
+	for i := range assets {
+		if assets[i].AssetType != AssetVideo || !isAssetWorking(assets[i].Status) || h.runner == nil {
+			continue
+		}
+		if err := h.runner.SyncVideoAsset(ctx, assets[i]); err == nil {
+			if fresh, getErr := h.dao.GetAsset(ctx, assets[i].ID); getErr == nil {
+				assets[i] = *fresh
+			}
+		}
+	}
+	latestAssets := latestAssetsByType(assets)
 	refreshAssetProxyURLs(assets)
+	refreshAssetProxyURLs(latestAssets)
 	outputHTML := row.OutputHTML
 	if out := outputFromTask(row); out.ProductTitle != "" {
-		outputHTML = buildHTML(out, assets)
+		outputHTML = buildHTML(out, latestAssets)
+		if canAutoCompleteTaskStatus(row.Status) && latestAssetsReady(latestAssets) {
+			outBytes, _ := json.Marshal(out)
+			if err := h.dao.MarkTaskSuccess(ctx, row.TaskID, outBytes, outputHTML); err == nil {
+				row.Status = StatusSuccess
+				row.Progress = 100
+				row.Error = ""
+			}
+		}
 	}
 	refCount := 0
 	if len(row.ReferenceImages) > 0 {
@@ -337,11 +449,15 @@ func (h *Handler) taskViewFromRow(ctx context.Context, row *TaskRow, includeRefs
 		"user_id":               row.UserID,
 		"platform_id":           row.PlatformID,
 		"platform_name":         row.PlatformName,
+		"language":              normalizeLanguageCode(row.Language),
+		"language_name":         platformLanguageName(row.Language),
 		"prompt_template_id":    row.PromptTemplateID,
 		"prompt_name":           row.PromptName,
 		"style_template_id":     row.StyleTemplateID,
 		"style_name":            row.StyleName,
 		"requirement":           row.Requirement,
+		"product_asset_id":      row.ProductAssetID,
+		"model_asset_id":        row.ModelAssetID,
 		"reference_image_count": refCount,
 		"status":                row.Status,
 		"progress":              row.Progress,
@@ -359,8 +475,47 @@ func (h *Handler) taskViewFromRow(ctx context.Context, row *TaskRow, includeRefs
 	return out, nil
 }
 
+func canAutoCompleteTaskStatus(status string) bool {
+	return status == StatusQueued || status == StatusRunning || status == StatusFailed
+}
+
+func latestAssetsReady(assets []Asset) bool {
+	if len(assets) == 0 {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, asset := range assets {
+		if asset.Status == StatusQueued || asset.Status == StatusRunning {
+			return false
+		}
+		if asset.Status == StatusFailed || asset.Status == StatusCanceled {
+			return false
+		}
+		if asset.Status == StatusSuccess && asset.URL != "" {
+			seen[asset.AssetType] = true
+		}
+	}
+	for _, assetType := range assetTypes {
+		if !seen[assetType] {
+			return false
+		}
+	}
+	if seen[AssetVideo] {
+		return true
+	}
+	for _, asset := range assets {
+		if asset.AssetType == AssetVideo {
+			return false
+		}
+	}
+	return true
+}
+
 func refreshAssetProxyURLs(assets []Asset) {
 	for i := range assets {
+		if assets[i].AssetType == AssetVideo {
+			continue
+		}
 		if assets[i].Status != StatusSuccess || assets[i].ImageTaskID == "" {
 			assets[i].URL = ""
 			continue
@@ -441,7 +596,7 @@ func (h *Handler) AdminCreatePrompt(c *gin.Context) {
 	if !bindAdmin(c, &req) {
 		return
 	}
-	row := &PromptTemplate{Code: cleanCode(req.Code), Name: strings.TrimSpace(req.Name), ContentPrompt: strings.TrimSpace(req.ContentPrompt), ImagePrompt: strings.TrimSpace(req.ImagePrompt), Remark: req.Remark, Enabled: boolDefault(req.Enabled, true)}
+	row := &PromptTemplate{Code: cleanCode(req.Code), Name: strings.TrimSpace(req.Name), ContentPrompt: strings.TrimSpace(req.ContentPrompt), ImagePrompt: strings.TrimSpace(req.ImagePrompt), VideoPrompt: strings.TrimSpace(req.VideoPrompt), Remark: req.Remark, Enabled: boolDefault(req.Enabled, true)}
 	if row.Code == "" || row.Name == "" || row.ContentPrompt == "" || row.ImagePrompt == "" {
 		resp.BadRequest(c, "code、name、content_prompt、image_prompt 必填")
 		return
@@ -463,7 +618,7 @@ func (h *Handler) AdminUpdatePrompt(c *gin.Context) {
 	if !bindAdmin(c, &req) {
 		return
 	}
-	row := &PromptTemplate{ID: id, Code: cleanCode(req.Code), Name: strings.TrimSpace(req.Name), ContentPrompt: strings.TrimSpace(req.ContentPrompt), ImagePrompt: strings.TrimSpace(req.ImagePrompt), Remark: req.Remark, Enabled: boolDefault(req.Enabled, true)}
+	row := &PromptTemplate{ID: id, Code: cleanCode(req.Code), Name: strings.TrimSpace(req.Name), ContentPrompt: strings.TrimSpace(req.ContentPrompt), ImagePrompt: strings.TrimSpace(req.ImagePrompt), VideoPrompt: strings.TrimSpace(req.VideoPrompt), Remark: req.Remark, Enabled: boolDefault(req.Enabled, true)}
 	if row.Code == "" || row.Name == "" || row.ContentPrompt == "" || row.ImagePrompt == "" {
 		resp.BadRequest(c, "code、name、content_prompt、image_prompt 必填")
 		return
@@ -608,6 +763,14 @@ func cleanLanguage(s string, fieldSchema json.RawMessage) string {
 	switch strings.ToLower(s) {
 	case "en", "en-us", "english":
 		return "en-US"
+	case "ja", "jp", "ja-jp", "japanese", "日本语", "日语":
+		return "ja-JP"
+	case "ko", "kr", "ko-kr", "korean", "韩语", "韓語":
+		return "ko-KR"
+	case "es", "es-es", "spanish", "西班牙语", "西班牙語":
+		return "es-ES"
+	case "th", "th-th", "thai", "泰语", "泰語":
+		return "th-TH"
 	case "zh", "zh-cn", "cn", "chinese", "中文":
 		return "zh-CN"
 	default:

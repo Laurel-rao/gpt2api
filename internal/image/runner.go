@@ -33,6 +33,7 @@ type Runner struct {
 	sched     *scheduler.Scheduler
 	dao       *DAO
 	quotaDecr QuotaDecrementor // 生图成功后立即扣减账号额度(可空,空时跳过)
+	aiZero    *AIZeroClient
 }
 
 // NewRunner 构造 Runner。
@@ -42,6 +43,10 @@ func NewRunner(sched *scheduler.Scheduler, dao *DAO) *Runner {
 
 // SetQuotaDecrementor 注入额度扣减器。
 func (r *Runner) SetQuotaDecrementor(qd QuotaDecrementor) { r.quotaDecr = qd }
+
+// SetAIZeroClient 注入 AI Zero Token/OpenAI-compatible 图片网关。
+// 注入后 Runner.Run 会优先使用该网关,不再走旧的 ChatGPT 账号池生图链路。
+func (r *Runner) SetAIZeroClient(c *AIZeroClient) { r.aiZero = c }
 
 // ReferenceImage 是图生图/编辑的一张参考图输入。
 // 只需要提供原始字节 + 可选的文件名,Runner 会在运行时调用 chatgpt Client 上传。
@@ -60,6 +65,10 @@ type RunOptions struct {
 	Prompt            string
 	N                 int              // 期望返回的图片张数;够数 Poll 就立即返回(速度优先)
 	Size              string           // 1024x1024 / 1792x1024 / 1024x1792,ChatGPT 通路会转成提示词约束
+	Quality           string           // AI Zero Token: low / medium / high / auto
+	Background        string           // AI Zero Token: transparent / opaque / auto
+	OutputFormat      string           // AI Zero Token: png / webp / jpeg
+	ResponseFormat    string           // AI Zero Token: url / b64_json
 	MaxAttempts       int              // 跨账号重试次数,仅用于无账号/限流等硬错误,默认 1
 	PerAttemptTimeout time.Duration    // 单次尝试总超时,默认 6min(覆盖 SSE + PollMaxWait + 缓冲)
 	PollMaxWait       time.Duration    // SSE 没直出时,轮询 conversation 的最长等待,默认 300s
@@ -104,6 +113,10 @@ func (r *Runner) Run(ctx context.Context, opt RunOptions) *RunResult {
 		opt.N = 1
 	}
 	opt.Prompt = appendImageSizeInstruction(opt.Prompt, opt.Size)
+
+	if r.aiZero != nil {
+		return r.runAIZero(ctx, opt, start)
+	}
 
 	result := &RunResult{Status: StatusFailed, ErrorCode: ErrUnknown}
 
@@ -306,9 +319,14 @@ func (r *Runner) runOnce(ctx context.Context, opt RunOptions, result *RunResult)
 		return false, ErrUnknown, fmt.Errorf("chatgpt client: %w", err)
 	}
 
+	bootCtx, cancelBoot := context.WithTimeout(ctx, 15*time.Second)
+	_ = cli.Bootstrap(bootCtx)
+	cancelBoot()
+
 	// 3) ChatRequirements + POW(新两步 sentinel 流程,solver 未配置时内部自动
-	// 回退到单步接口)
-	cr, err := cli.ChatRequirementsV2(ctx)
+	// 回退到单步接口)。这个端点会偶发 403,尤其在单账号池里不能只靠"换号";
+	// 先在同一账号内重新 Bootstrap + 短退避重试几次。
+	cr, err := r.chatRequirementsWithRetry(ctx, cli, opt.TaskID, lease.Account.ID)
 	if err != nil {
 		return false, r.classifyUpstream(err), err
 	}
@@ -345,6 +363,7 @@ func (r *Runner) runOnce(ctx context.Context, opt RunOptions, result *RunResult)
 
 	// 4.5) 图生图:上传参考图。任何一张失败都直接整体 fail(上游后续会对不上 attachment)。
 	var refs []*chatgpt.UploadedFile
+	uploadedRefIDs := map[string]struct{}{}
 	if len(opt.References) > 0 {
 		for idx, r0 := range opt.References {
 			upCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
@@ -360,6 +379,9 @@ func (r *Runner) runOnce(ctx context.Context, opt RunOptions, result *RunResult)
 				return false, ErrUpstream, fmt.Errorf("upload reference %d: %w", idx, err)
 			}
 			refs = append(refs, up)
+			if up.FileID != "" {
+				uploadedRefIDs[up.FileID] = struct{}{}
+			}
 		}
 		logger.L().Info("image runner references uploaded",
 			zap.String("task_id", opt.TaskID), zap.Int("count", len(refs)))
@@ -434,15 +456,34 @@ func (r *Runner) runOnce(ctx context.Context, opt RunOptions, result *RunResult)
 		zap.Strings("sse_sids_list", sseResult.SedimentIDs),
 	)
 
-	// 聚合 SSE 阶段的所有引用:file-service 优先,sediment 补位
+	// 聚合 SSE 阶段的所有引用:file-service 优先,sediment 补位。
+	// 图生图场景中 SSE 常会先吐出参考图/附件回显,这里完全不把 SSE 图片当结果,
+	// 后面只从 image_gen tool message 的 poll 结果里收真正生成图。
 	var fileRefs []string
-	fileRefs = append(fileRefs, sseResult.FileIDs...)
-	for _, s := range sseResult.SedimentIDs {
-		fileRefs = append(fileRefs, "sed:"+s)
+	if len(opt.References) == 0 {
+		for _, fid := range sseResult.FileIDs {
+			if _, isUploadedRef := uploadedRefIDs[fid]; isUploadedRef {
+				logger.L().Info("image runner skip uploaded reference file id",
+					zap.String("task_id", opt.TaskID), zap.String("file_id", fid))
+				continue
+			}
+			fileRefs = append(fileRefs, fid)
+		}
+		for _, s := range sseResult.SedimentIDs {
+			fileRefs = append(fileRefs, "sed:"+s)
+		}
+	} else if len(sseResult.FileIDs)+len(sseResult.SedimentIDs) > 0 {
+		logger.L().Info("image runner ignore SSE refs for img2img",
+			zap.String("task_id", opt.TaskID),
+			zap.Int("sse_fids", len(sseResult.FileIDs)),
+			zap.Int("sse_sids", len(sseResult.SedimentIDs)))
 	}
 
-	// SSE 已经把期望数量的图带回来了 → 直接下载,跳过 Poll,省时间
-	if len(fileRefs) >= opt.N {
+	// SSE 已经把期望数量的图带回来了 → 直接下载,跳过 Poll,省时间。
+	// 图生图场景中 SSE 可能先吐出上传参考图的 sediment 回显,不能把它当成
+	// 生成结果,否则前端会显示用户上传的原图;带参考图时继续 poll tool 消息。
+	needPoll := len(opt.References) > 0 || len(fileRefs) < opt.N
+	if !needPoll {
 		logger.L().Info("image runner enough refs from SSE, skip polling",
 			zap.String("task_id", opt.TaskID),
 			zap.Uint64("account_id", lease.Account.ID),
@@ -477,6 +518,11 @@ func (r *Runner) runOnce(ctx context.Context, opt RunOptions, result *RunResult)
 				seen[r] = struct{}{}
 			}
 			for _, f := range fids {
+				if _, isUploadedRef := uploadedRefIDs[f]; isUploadedRef {
+					logger.L().Info("image runner skip uploaded reference file id",
+						zap.String("task_id", opt.TaskID), zap.String("file_id", f))
+					continue
+				}
 				if _, ok := seen[f]; ok {
 					continue
 				}
@@ -547,6 +593,50 @@ func (r *Runner) runOnce(ctx context.Context, opt RunOptions, result *RunResult)
 	result.SignedURLs = signedURLs
 	result.ContentTypes = contentTypes
 	return true, "", nil
+}
+
+func (r *Runner) chatRequirementsWithRetry(ctx context.Context, cli *chatgpt.Client, taskID string, accountID uint64) (*chatgpt.ChatRequirementsResp, error) {
+	const maxReqAttempts = 3
+	var lastErr error
+	for i := 1; i <= maxReqAttempts; i++ {
+		cr, err := cli.ChatRequirementsV2(ctx)
+		if err == nil {
+			if i > 1 {
+				logger.L().Info("image chat-requirements retry ok",
+					zap.String("task_id", taskID),
+					zap.Uint64("account_id", accountID),
+					zap.Int("attempt", i))
+			}
+			return cr, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		code := r.classifyUpstream(err)
+		if code != ErrAuthRequired && code != ErrNetworkTransient {
+			return nil, err
+		}
+		if i >= maxReqAttempts {
+			break
+		}
+		logger.L().Warn("image chat-requirements retry",
+			zap.String("task_id", taskID),
+			zap.Uint64("account_id", accountID),
+			zap.String("reason", code),
+			zap.Int("attempt", i),
+			zap.Error(err))
+		bootCtx, cancelBoot := context.WithTimeout(ctx, 15*time.Second)
+		_ = cli.Bootstrap(bootCtx)
+		cancelBoot()
+		wait := time.Duration(i) * time.Second
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(wait):
+		}
+	}
+	return nil, lastErr
 }
 
 // classifyUpstream 把上游错误转成内部 error code。

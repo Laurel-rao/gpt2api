@@ -2,16 +2,16 @@
 //
 // 完整链路(和文字聊天共用 f/conversation,只通过 system_hints=["picture_v2"] 区分):
 //
-//	0. (可选) GET /                              → 拿 oai-did cookie
-//	1. POST /backend-api/f/conversation/prepare      → conduit_token
-//	2. POST /backend-api/sentinel/chat-requirements → chat_token + 可选 POW 挑战
-//	3. POST /backend-api/f/conversation (SSE)         → 边解析边收 file-service://
-//	4. SSE 没直出 file-service 时轮询 GET /backend-api/conversation/{id}
-//	   任何一条 tool 消息出现 file-service / sediment asset_pointer 即算成功,
-//	   够 N 张立即返回;IMG2 已正式上线,不再做"灰度命中判定"。
-//	5. GET /backend-api/files/{fid}/download                   → 签名 URL(file-service)
-//	   GET /backend-api/conversation/{cid}/attachment/{sid}/download → 签名 URL(sediment)
-//	6. GET 签名 URL → 图片字节
+//  0. (可选) GET /                              → 拿 oai-did cookie
+//  1. POST /backend-api/f/conversation/prepare      → conduit_token
+//  2. POST /backend-api/sentinel/chat-requirements → chat_token + 可选 POW 挑战
+//  3. POST /backend-api/f/conversation (SSE)         → 边解析边收 file-service://
+//  4. SSE 没直出 file-service 时轮询 GET /backend-api/conversation/{id}
+//     任何一条 tool 消息出现 file-service / sediment asset_pointer 即算成功,
+//     够 N 张立即返回;IMG2 已正式上线,不再做"灰度命中判定"。
+//  5. GET /backend-api/files/{fid}/download                   → 签名 URL(file-service)
+//     GET /backend-api/conversation/{cid}/attachment/{sid}/download → 签名 URL(sediment)
+//  6. GET 签名 URL → 图片字节
 //
 // 注意:不要调用 /backend-api/conversation/init——这是老客户端路径,在免费账号上会
 // 直接 404 让整条链路失败,上游把 picture_v2 路由完全交给 f/conversation 的 payload。
@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 // ImageConvOpts 是图像会话的入参。
@@ -373,14 +374,14 @@ func ParseImageSSE(stream <-chan SSEEvent) ImageSSEResult {
 
 // ImageToolMsg 是 conversation.mapping 里一条 IMG2 tool 消息的关键字段。
 type ImageToolMsg struct {
-	MessageID    string
-	CreateTime   float64
-	ModelSlug    string
-	Recipient    string
-	AuthorName   string
+	MessageID     string
+	CreateTime    float64
+	ModelSlug     string
+	Recipient     string
+	AuthorName    string
 	ImageGenTitle string
-	FileIDs      []string // file-service
-	SedimentIDs  []string // sediment
+	FileIDs       []string // file-service
+	SedimentIDs   []string // sediment
 }
 
 // GetConversationMapping 读取会话全量 mapping(轮询用)。
@@ -427,25 +428,16 @@ func ExtractImageToolMsgs(mapping map[string]interface{}) []ImageToolMsg {
 		author, _ := msg["author"].(map[string]interface{})
 		meta, _ := msg["metadata"].(map[string]interface{})
 		content, _ := msg["content"].(map[string]interface{})
-		if author == nil || meta == nil || content == nil {
+		if author == nil {
 			continue
 		}
-		if s, _ := author["role"].(string); s != "tool" {
+		role, _ := author["role"].(string)
+		if role != "tool" && role != "assistant" {
 			continue
 		}
-		if s, _ := meta["async_task_type"].(string); s != "image_gen" {
-			continue
-		}
-		if s, _ := content["content_type"].(string); s != "multimodal_text" {
-			continue
-		}
-
 		tm := ImageToolMsg{MessageID: mid}
 		if v, ok := msg["create_time"].(float64); ok {
 			tm.CreateTime = v
-		}
-		if v, ok := meta["model_slug"].(string); ok {
-			tm.ModelSlug = v
 		}
 		if v, ok := msg["recipient"].(string); ok {
 			tm.Recipient = v
@@ -453,11 +445,6 @@ func ExtractImageToolMsgs(mapping map[string]interface{}) []ImageToolMsg {
 		if v, ok := author["name"].(string); ok {
 			tm.AuthorName = v
 		}
-		if v, ok := meta["image_gen_title"].(string); ok {
-			tm.ImageGenTitle = v
-		}
-
-		parts, _ := content["parts"].([]interface{})
 		seenF := map[string]struct{}{}
 		seenS := map[string]struct{}{}
 		extractAsset := func(text string) {
@@ -474,20 +461,47 @@ func ExtractImageToolMsgs(mapping map[string]interface{}) []ImageToolMsg {
 				}
 			}
 		}
-		for _, p := range parts {
-			switch v := p.(type) {
-			case map[string]interface{}:
-				if aid, _ := v["asset_pointer"].(string); aid != "" {
-					extractAsset(aid)
-				}
-			case string:
-				extractAsset(v)
+		if meta != nil {
+			if v, ok := meta["model_slug"].(string); ok {
+				tm.ModelSlug = v
 			}
+			if v, ok := meta["image_gen_title"].(string); ok {
+				tm.ImageGenTitle = v
+			}
+		}
+
+		// 上游 mapping 结构经常变:有时图片在 tool 的 multimodal_text.parts,
+		// 有时落在 assistant 消息的嵌套对象里。这里递归扫描非 user 消息里的
+		// file-service:// / sediment:// 引用,但仍跳过 user 消息,避免把上传参考图
+		// 当成生成结果。
+		walkAssetRefs(content, extractAsset)
+		if len(tm.FileIDs)+len(tm.SedimentIDs) == 0 {
+			walkAssetRefs(meta, extractAsset)
+		}
+		if len(tm.FileIDs)+len(tm.SedimentIDs) == 0 {
+			continue
 		}
 		out = append(out, tm)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreateTime < out[j].CreateTime })
 	return out
+}
+
+func walkAssetRefs(v interface{}, visit func(string)) {
+	switch x := v.(type) {
+	case nil:
+		return
+	case string:
+		visit(x)
+	case []interface{}:
+		for _, it := range x {
+			walkAssetRefs(it, visit)
+		}
+	case map[string]interface{}:
+		for _, it := range x {
+			walkAssetRefs(it, visit)
+		}
+	}
 }
 
 // PollOpts 控制 PollConversationForImages 的等待策略。
@@ -533,11 +547,13 @@ func (c *Client) PollConversationForImages(ctx context.Context, convID string, o
 
 	// 累计全程看到的 fid/sid,循环外可用(超时兜底:有图就算成功)
 	var (
-		allFile        []string
-		allSed         []string
-		seenFile       = map[string]struct{}{}
-		seenSed        = map[string]struct{}{}
-		consecutive429 int
+		allFile         []string
+		allSed          []string
+		seenFile        = map[string]struct{}{}
+		seenSed         = map[string]struct{}{}
+		consecutive429  int
+		lastMappingSize int
+		lastToolMsgs    int
 	)
 
 	for time.Now().Before(deadline) {
@@ -561,8 +577,10 @@ func (c *Client) PollConversationForImages(ctx context.Context, convID string, o
 			continue
 		}
 		consecutive429 = 0
+		lastMappingSize = len(mapping)
 
 		msgs := ExtractImageToolMsgs(mapping)
+		lastToolMsgs = len(msgs)
 		// baseline diff:只看本回合新增 tool 消息
 		var newMsgs []ImageToolMsg
 		if len(baseline) > 0 {
@@ -603,6 +621,14 @@ func (c *Client) PollConversationForImages(ctx context.Context, convID string, o
 	// 超时兜底:只要拿到过至少 1 张,就算成功(速度优先,不等齐 N)
 	if len(allFile)+len(allSed) > 0 {
 		return PollStatusSuccess, allFile, allSed
+	}
+	if logger := loggerL(); logger != nil {
+		logger.Warn("image poll timeout without refs",
+			zap.String("conv_id", convID),
+			zap.Int("mapping_nodes", lastMappingSize),
+			zap.Int("image_msgs", lastToolMsgs),
+			zap.Int("expected", opt.ExpectedN),
+			zap.Duration("max_wait", opt.MaxWait))
 	}
 	return PollStatusTimeout, nil, nil
 }

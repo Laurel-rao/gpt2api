@@ -2,8 +2,10 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
 import {
+  ECOMMERCE_LANGUAGES,
   createEcommerceConfig,
   deleteEcommerceConfig,
+  ecommerceLanguageName,
   listEcommerceConfig,
   updateEcommerceConfig,
   type ConfigKind,
@@ -34,6 +36,7 @@ const form = reactive<any>({
   field_schema_text: '',
   content_prompt: '',
   image_prompt: '',
+  video_prompt: '',
   style_prompt: '',
   layout_config_text: '',
   remark: '',
@@ -48,6 +51,7 @@ function resetForm() {
     field_schema_text: '',
     content_prompt: '',
     image_prompt: '',
+    video_prompt: '',
     style_prompt: '',
     layout_config_text: '',
     remark: '',
@@ -82,6 +86,7 @@ function openEdit(row: any) {
   form.field_schema_text = row.field_schema ? JSON.stringify(row.field_schema, null, 2) : ''
   form.content_prompt = row.content_prompt || ''
   form.image_prompt = row.image_prompt || ''
+  form.video_prompt = row.video_prompt || ''
   form.style_prompt = row.style_prompt || ''
   form.layout_config_text = row.layout_config ? JSON.stringify(row.layout_config, null, 2) : ''
   dlgVisible.value = true
@@ -110,6 +115,7 @@ function buildPayload() {
   } else if (isPrompt.value) {
     base.content_prompt = form.content_prompt.trim()
     base.image_prompt = form.image_prompt.trim()
+    base.video_prompt = form.video_prompt.trim()
   } else if (isStyle.value) {
     base.style_prompt = form.style_prompt.trim()
     base.layout_config = parseJSON(form.layout_config_text, '布局配置')
@@ -184,14 +190,17 @@ watch(() => props.kind, () => load(), { immediate: true })
           <el-table-column prop="code" label="编码" min-width="150">
             <template #default="{ row }"><code>{{ row.code }}</code></template>
           </el-table-column>
-          <el-table-column v-if="isPlatform" label="生成语言" width="120">
-            <template #default="{ row }">{{ row.language === 'en-US' ? '英文' : '中文' }}</template>
+          <el-table-column v-if="isPlatform" label="默认语言" width="120">
+            <template #default="{ row }">{{ ecommerceLanguageName(row.language) }}</template>
           </el-table-column>
           <el-table-column v-if="isPrompt" label="内容提示词" min-width="240" show-overflow-tooltip>
             <template #default="{ row }">{{ row.content_prompt }}</template>
           </el-table-column>
           <el-table-column v-if="isPrompt" label="图片提示词" min-width="240" show-overflow-tooltip>
             <template #default="{ row }">{{ row.image_prompt }}</template>
+          </el-table-column>
+          <el-table-column v-if="isPrompt" label="视频提示词" min-width="260" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.video_prompt }}</template>
           </el-table-column>
           <el-table-column v-if="isStyle" label="风格提示词" min-width="260" show-overflow-tooltip>
             <template #default="{ row }">{{ row.style_prompt }}</template>
@@ -222,10 +231,9 @@ watch(() => props.kind, () => load(), { immediate: true })
             <el-input v-model="form.name" placeholder="显示名称" />
           </el-form-item>
         </div>
-        <el-form-item v-if="isPlatform" label="生成语言 / 字段配置 JSON">
-          <el-select v-model="form.language" style="margin-bottom:10px" placeholder="选择生成语言">
-            <el-option label="中文（适合淘宝/京东/抖音等）" value="zh-CN" />
-            <el-option label="英文（适合 Amazon/Shopee/Shopify 等）" value="en-US" />
+        <el-form-item v-if="isPlatform" label="默认生成语言 / 字段配置 JSON">
+          <el-select v-model="form.language" style="margin-bottom:10px" placeholder="选择默认生成语言">
+            <el-option v-for="lang in ECOMMERCE_LANGUAGES" :key="lang.value" :label="lang.label" :value="lang.value" />
           </el-select>
           <el-input v-model="form.field_schema_text" type="textarea" :rows="5" placeholder='{"title_max":60}' />
         </el-form-item>
@@ -235,6 +243,9 @@ watch(() => props.kind, () => load(), { immediate: true })
           </el-form-item>
           <el-form-item label="图片提示词">
             <el-input v-model="form.image_prompt" type="textarea" :rows="5" />
+          </el-form-item>
+          <el-form-item label="视频提示词">
+            <el-input v-model="form.video_prompt" type="textarea" :rows="6" />
           </el-form-item>
         </template>
         <template v-if="isStyle">

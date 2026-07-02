@@ -15,8 +15,8 @@ import "strings"
 // 默认值仅在 DB 里缺失时使用(migration 已种子化,通常不会用到)。
 type KeyDef struct {
 	Key      string
-	Type     string // "string" | "bool" | "int" | "float" | "email" | "url"
-	Category string // "site" | "auth" | "defaults" | "gateway" | "billing" | "mail"
+	Type     string // "string" | "password" | "bool" | "int" | "float" | "email" | "url"
+	Category string // "site" | "auth" | "defaults" | "gateway" | "imagegen" | "billing" | "mail"
 	Default  string
 	Label    string
 	Desc     string
@@ -63,6 +63,7 @@ const (
 	GatewayRetryOnFailure       = "gateway.retry_on_failure"
 	GatewayRetryMax             = "gateway.retry_max"
 	GatewayDispatchQueueWaitSec = "gateway.dispatch_queue_wait_sec"
+	GatewayAccountConcurrency   = "gateway.account_concurrency"
 
 	// 代理管理(健康探测)
 	ProxyProbeEnabled     = "proxy.probe_enabled"
@@ -79,6 +80,37 @@ const (
 	AccountQuotaProbeEnabled     = "account.quota_probe_enabled"
 	AccountQuotaProbeIntervalSec = "account.quota_probe_interval_sec"
 	AccountDefaultClientID       = "account.default_client_id"
+
+	// AI Zero Token 生图网关
+	ImageGenEnabled        = "imagegen.enabled"
+	ImageGenAccount        = "imagegen.account"
+	ImageGenAPIKey         = "imagegen.api_key"
+	ImageGenBaseURL        = "imagegen.base_url"
+	ImageGenQuality        = "imagegen.quality"
+	ImageGenBackground     = "imagegen.background"
+	ImageGenOutputFormat   = "imagegen.output_format"
+	ImageGenResponseFormat = "imagegen.response_format"
+	ImageGenTimeoutSec     = "imagegen.timeout_sec"
+
+	// AI Zero Token 文本网关
+	TextGenEnabled    = "textgen.enabled"
+	TextGenAccount    = "textgen.account"
+	TextGenAPIKey     = "textgen.api_key"
+	TextGenBaseURL    = "textgen.base_url"
+	TextGenModel      = "textgen.model"
+	TextGenTimeoutSec = "textgen.timeout_sec"
+
+	// AI Gen Platform 视频网关
+	VideoGenEnabled       = "videogen.enabled"
+	VideoGenAccount       = "videogen.account"
+	VideoGenAPIKey        = "videogen.api_key"
+	VideoGenBaseURL       = "videogen.base_url"
+	VideoGenModel         = "videogen.model"
+	VideoGenTimeoutSec    = "videogen.timeout_sec"
+	VideoGenDurationSec   = "videogen.duration_sec"
+	VideoGenAspectRatio   = "videogen.aspect_ratio"
+	VideoGenResolution    = "videogen.resolution"
+	VideoGenGenerateAudio = "videogen.generate_audio"
 
 	// 计费与充值
 	BillingCreditPerCNY        = "billing.credit_per_cny"
@@ -133,6 +165,7 @@ var Defs = []KeyDef{
 	{Key: GatewayRetryOnFailure, Type: "bool", Category: "gateway", Default: "true", Label: "失败自动重试", Desc: "遇到可恢复错误时切换账号重试"},
 	{Key: GatewayRetryMax, Type: "int", Category: "gateway", Default: "1", Label: "最大重试次数", Desc: "0~3"},
 	{Key: GatewayDispatchQueueWaitSec, Type: "int", Category: "gateway", Default: "120", Label: "账号排队等待上限(秒)", Desc: "并发大于账号数时,请求会在队列里等空闲账号;超过此秒数仍拿不到才返回 no_available_account。0=不排队,立即失败"},
+	{Key: GatewayAccountConcurrency, Type: "int", Category: "gateway", Default: "3", Label: "单号并发槽位", Desc: "同一个 ChatGPT 账号允许同时跑的请求数(1~10),保存后立即对后续调度生效"},
 
 	// ---------- 代理管理(健康探测) ----------
 	{Key: ProxyProbeEnabled, Type: "bool", Category: "gateway", Default: "true", Label: "代理探测开关", Desc: "开启后后台定时对启用的代理做连通性探测,更新健康分"},
@@ -149,6 +182,37 @@ var Defs = []KeyDef{
 	{Key: AccountQuotaProbeEnabled, Type: "bool", Category: "gateway", Default: "true", Label: "账号额度自动探测", Desc: "后台定期查询账号的图片剩余额度"},
 	{Key: AccountQuotaProbeIntervalSec, Type: "int", Category: "gateway", Default: "18000", Label: "额度探测最小间隔(秒)", Desc: "同一账号两次探测的最小间隔,默认 **18000=5 小时**;当账号剩余额度=0 且已过重置时间时,会忽略此间隔立即补探一次,以第一时间反映真实恢复额度"},
 	{Key: AccountDefaultClientID, Type: "string", Category: "gateway", Default: "app_EMoamEEZ73f0CkXaXp7hrann", Label: "导入账号默认 client_id", Desc: "JSON 未指定时使用的 OAuth client_id"},
+
+	// ---------- AI Zero Token 生图网关 ----------
+	{Key: ImageGenEnabled, Type: "bool", Category: "imagegen", Default: "false", Label: "启用生图网关", Desc: "开启后所有生图/图生图/电商图片都走此网关"},
+	{Key: ImageGenAccount, Type: "string", Category: "imagegen", Default: "", Label: "账号", Desc: "用于后台识别这组 AI Zero Token 配置,不参与接口鉴权"},
+	{Key: ImageGenAPIKey, Type: "password", Category: "imagegen", Default: "", Label: "密钥", Desc: "AI Zero Token API Key;保存后仅显示脱敏值,留空保存可清除"},
+	{Key: ImageGenBaseURL, Type: "url", Category: "imagegen", Default: "http://43.134.21.160/v1", Label: "Base URL", Desc: "OpenAI 兼容 /v1 地址"},
+	{Key: ImageGenQuality, Type: "string", Category: "imagegen", Default: "low", Label: "默认质量", Desc: "low / medium / high / auto;请求未指定时使用"},
+	{Key: ImageGenBackground, Type: "string", Category: "imagegen", Default: "auto", Label: "默认背景", Desc: "transparent / opaque / auto;请求未指定时使用"},
+	{Key: ImageGenOutputFormat, Type: "string", Category: "imagegen", Default: "png", Label: "输出格式", Desc: "png / webp / jpeg;请求未指定时使用"},
+	{Key: ImageGenResponseFormat, Type: "string", Category: "imagegen", Default: "b64_json", Label: "响应格式", Desc: "b64_json;当前网关要求返回 base64 图片"},
+	{Key: ImageGenTimeoutSec, Type: "int", Category: "imagegen", Default: "420", Label: "超时(秒)", Desc: "同步生图等待上限"},
+
+	// ---------- AI Zero Token 文本网关 ----------
+	{Key: TextGenEnabled, Type: "bool", Category: "textgen", Default: "false", Label: "启用文本网关", Desc: "开启后聊天接口和电商文案生成优先走 AI Zero Token 文本网关"},
+	{Key: TextGenAccount, Type: "string", Category: "textgen", Default: "", Label: "账号", Desc: "用于后台识别这组 AI Zero Token 文本配置,不参与接口鉴权"},
+	{Key: TextGenAPIKey, Type: "password", Category: "textgen", Default: "", Label: "密钥", Desc: "AI Zero Token API Key;保存后仅显示脱敏值,留空保存可清除"},
+	{Key: TextGenBaseURL, Type: "url", Category: "textgen", Default: "http://43.134.21.160/v1", Label: "Base URL", Desc: "OpenAI 兼容 /v1 地址"},
+	{Key: TextGenModel, Type: "string", Category: "textgen", Default: "gpt-5.4", Label: "默认模型", Desc: "当前网关支持 gpt-5.5 / gpt-5.4 / gpt-5.4-mini / gpt-5.3-codex-spark"},
+	{Key: TextGenTimeoutSec, Type: "int", Category: "textgen", Default: "120", Label: "超时(秒)", Desc: "文本生成等待上限"},
+
+	// ---------- AI Gen Platform 视频网关 ----------
+	{Key: VideoGenEnabled, Type: "bool", Category: "videogen", Default: "false", Label: "启用视频网关", Desc: "开启后电商任务会额外生成商品短视频"},
+	{Key: VideoGenAccount, Type: "string", Category: "videogen", Default: "", Label: "账号", Desc: "用于后台识别这组 AI Gen Platform 配置,不参与接口鉴权"},
+	{Key: VideoGenAPIKey, Type: "password", Category: "videogen", Default: "", Label: "密钥", Desc: "AI Gen Platform API Key;保存后仅显示脱敏值,留空保存可清除"},
+	{Key: VideoGenBaseURL, Type: "url", Category: "videogen", Default: "http://app.echoon.top/api/v1", Label: "Base URL", Desc: "AI Gen Platform API 根地址"},
+	{Key: VideoGenModel, Type: "string", Category: "videogen", Default: "0e37fa2d-72b3-483a-81b4-ad595cd147c7", Label: "默认视频模型", Desc: "默认使用 Seedance-2.0-D-V；接口要求保存模型 ID"},
+	{Key: VideoGenTimeoutSec, Type: "int", Category: "videogen", Default: "900", Label: "超时(秒)", Desc: "视频任务轮询等待上限"},
+	{Key: VideoGenDurationSec, Type: "int", Category: "videogen", Default: "5", Label: "默认时长(秒)", Desc: "电商短视频默认生成时长"},
+	{Key: VideoGenAspectRatio, Type: "string", Category: "videogen", Default: "16:9", Label: "默认画幅", Desc: "如 16:9 / 9:16 / 1:1"},
+	{Key: VideoGenResolution, Type: "string", Category: "videogen", Default: "720p", Label: "默认分辨率", Desc: "如 720p / 1080p，取决于模型支持"},
+	{Key: VideoGenGenerateAudio, Type: "bool", Category: "videogen", Default: "false", Label: "生成音频", Desc: "开启后请求视频模型同时生成音频，取决于模型支持"},
 
 	// ---------- 计费与充值 ----------
 	{Key: BillingCreditPerCNY, Type: "int", Category: "billing", Default: "10000", Label: "1 元 = N 积分·厘", Desc: "展示用换算;默认 10000"},

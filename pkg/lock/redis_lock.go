@@ -11,7 +11,7 @@ import (
 // ErrNotAcquired 表示未抢到锁(资源被占用)。
 var ErrNotAcquired = errors.New("lock: not acquired")
 
-// RedisLock 是一个简单的 Redis 分布式锁,用于账号池「一号一锁」。
+// RedisLock 是一个简单的 Redis 分布式锁,用于账号池租约槽位。
 // 通过 SET NX + token 实现原子获取与安全释放。
 type RedisLock struct {
 	client *redis.Client

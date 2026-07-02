@@ -6,12 +6,17 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 )
 
-// imageProxySecret 进程级随机密钥,用于 HMAC 签名图片 URL。
-// 进程重启后旧的签名 URL 全部失效,这是故意的(防止长期有效的 URL 泄漏)。
-var imageProxySecret []byte
+// imageProxySecret 用于 HMAC 签名图片 URL。
+// 启动阶段应调用 SetProxySecret 注入稳定密钥;未注入时退回进程级随机密钥。
+var (
+	imageProxySecretMu sync.RWMutex
+	imageProxySecret   []byte
+)
 
 func init() {
 	imageProxySecret = make([]byte, 32)
@@ -20,6 +25,19 @@ func init() {
 			imageProxySecret[i] = byte(i*31 + 7)
 		}
 	}
+}
+
+// SetProxySecret 注入稳定的图片代理签名密钥。
+// seed 不直接作为 HMAC key 使用,统一 SHA-256 后得到固定长度密钥。
+func SetProxySecret(seed string) {
+	seed = strings.TrimSpace(seed)
+	if seed == "" {
+		return
+	}
+	sum := sha256.Sum256([]byte(seed))
+	imageProxySecretMu.Lock()
+	imageProxySecret = sum[:]
+	imageProxySecretMu.Unlock()
 }
 
 // BuildProxyURL 生成代理 URL。返回绝对 path(不含 host)。
@@ -38,7 +56,10 @@ func ComputeImgSig(taskID string, idx int, expMs int64) string {
 }
 
 func computeImgSig(taskID string, idx int, expMs int64) string {
-	mac := hmac.New(sha256.New, imageProxySecret)
+	imageProxySecretMu.RLock()
+	secret := imageProxySecret
+	imageProxySecretMu.RUnlock()
+	mac := hmac.New(sha256.New, secret)
 	fmt.Fprintf(mac, "%s|%d|%d", taskID, idx, expMs)
 	return hex.EncodeToString(mac.Sum(nil))[:24]
 }

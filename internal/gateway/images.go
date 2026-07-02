@@ -65,7 +65,9 @@ type ImageGenRequest struct {
 	Size            string   `json:"size"`
 	Quality         string   `json:"quality,omitempty"`
 	Style           string   `json:"style,omitempty"`
-	ResponseFormat  string   `json:"response_format,omitempty"` // url | b64_json(暂仅支持 url)
+	ResponseFormat  string   `json:"response_format,omitempty"` // url | b64_json; AI Zero Token 网关要求 b64_json
+	Background      string   `json:"background,omitempty"`      // transparent | opaque | auto
+	OutputFormat    string   `json:"output_format,omitempty"`   // png | webp | jpeg
 	User            string   `json:"user,omitempty"`
 	ReferenceImages []string `json:"reference_images,omitempty"` // 非标准扩展,见注释
 	// Upscale 非标准扩展:控制"本服务对原图做本地高清放大"的目标档位。
@@ -184,14 +186,6 @@ func (h *ImagesHandler) ImageGenerations(c *gin.Context) {
 		}
 	}
 
-	// 若本地模型配置了外置渠道(OpenAI DALL·E / Gemini imagen 等),优先走渠道。
-	// 参考图场景(reference_images)仍走原 ChatGPT 账号池 Runner。
-	if h.Channels != nil {
-		if handled := h.dispatchImageToChannel(c, ak, m, &req, rec, ratio); handled {
-			return
-		}
-	}
-
 	// 3) 预扣(图像按定价,est = actual)
 	cost := billing.ComputeImageCost(m, req.N, ratio)
 	if cost > 0 {
@@ -255,23 +249,23 @@ func (h *ImagesHandler) ImageGenerations(c *gin.Context) {
 	runCtx, cancel := context.WithTimeout(c.Request.Context(), 7*time.Minute)
 	defer cancel()
 
-	// 带参考图时,多轮重试没什么意义(反而会重复上传参考图),只留 1 次尝试。
 	maxAttempts := 2
-	if len(refs) > 0 {
-		maxAttempts = 1
-	}
 
 	res := h.Runner.Run(runCtx, image.RunOptions{
-		TaskID:        taskID,
-		UserID:        ak.UserID,
-		KeyID:         ak.ID,
-		ModelID:       m.ID,
-		UpstreamModel: m.UpstreamModelSlug,
-		Prompt:        maybeAppendClaritySuffix(req.Prompt),
-		N:             req.N,
-		Size:          req.Size,
-		MaxAttempts:   maxAttempts,
-		References:    refs,
+		TaskID:         taskID,
+		UserID:         ak.UserID,
+		KeyID:          ak.ID,
+		ModelID:        m.ID,
+		UpstreamModel:  m.UpstreamModelSlug,
+		Prompt:         maybeAppendClaritySuffix(req.Prompt),
+		N:              req.N,
+		Size:           req.Size,
+		Quality:        req.Quality,
+		Background:     req.Background,
+		OutputFormat:   req.OutputFormat,
+		ResponseFormat: req.ResponseFormat,
+		MaxAttempts:    maxAttempts,
+		References:     refs,
 	})
 	rec.AccountID = res.AccountID
 
@@ -466,15 +460,16 @@ func (h *ImagesHandler) handleChatAsImage(c *gin.Context, rec *usage.Log, ak *ap
 	defer cancel()
 
 	res := h.Runner.Run(runCtx, image.RunOptions{
-		TaskID:        taskID,
-		UserID:        ak.UserID,
-		KeyID:         ak.ID,
-		ModelID:       m.ID,
-		UpstreamModel: m.UpstreamModelSlug,
-		Prompt:        maybeAppendClaritySuffix(prompt),
-		N:             1,
-		Size:          "1024x1024",
-		MaxAttempts:   2,
+		TaskID:         taskID,
+		UserID:         ak.UserID,
+		KeyID:          ak.ID,
+		ModelID:        m.ID,
+		UpstreamModel:  m.UpstreamModelSlug,
+		Prompt:         maybeAppendClaritySuffix(prompt),
+		N:              1,
+		Size:           "1024x1024",
+		ResponseFormat: "b64_json",
+		MaxAttempts:    2,
 	})
 	rec.AccountID = res.AccountID
 
@@ -600,7 +595,7 @@ const claritySuffix = "\n\nclean readable Chinese text, prioritize text clarity 
 //	model            (string)    模型 slug,默认 gpt-image-2
 //	n                (int)       默认 1
 //	size             (string)    默认 1024x1024
-//	response_format  (string)    url | b64_json,当前仅 url
+//	response_format  (string)    url | b64_json; AI Zero Token 网关要求 b64_json
 //	user             (string)
 //
 // 实际走的上游协议和 /v1/images/generations + reference_images 完全相同。
@@ -638,6 +633,10 @@ func (h *ImagesHandler) ImageEdits(c *gin.Context) {
 	if size == "" {
 		size = "1024x1024"
 	}
+	quality := c.Request.FormValue("quality")
+	background := c.Request.FormValue("background")
+	outputFormat := c.Request.FormValue("output_format")
+	responseFormat := c.Request.FormValue("response_format")
 	upscale := image.ValidateUpscale(c.Request.FormValue("upscale"))
 
 	// 主图 + 可能的多张
@@ -781,16 +780,20 @@ func (h *ImagesHandler) ImageEdits(c *gin.Context) {
 	defer cancel()
 
 	res := h.Runner.Run(runCtx, image.RunOptions{
-		TaskID:        taskID,
-		UserID:        ak.UserID,
-		KeyID:         ak.ID,
-		ModelID:       m.ID,
-		UpstreamModel: m.UpstreamModelSlug,
-		Prompt:        maybeAppendClaritySuffix(prompt),
-		N:             n,
-		Size:          size,
-		MaxAttempts:   1, // 带参考图时只跑一次,避免重复上传
-		References:    refs,
+		TaskID:         taskID,
+		UserID:         ak.UserID,
+		KeyID:          ak.ID,
+		ModelID:        m.ID,
+		UpstreamModel:  m.UpstreamModelSlug,
+		Prompt:         maybeAppendClaritySuffix(prompt),
+		N:              n,
+		Size:           size,
+		Quality:        quality,
+		Background:     background,
+		OutputFormat:   outputFormat,
+		ResponseFormat: responseFormat,
+		MaxAttempts:    2,
+		References:     refs,
 	})
 	rec.AccountID = res.AccountID
 

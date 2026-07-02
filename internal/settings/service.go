@@ -275,6 +275,17 @@ func (s *Service) DispatchQueueWaitSec() int {
 	return n
 }
 
+func (s *Service) AccountConcurrency() int {
+	n := int(s.GetInt(GatewayAccountConcurrency))
+	if n <= 0 {
+		return 3
+	}
+	if n > 10 {
+		return 10
+	}
+	return n
+}
+
 // -- proxy probe --
 func (s *Service) ProbeEnabled() bool { return s.GetBool(ProxyProbeEnabled) }
 func (s *Service) ProbeIntervalSec() int {
@@ -346,6 +357,99 @@ func (s *Service) AccountQuotaProbeIntervalSec() int {
 func (s *Service) AccountDefaultClientID() string {
 	return firstNonEmpty(s.GetString(AccountDefaultClientID), "app_EMoamEEZ73f0CkXaXp7hrann")
 }
+
+// -- imagegen --
+func (s *Service) ImageGenEnabled() bool { return s.GetBool(ImageGenEnabled) }
+func (s *Service) ImageGenAccount() string {
+	return strings.TrimSpace(s.GetString(ImageGenAccount))
+}
+func (s *Service) ImageGenAPIKey() string {
+	return strings.TrimSpace(s.GetString(ImageGenAPIKey))
+}
+func (s *Service) ImageGenBaseURL() string {
+	return firstNonEmpty(strings.TrimSpace(s.GetString(ImageGenBaseURL)), "http://43.134.21.160/v1")
+}
+func (s *Service) ImageGenQuality() string {
+	return firstNonEmpty(strings.TrimSpace(s.GetString(ImageGenQuality)), "low")
+}
+func (s *Service) ImageGenBackground() string {
+	return firstNonEmpty(strings.TrimSpace(s.GetString(ImageGenBackground)), "auto")
+}
+func (s *Service) ImageGenOutputFormat() string {
+	return firstNonEmpty(strings.TrimSpace(s.GetString(ImageGenOutputFormat)), "png")
+}
+func (s *Service) ImageGenResponseFormat() string {
+	v := strings.TrimSpace(s.GetString(ImageGenResponseFormat))
+	if strings.EqualFold(v, "b64_json") {
+		return "b64_json"
+	}
+	return "b64_json"
+}
+func (s *Service) ImageGenTimeoutSec() int {
+	n := int(s.GetInt(ImageGenTimeoutSec))
+	if n <= 0 {
+		return 420
+	}
+	return n
+}
+
+// -- textgen --
+func (s *Service) TextGenEnabled() bool { return s.GetBool(TextGenEnabled) }
+func (s *Service) TextGenAccount() string {
+	return strings.TrimSpace(s.GetString(TextGenAccount))
+}
+func (s *Service) TextGenAPIKey() string {
+	return strings.TrimSpace(s.GetString(TextGenAPIKey))
+}
+func (s *Service) TextGenBaseURL() string {
+	return firstNonEmpty(strings.TrimSpace(s.GetString(TextGenBaseURL)), "http://43.134.21.160/v1")
+}
+func (s *Service) TextGenModel() string {
+	return firstNonEmpty(strings.TrimSpace(s.GetString(TextGenModel)), "gpt-5.4")
+}
+func (s *Service) TextGenTimeoutSec() int {
+	n := int(s.GetInt(TextGenTimeoutSec))
+	if n <= 0 {
+		return 120
+	}
+	return n
+}
+
+// -- videogen --
+func (s *Service) VideoGenEnabled() bool { return s.GetBool(VideoGenEnabled) }
+func (s *Service) VideoGenAccount() string {
+	return strings.TrimSpace(s.GetString(VideoGenAccount))
+}
+func (s *Service) VideoGenAPIKey() string {
+	return strings.TrimSpace(s.GetString(VideoGenAPIKey))
+}
+func (s *Service) VideoGenBaseURL() string {
+	return firstNonEmpty(strings.TrimSpace(s.GetString(VideoGenBaseURL)), "http://app.echoon.top/api/v1")
+}
+func (s *Service) VideoGenModel() string {
+	return firstNonEmpty(strings.TrimSpace(s.GetString(VideoGenModel)), "0e37fa2d-72b3-483a-81b4-ad595cd147c7")
+}
+func (s *Service) VideoGenTimeoutSec() int {
+	n := int(s.GetInt(VideoGenTimeoutSec))
+	if n <= 0 {
+		return 900
+	}
+	return n
+}
+func (s *Service) VideoGenDurationSec() int {
+	n := int(s.GetInt(VideoGenDurationSec))
+	if n <= 0 {
+		return 5
+	}
+	return n
+}
+func (s *Service) VideoGenAspectRatio() string {
+	return firstNonEmpty(strings.TrimSpace(s.GetString(VideoGenAspectRatio)), "16:9")
+}
+func (s *Service) VideoGenResolution() string {
+	return firstNonEmpty(strings.TrimSpace(s.GetString(VideoGenResolution)), "720p")
+}
+func (s *Service) VideoGenGenerateAudio() bool { return s.GetBool(VideoGenGenerateAudio) }
 
 // -- billing / recharge --
 func (s *Service) RechargeEnabled() bool { return s.GetBool(RechargeEnabled) }

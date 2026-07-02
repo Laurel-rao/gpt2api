@@ -1,22 +1,29 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { Close, CopyDocument, Download, Refresh, RefreshRight, View } from '@element-plus/icons-vue'
+import { Close, CopyDocument, Document, Download, Refresh, RefreshRight, VideoPlay, View } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox, type UploadFile } from 'element-plus'
 import {
+  ECOMMERCE_LANGUAGES,
   cancelEcommerceTask,
   createEcommerceTask,
+  deleteEcommerceTask,
+  ecommerceLanguageName,
+  generateEcommerceVideo,
   getEcommerceOptions,
   getEcommerceTask,
+  listEcommerceLibraryAssets,
   listEcommerceTasks,
   retryEcommerceTask,
   retryEcommerceAsset,
   type EcommerceAsset,
+  type EcommerceLibraryAsset,
   type EcommercePlatform,
   type EcommercePromptTemplate,
   type EcommerceStyleTemplate,
   type EcommerceTask,
 } from '@/api/ecommerce'
 import { formatDateTime } from '@/utils/format'
+import { getCachedImageObjectURL, peekCachedImageObjectURL } from '@/utils/imageCache'
 
 const MAX_IMAGES = 4
 const MAX_IMAGE_MB = 20
@@ -28,17 +35,24 @@ const submitting = ref(false)
 const canceling = ref(false)
 const exporting = ref(false)
 const downloadingAll = ref(false)
+const generatingVideo = ref(false)
 const tasksLoading = ref(false)
 const tasksTotal = ref(0)
 const retryingTaskID = ref('')
 const retryingAssetID = ref(0)
+const deletingTaskID = ref('')
+const taskKeyword = ref('')
 const polling = ref<number | null>(null)
 const pollingTaskID = ref('')
 const ticker = ref<number | null>(null)
 const nowTs = ref(Date.now())
 const previewVisible = ref(false)
 const detailVisible = ref(false)
+const promptVisible = ref(false)
 const previewAsset = ref<EcommerceAsset | null>(null)
+const promptAsset = ref<EcommerceAsset | null>(null)
+const previewImageURL = ref('')
+const previewImageLoading = ref(false)
 const brokenAssetIDs = ref<Set<number>>(new Set())
 const brokenTaskThumbIDs = ref<Set<number>>(new Set())
 const retryPanelOpenIDs = ref<Set<number>>(new Set())
@@ -55,6 +69,8 @@ const openSections = reactive<Record<WorkbenchSection, boolean>>({
 const platforms = ref<EcommercePlatform[]>([])
 const prompts = ref<EcommercePromptTemplate[]>([])
 const styles = ref<EcommerceStyleTemplate[]>([])
+const productLibraryAssets = ref<EcommerceLibraryAsset[]>([])
+const modelLibraryAssets = ref<EcommerceLibraryAsset[]>([])
 const tasks = ref<EcommerceTask[]>([])
 const activeTask = ref<EcommerceTask | null>(null)
 
@@ -62,8 +78,11 @@ const form = reactive({
   platform_id: 0,
   prompt_template_id: 0,
   style_template_id: 0,
+  language: 'zh-CN',
   requirement: '',
   reference_images: [] as string[],
+  product_asset_id: '',
+  model_asset_id: '',
 })
 
 const statusText: Record<string, string> = {
@@ -88,9 +107,11 @@ const assetText: Record<string, string> = {
   white_image: '白底图',
   detail_image: '详情图',
   price_image: '价格图',
+  product_video: '商品视频',
 }
 
-const assetOrder = ['title_image', 'main_image', 'white_image', 'detail_image', 'price_image']
+const assetOrder = ['title_image', 'main_image', 'white_image', 'detail_image', 'price_image', 'product_video']
+const imageAssetOrder = ['title_image', 'main_image', 'white_image', 'detail_image', 'price_image']
 
 const output = computed<Record<string, any>>(() => activeTask.value?.output_json || {})
 const productInfo = computed<Record<string, any>>(() => output.value?.product_info || {})
@@ -98,22 +119,97 @@ const priceInfo = computed<Record<string, any>>(() => output.value?.price_info |
 const imageSpecs = computed<Record<string, any>>(() => output.value?.image_specs || {})
 const imageTextPlans = computed<Record<string, any>>(() => output.value?.image_text_plans || {})
 const assets = computed(() => activeTask.value?.assets || [])
-const running = computed(() => ['queued', 'running'].includes(activeTask.value?.status || ''))
+const currentAssets = computed(() => latestAssetsByType(assets.value))
+const taskLooksComplete = computed(() => currentAssets.value.length > 0 && currentAssetsReady(currentAssets.value))
+const displayTaskStatus = computed(() => (taskLooksComplete.value ? 'success' : activeTask.value?.status || ''))
+const running = computed(() => ['queued', 'running'].includes(displayTaskStatus.value))
 const hasMoreTasks = computed(() => tasks.value.length < tasksTotal.value)
 const currentPlatform = computed(() => platforms.value.find((p) => p.id === form.platform_id))
 const activePlatform = computed(() => platforms.value.find((p) => p.id === activeTask.value?.platform_id))
-const selectedLanguage = computed(() => currentPlatform.value?.language || '自动')
-const activeLanguage = computed(() => activePlatform.value?.language || selectedLanguage.value)
-const activePercent = computed(() => activeTask.value?.progress || 0)
+const selectedLanguage = computed(() => ecommerceLanguageName(form.language || currentPlatform.value?.language))
+const selectedProductAsset = computed(() => productLibraryAssets.value.find((asset) => asset.asset_id === form.product_asset_id))
+const selectedModelAsset = computed(() => modelLibraryAssets.value.find((asset) => asset.asset_id === form.model_asset_id))
+const activeLanguage = computed(() => activeTask.value?.language_name || ecommerceLanguageName(activeTask.value?.language || activePlatform.value?.language || form.language))
+const activePercent = computed(() => taskLooksComplete.value ? 100 : activeTask.value?.progress || 0)
 const taskElapsed = computed(() => activeTask.value ? generationElapsed(activeTask.value.started_at, activeTask.value.finished_at, running.value) : '0秒')
 const taskQueueElapsed = computed(() => activeTask.value ? queueElapsed(activeTask.value.created_at, activeTask.value.started_at, activeTask.value.finished_at, running.value) : '0秒')
-const visibleAssets = computed(() => [...assets.value].sort((a, b) => assetRank(a.asset_type) - assetRank(b.asset_type)))
-const doneAssetCount = computed(() => assets.value.filter((asset) => assetHasImage(asset)).length)
-const totalAssetCount = computed(() => Math.max(assets.value.length, assetOrder.length))
-const assetMetricText = computed(() => activeTask.value ? `${doneAssetCount.value}/${totalAssetCount.value}` : '0/5')
+const hasWorkingCurrentAsset = computed(() => currentAssets.value.some((asset) => isAssetWorking(asset.status)))
+const visibleAssets = computed(() => currentAssets.value.filter((asset) => !isVideoAsset(asset)).sort((a, b) => assetRank(a.asset_type) - assetRank(b.asset_type)))
+const videoAsset = computed(() => currentAssets.value.find((asset) => isVideoAsset(asset)) || null)
+const doneAssetCount = computed(() => currentAssets.value.filter((asset) => assetIsReady(asset)).length)
+const expectedAssetCount = computed(() => imageAssetOrder.length + (currentAssets.value.some((asset) => isVideoAsset(asset)) ? 1 : 0))
+const totalAssetCount = computed(() => Math.max(currentAssets.value.length, expectedAssetCount.value))
+const assetMetricText = computed(() => activeTask.value ? `${doneAssetCount.value}/${totalAssetCount.value}` : `0/${imageAssetOrder.length}`)
+const videoStatusLabel = computed(() => {
+  if (!activeTask.value) return '等待任务'
+  if (!videoAsset.value) return '未生成'
+  return statusText[videoAsset.value.status] || videoAsset.value.status
+})
+const videoStatusTone = computed(() => videoAsset.value ? statusTone[videoAsset.value.status] || 'muted' : 'muted')
+const videoPercent = computed(() => {
+  const asset = videoAsset.value
+  if (!asset) return 0
+  if (asset.status === 'success') return 100
+  if (asset.status === 'failed' || asset.status === 'canceled') return 0
+  if (asset.status === 'queued') return 0
+  return Math.max(1, Math.min(99, Number(asset.progress || 0)))
+})
+const videoWindowText = computed(() => {
+  const asset = videoAsset.value
+  if (!asset) return '等待生成视频'
+  if (asset.status === 'queued') return '视频排队中'
+  if (asset.status === 'running') return `视频生成中 ${videoPercent.value}%`
+  if (asset.status === 'failed') return '视频生成失败'
+  if (asset.status === 'canceled') return '视频已中断'
+  return '等待生成视频'
+})
+const videoProgressSteps = computed(() => {
+  const asset = videoAsset.value
+  const status = asset?.status || ''
+  const failed = status === 'failed' || status === 'canceled'
+  const stepIndex = !asset ? 0 : status === 'queued' ? 1 : status === 'running' ? 2 : status === 'success' ? 3 : failed ? 2 : 0
+  return [
+    { key: 'submitted', label: '提交', done: !!asset, active: false },
+    { key: 'queued', label: '排队中', done: stepIndex > 1, active: stepIndex === 1 && !failed },
+    { key: 'running', label: '生成中', done: stepIndex > 2, active: stepIndex === 2 && !failed, value: `${videoPercent.value}%` },
+    { key: 'done', label: '完成', done: status === 'success', active: stepIndex === 3, failed },
+  ]
+})
 const heroTitle = computed(() => output.value?.product_title || productInfo.value?.canonical_title || '等待生成商品标题')
 const heroDescription = computed(() => output.value?.description || productInfo.value?.core_value || '提交任务后，这里会展示平台文案、图片资产和交付状态。')
 const priceCopy = computed(() => output.value?.price_copy || priceInfo.value?.price_text || priceInfo.value?.promotion_text || '')
+const taskReferenceImages = computed<string[]>(() => Array.isArray(activeTask.value?.reference_images) ? activeTask.value!.reference_images! : [])
+const whiteAnchorAsset = computed(() => currentAssets.value.find((asset) => asset.asset_type === 'white_image' && assetHasImage(asset)))
+const promptReferenceGroups = computed(() => {
+  const groups: Array<{ title: string; images: Array<{ url: string; href: string; label: string }> }> = []
+  if (taskReferenceImages.value.length) {
+    groups.push({
+      title: '原始参考图',
+      images: taskReferenceImages.value.map((img, index) => ({
+        url: img,
+        href: img,
+        label: `原始参考图 ${index + 1}`,
+      })),
+    })
+  }
+  const anchor = whiteAnchorAsset.value
+  if (promptAsset.value && promptAsset.value.asset_type !== 'white_image' && anchor?.url) {
+    groups.push({
+      title: '白底锚点图',
+      images: [{
+        url: thumbURL(anchor.url, 500),
+        href: anchor.url,
+        label: '非白底图生图参考',
+      }],
+    })
+  }
+  return groups
+})
+const promptReferenceCount = computed(() => promptReferenceGroups.value.reduce((sum, group) => sum + group.images.length, 0))
+const promptDialogTitle = computed(() => {
+  if (!promptAsset.value) return '参考图与提示词'
+  return `${assetText[promptAsset.value.asset_type] || promptAsset.value.asset_type} · 参考图与提示词`
+})
 const marketingCopy = computed<string[]>(() => asStringArray(output.value?.marketing_copy))
 const sellingPoints = computed<string[]>(() => asStringArray(productInfo.value?.selling_points))
 const keySpecs = computed<string[]>(() => uniqueStrings([
@@ -153,19 +249,19 @@ const detailDoc = computed(() => {
 })
 
 const progressSteps = computed(() => {
-  const status = activeTask.value?.status || ''
+  const status = displayTaskStatus.value
   const hasCopy = !!output.value?.product_title
-  const hasAsset = assets.value.length > 0
+  const hasAllAssets = totalAssetCount.value > 0 && doneAssetCount.value >= totalAssetCount.value
   const hasDetail = !!detailDoc.value
   const failed = status === 'failed'
   const canceled = status === 'canceled'
   const success = status === 'success'
-  const active = failed || canceled ? -1 : success ? 5 : hasDetail ? 4 : hasAsset ? 3 : hasCopy ? 2 : activeTask.value ? 1 : 0
+  const active: number = failed || canceled ? -1 : success ? 5 : hasDetail || hasAllAssets ? 4 : hasCopy ? 3 : activeTask.value ? 2 : 0
   return [
     { key: 'brief', label: '商品资料', done: active > 1 || success, active: active === 1 },
     { key: 'copy', label: '文案生成', done: active > 2 || success, active: active === 2 },
-    { key: 'image', label: '图片生成', done: active > 3 || success, active: active === 3 },
-    { key: 'detail', label: '详情页生成', done: active > 4 || success, active: active === 4 },
+  { key: 'image', label: '素材生成', done: hasAllAssets || success, active: active === 3 },
+    { key: 'detail', label: '详情页生成', done: hasDetail || success, active: active === 4 },
     { key: 'deliver', label: '交付完成', done: success, active: active === 5, failed: failed || canceled },
   ]
 })
@@ -173,13 +269,13 @@ const progressSteps = computed(() => {
 const deliveryItems = computed(() => [
   { key: 'brief', label: '商品资料', value: activeTask.value?.requirement ? '完成' : '-', done: !!activeTask.value?.requirement },
   { key: 'copy', label: `文案输出（${activeLanguage.value}）`, value: output.value?.product_title ? '完成' : '-', done: !!output.value?.product_title },
-  { key: 'assets', label: '图片资产', value: assetMetricText.value, done: doneAssetCount.value > 0 && doneAssetCount.value === totalAssetCount.value },
+  { key: 'assets', label: '素材资产', value: assetMetricText.value, done: doneAssetCount.value > 0 && doneAssetCount.value === totalAssetCount.value },
   { key: 'detail', label: '详情页预览', value: detailDoc.value ? '可预览' : '-', done: !!detailDoc.value },
   { key: 'poster', label: '长图导出', value: doneAssetCount.value > 0 ? '可导出' : '-', done: doneAssetCount.value > 0 },
 ])
 
 const statusHeadline = computed(() => {
-  const status = activeTask.value?.status || ''
+  const status = displayTaskStatus.value
   if (!activeTask.value) return '等待任务'
   if (status === 'success') return '交付可用'
   if (status === 'failed') return '任务失败'
@@ -251,12 +347,46 @@ function isAssetWorking(status: string) {
   return status === 'queued' || status === 'running'
 }
 
+function latestAssetsByType(list: EcommerceAsset[]) {
+  const map = new Map<string, EcommerceAsset>()
+  for (const asset of list) {
+    const prev = map.get(asset.asset_type)
+    if (!prev || asset.id >= prev.id) map.set(asset.asset_type, asset)
+  }
+  return [...map.values()].sort((a, b) => assetRank(a.asset_type) - assetRank(b.asset_type))
+}
+
+function currentAssetsReady(list: EcommerceAsset[]) {
+  if (!list.length) return false
+  if (list.some((asset) => isAssetWorking(asset.status) || asset.status === 'failed' || asset.status === 'canceled')) return false
+  return imageAssetOrder.every((type) => list.some((asset) => asset.asset_type === type && assetIsReady(asset)))
+    && !list.some((asset) => isVideoAsset(asset) && !assetIsReady(asset))
+}
+
 function canRetryTask(status?: string) {
   return status === 'failed' || status === 'canceled'
 }
 
+function isVideoAsset(assetOrType: EcommerceAsset | string) {
+  const type = typeof assetOrType === 'string' ? assetOrType : assetOrType.asset_type
+  return type === 'product_video'
+}
+
+function assetIsReady(asset: EcommerceAsset) {
+  return !!asset.url && asset.status === 'success'
+}
+
 function assetHasImage(asset: EcommerceAsset) {
+  if (isVideoAsset(asset)) return false
   return !!asset.url && asset.status === 'success' && !brokenAssetIDs.value.has(asset.id)
+}
+
+function assetCanPreview(asset: EcommerceAsset) {
+  return isVideoAsset(asset) ? assetIsReady(asset) : assetHasImage(asset)
+}
+
+function canGenerateVideo() {
+  return !!activeTask.value && !running.value && !hasWorkingCurrentAsset.value && !generatingVideo.value
 }
 
 function markBrokenAsset(asset: EcommerceAsset) {
@@ -268,7 +398,7 @@ function markBrokenAsset(asset: EcommerceAsset) {
 function taskThumbnailAsset(task: EcommerceTask) {
   return [...(task.assets || [])]
     .sort((a, b) => assetRank(a.asset_type) - assetRank(b.asset_type))
-    .find((asset) => !!asset.url && asset.status === 'success' && !brokenTaskThumbIDs.value.has(asset.id))
+    .find((asset) => !isVideoAsset(asset) && !!asset.url && asset.status === 'success' && !brokenTaskThumbIDs.value.has(asset.id))
 }
 
 function markBrokenTaskThumb(asset: EcommerceAsset) {
@@ -308,7 +438,18 @@ function assetQueueElapsed(asset: EcommerceAsset) {
   return queueElapsed(asset.created_at, asset.started_at, asset.finished_at, asset.status === 'queued')
 }
 
+function videoElapsedText() {
+  if (!videoAsset.value) return '0秒'
+  return assetGenerateElapsed(videoAsset.value)
+}
+
+function videoQueueText() {
+  if (!videoAsset.value) return '0秒'
+  return assetQueueElapsed(videoAsset.value)
+}
+
 function imageSpecText(assetType: string) {
+  if (isVideoAsset(assetType)) return '短视频'
   const spec = imageSpecs.value?.[assetType] || {}
   return [spec.size, spec.aspect_ratio].filter(Boolean).join(' · ') || '1024 x 1024'
 }
@@ -340,9 +481,21 @@ async function loadOptions() {
   platforms.value = data.platforms || []
   prompts.value = data.prompt_templates || []
   styles.value = data.style_templates || []
-  if (!form.platform_id && platforms.value[0]) form.platform_id = platforms.value[0].id
+  if (!form.platform_id && platforms.value[0]) {
+    form.platform_id = platforms.value[0].id
+    form.language = platforms.value[0].language || 'zh-CN'
+  }
   if (!form.prompt_template_id && prompts.value[0]) form.prompt_template_id = prompts.value[0].id
   if (!form.style_template_id && styles.value[0]) form.style_template_id = styles.value[0].id
+}
+
+async function loadLibraryAssets() {
+  const [products, models] = await Promise.all([
+    listEcommerceLibraryAssets({ kind: 'product', limit: 100 }),
+    listEcommerceLibraryAssets({ kind: 'model', limit: 100 }),
+  ])
+  productLibraryAssets.value = products.items || []
+  modelLibraryAssets.value = models.items || []
 }
 
 async function loadTasks(reset = true) {
@@ -350,7 +503,8 @@ async function loadTasks(reset = true) {
   tasksLoading.value = true
   try {
     const offset = reset ? 0 : tasks.value.length
-    const data = await listEcommerceTasks({ limit: TASK_PAGE_SIZE, offset })
+    const keyword = taskKeyword.value.trim()
+    const data = await listEcommerceTasks({ limit: TASK_PAGE_SIZE, offset, keyword: keyword || undefined })
     const items = data.items || []
     tasksTotal.value = data.total || (reset ? items.length : tasks.value.length + items.length)
     if (reset) {
@@ -362,6 +516,16 @@ async function loadTasks(reset = true) {
   } finally {
     tasksLoading.value = false
   }
+}
+
+async function searchTasks() {
+  await loadTasks(true)
+}
+
+function clearTaskSearch() {
+  if (!taskKeyword.value) return
+  taskKeyword.value = ''
+  loadTasks(true)
 }
 
 async function loadMoreTasks() {
@@ -387,7 +551,7 @@ function onTaskListWheel(event: WheelEvent) {
 async function initialize() {
   loading.value = true
   try {
-    await Promise.all([loadOptions(), loadTasks()])
+    await Promise.all([loadOptions(), loadLibraryAssets(), loadTasks()])
     if (!activeTask.value && tasks.value[0]) {
       await openTask(tasks.value[0])
     }
@@ -445,8 +609,11 @@ async function submit() {
       platform_id: form.platform_id,
       prompt_template_id: form.prompt_template_id,
       style_template_id: form.style_template_id,
+      language: form.language,
       requirement: form.requirement.trim(),
       reference_images: form.reference_images,
+      product_asset_id: form.product_asset_id || undefined,
+      model_asset_id: form.model_asset_id || undefined,
     })
     activeTask.value = task
     brokenAssetIDs.value = new Set()
@@ -466,7 +633,7 @@ async function openTask(task: EcommerceTask) {
     const fresh = await getEcommerceTask(task.task_id)
     activeTask.value = fresh
     brokenAssetIDs.value = new Set()
-    if (isAssetWorking(fresh.status)) startPolling(fresh.task_id)
+    if (isAssetWorking(fresh.status) || latestAssetsByType(fresh.assets || []).some((asset) => isAssetWorking(asset.status))) startPolling(fresh.task_id)
   } catch (err) {
     console.error('open ecommerce task failed:', err)
   }
@@ -505,11 +672,27 @@ async function retryAsset(asset: EcommerceAsset) {
     brokenAssetIDs.value = next
     retryPrompts.value = { ...retryPrompts.value, [asset.id]: '' }
     startPolling(fresh.task_id)
-    ElMessage.success('已重新提交图片生成')
+    ElMessage.success(isVideoAsset(asset) ? '已重新提交视频生成' : '已重新提交图片生成')
   } catch (err) {
     console.error('retry ecommerce asset failed:', err)
   } finally {
     retryingAssetID.value = 0
+  }
+}
+
+async function generateVideo() {
+  if (!activeTask.value || !canGenerateVideo()) return
+  generatingVideo.value = true
+  try {
+    await generateEcommerceVideo(activeTask.value.task_id)
+    const fresh = await getEcommerceTask(activeTask.value.task_id)
+    activeTask.value = fresh
+    startPolling(fresh.task_id)
+    ElMessage.success('视频生成已提交')
+  } catch (err) {
+    console.error('generate ecommerce video failed:', err)
+  } finally {
+    generatingVideo.value = false
   }
 }
 
@@ -534,6 +717,39 @@ async function retryTask(task = activeTask.value, ev?: Event) {
   }
 }
 
+async function deleteTask(task: EcommerceTask, ev?: Event) {
+  ev?.stopPropagation()
+  if (!task || deletingTaskID.value) return
+  const confirmed = await ElMessageBox.confirm(
+    `删除后任务会从列表隐藏，后台保留删除时间和删除人信息。${isAssetWorking(task.status) ? '当前任务正在生成，会先中断再删除。' : ''}`,
+    '删除任务',
+    {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+    },
+  ).catch(() => false)
+  if (!confirmed) return
+  deletingTaskID.value = task.task_id
+  try {
+    await deleteEcommerceTask(task.task_id)
+    const wasActive = activeTask.value?.task_id === task.task_id
+    tasks.value = tasks.value.filter((item) => item.task_id !== task.task_id)
+    tasksTotal.value = Math.max(0, tasksTotal.value - 1)
+    if (wasActive) {
+      stopPolling()
+      activeTask.value = null
+      if (tasks.value[0]) await openTask(tasks.value[0])
+    }
+    if (!tasks.value.length && tasksTotal.value > 0) await loadTasks(true)
+    ElMessage.success('任务已删除')
+  } catch (err) {
+    console.error('delete ecommerce task failed:', err)
+  } finally {
+    deletingTaskID.value = ''
+  }
+}
+
 function startPolling(taskID: string) {
   stopPolling()
   pollingTaskID.value = taskID
@@ -542,7 +758,7 @@ function startPolling(taskID: string) {
       const fresh = await getEcommerceTask(taskID)
       if (pollingTaskID.value !== taskID) return
       if (activeTask.value?.task_id === taskID) activeTask.value = fresh
-      if (!isAssetWorking(fresh.status)) {
+      if (!isAssetWorking(fresh.status) && !latestAssetsByType(fresh.assets || []).some((asset) => isAssetWorking(asset.status))) {
         stopPolling()
         await loadTasks()
       }
@@ -558,10 +774,34 @@ function stopPolling() {
   pollingTaskID.value = ''
 }
 
-function openAssetPreview(asset: EcommerceAsset) {
-  if (!assetHasImage(asset)) return
+async function openAssetPreview(asset: EcommerceAsset) {
+  if (!assetCanPreview(asset)) return
+  if (isVideoAsset(asset)) {
+    previewAsset.value = asset
+    previewImageURL.value = asset.url
+    previewImageLoading.value = false
+    previewVisible.value = true
+    return
+  }
+  const sourceURL = thumbURL(asset.url, 500)
   previewAsset.value = asset
+  previewImageURL.value = peekCachedImageObjectURL(sourceURL)
   previewVisible.value = true
+  if (previewImageURL.value) {
+    previewImageLoading.value = false
+    return
+  }
+
+  previewImageLoading.value = true
+  try {
+    const objectURL = await getCachedImageObjectURL(sourceURL)
+    if (previewAsset.value?.id === asset.id) previewImageURL.value = objectURL
+  } catch (err) {
+    console.error('load ecommerce preview image failed:', err)
+    if (previewAsset.value?.id === asset.id) previewImageURL.value = sourceURL
+  } finally {
+    if (previewAsset.value?.id === asset.id) previewImageLoading.value = false
+  }
 }
 
 function openDetailPreview() {
@@ -572,13 +812,29 @@ function openDetailPreview() {
   detailVisible.value = true
 }
 
+function openPromptInspect(asset: EcommerceAsset) {
+  promptAsset.value = asset
+  promptVisible.value = true
+}
+
+async function copyAssetPrompt(asset = promptAsset.value) {
+  const prompt = asset?.prompt?.trim()
+  if (!prompt) {
+    ElMessage.warning('暂无提示词')
+    return
+  }
+  await navigator.clipboard.writeText(prompt)
+  ElMessage.success('提示词已复制')
+}
+
 function assetFileName(asset: EcommerceAsset) {
   const taskID = activeTask.value?.task_id || asset.task_id || 'ecommerce'
-  return `${taskID}-${asset.asset_type || 'image'}.png`
+  const ext = isVideoAsset(asset) ? 'mp4' : 'png'
+  return `${taskID}-${asset.asset_type || 'asset'}.${ext}`
 }
 
 async function downloadAsset(asset: EcommerceAsset) {
-  if (!assetHasImage(asset)) return
+  if (!assetIsReady(asset)) return
   try {
     const res = await fetch(asset.url)
     if (!res.ok) throw new Error(`download failed: ${res.status}`)
@@ -591,14 +847,14 @@ async function downloadAsset(asset: EcommerceAsset) {
 }
 
 async function downloadAllAssets() {
-  const imageAssets = visibleAssets.value.filter(assetHasImage)
-  if (!imageAssets.length) {
-    ElMessage.warning('暂无可下载图片资产')
+  const readyAssets = currentAssets.value.filter(assetIsReady).sort((a, b) => assetRank(a.asset_type) - assetRank(b.asset_type))
+  if (!readyAssets.length) {
+    ElMessage.warning('暂无可下载素材资产')
     return
   }
   downloadingAll.value = true
   try {
-    for (const asset of imageAssets) {
+    for (const asset of readyAssets) {
       await downloadAsset(asset)
       await new Promise((resolve) => window.setTimeout(resolve, 120))
     }
@@ -651,8 +907,8 @@ function downloadCanvas(canvas: HTMLCanvasElement, filename: string) {
 
 async function exportPoster() {
   if (!activeTask.value) return
-  const imageAssets = assetOrder
-    .map((type) => assets.value.find((asset) => asset.asset_type === type && assetHasImage(asset)))
+  const imageAssets = imageAssetOrder
+    .map((type) => currentAssets.value.find((asset) => asset.asset_type === type && assetHasImage(asset)))
     .filter(Boolean) as EcommerceAsset[]
   if (!imageAssets.length) {
     ElMessage.warning('暂无可导出的图片')
@@ -760,6 +1016,14 @@ onMounted(() => {
 })
 
 watch(
+  () => form.platform_id,
+  (id) => {
+    const platform = platforms.value.find((item) => item.id === id)
+    form.language = platform?.language || 'zh-CN'
+  },
+)
+
+watch(
   () => activeTask.value ? `${activeTask.value.task_id}:${activeTask.value.status}` : '',
   () => applySectionDefaults(activeTask.value),
 )
@@ -803,14 +1067,16 @@ onBeforeUnmount(() => {
             <el-option
               v-for="platform in platforms"
               :key="platform.id"
-              :label="`${platform.name} · ${platform.language || '自动'}`"
+              :label="`${platform.name} · 默认：${ecommerceLanguageName(platform.language)}`"
               :value="platform.id"
             />
           </el-select>
         </el-form-item>
 
         <el-form-item label="文案语言">
-          <el-input :model-value="selectedLanguage" disabled />
+          <el-select v-model="form.language" placeholder="请选择文案语言">
+            <el-option v-for="lang in ECOMMERCE_LANGUAGES" :key="lang.value" :label="lang.label" :value="lang.value" />
+          </el-select>
         </el-form-item>
 
         <el-form-item label="提示词模板">
@@ -824,6 +1090,47 @@ onBeforeUnmount(() => {
             <el-option v-for="style in styles" :key="style.id" :label="style.name" :value="style.id" />
           </el-select>
         </el-form-item>
+
+        <div class="library-picker-grid">
+          <el-form-item label="商品资产">
+            <el-select v-model="form.product_asset_id" placeholder="可选：从资产库选择商品" filterable clearable>
+              <el-option v-for="asset in productLibraryAssets" :key="asset.asset_id" :label="asset.name" :value="asset.asset_id">
+                <div class="asset-option">
+                  <img v-if="asset.cover_url" :src="asset.cover_url" :alt="asset.name" />
+                  <span>{{ asset.name }}</span>
+                  <small>{{ asset.code || asset.review_status }}</small>
+                </div>
+              </el-option>
+            </el-select>
+          </el-form-item>
+          <el-form-item label="模特资产">
+            <el-select v-model="form.model_asset_id" placeholder="可选：从资产库选择模特" filterable clearable>
+              <el-option v-for="asset in modelLibraryAssets" :key="asset.asset_id" :label="asset.name" :value="asset.asset_id">
+                <div class="asset-option">
+                  <img v-if="asset.cover_url" :src="asset.cover_url" :alt="asset.name" />
+                  <span>{{ asset.name }}</span>
+                  <small>{{ asset.code || asset.review_status }}</small>
+                </div>
+              </el-option>
+            </el-select>
+          </el-form-item>
+        </div>
+        <div v-if="selectedProductAsset || selectedModelAsset" class="selected-library-assets">
+          <div v-if="selectedProductAsset" class="selected-library-card">
+            <img v-if="selectedProductAsset.cover_url" :src="selectedProductAsset.cover_url" :alt="selectedProductAsset.name" />
+            <div>
+              <strong>{{ selectedProductAsset.name }}</strong>
+              <span>商品资产将注入资料与参考图</span>
+            </div>
+          </div>
+          <div v-if="selectedModelAsset" class="selected-library-card">
+            <img v-if="selectedModelAsset.cover_url" :src="selectedModelAsset.cover_url" :alt="selectedModelAsset.name" />
+            <div>
+              <strong>{{ selectedModelAsset.name }}</strong>
+              <span>模特资产将注入外观与授权约束</span>
+            </div>
+          </div>
+        </div>
 
         <el-form-item>
           <template #label>
@@ -920,8 +1227,8 @@ onBeforeUnmount(() => {
               <span v-if="running" class="time-pill">预计剩余 --</span>
             </div>
             <div class="progress-summary">
-              <span :class="['status-chip', statusTone[activeTask.status] || 'muted']">
-                {{ statusText[activeTask.status] || activeTask.status }}
+              <span :class="['status-chip', statusTone[displayTaskStatus] || 'muted']">
+                {{ statusText[displayTaskStatus] || displayTaskStatus }}
               </span>
               <b>{{ activePercent }}%</b>
               <span>生成 {{ taskElapsed }}</span>
@@ -1039,12 +1346,102 @@ onBeforeUnmount(() => {
       </section>
 
       <section class="asset-section surface">
+        <div class="video-panel">
+          <div class="video-panel-main">
+            <div class="section-head compact">
+              <div>
+                <span class="kicker">视频生成</span>
+                <h2>商品短视频</h2>
+              </div>
+              <span :class="['status-chip', videoStatusTone]">{{ videoStatusLabel }}</span>
+            </div>
+            <p class="video-hint">
+              使用当前商品文案、卖点、规格、图片方向生成 5 秒商品短视频。
+            </p>
+            <div v-if="videoAsset" class="video-meta">
+              <span>任务：{{ shortTaskID(videoAsset.image_task_id || videoAsset.file_id || '-') }}</span>
+              <span>生成 {{ videoElapsedText() }}</span>
+              <span>排队 {{ videoQueueText() }}</span>
+            </div>
+            <div class="video-stepper" :class="{ failed: videoAsset?.status === 'failed' || videoAsset?.status === 'canceled' }">
+              <div
+                v-for="step in videoProgressSteps"
+                :key="step.key"
+                :class="['video-step', { done: step.done, active: step.active, failed: step.failed }]"
+              >
+                <span class="video-step-dot">
+                  <el-icon v-if="step.done"><Check /></el-icon>
+                  <el-icon v-else-if="step.failed"><Close /></el-icon>
+                </span>
+                <b>{{ step.label }}</b>
+                <small v-if="step.key === 'running' && videoAsset?.status === 'running'">{{ step.value }}</small>
+              </div>
+            </div>
+            <div v-if="videoAsset && isAssetWorking(videoAsset.status)" class="video-progress-line">
+              <span :style="{ width: `${videoAsset.status === 'queued' ? 8 : videoPercent}%` }" />
+            </div>
+            <el-alert
+              v-if="videoAsset?.error"
+              class="video-error"
+              type="error"
+              :closable="false"
+              :title="`错误提示：${videoAsset.error}`"
+            />
+            <div class="video-actions">
+              <el-button
+                type="primary"
+                :loading="generatingVideo"
+                :disabled="!canGenerateVideo()"
+                @click="generateVideo"
+              >
+                <el-icon><VideoPlay /></el-icon>
+                {{ videoAsset ? '重新生成视频' : '生成视频' }}
+              </el-button>
+              <el-button
+                :disabled="!videoAsset || !assetCanPreview(videoAsset)"
+                :icon="View"
+                @click="videoAsset && openAssetPreview(videoAsset)"
+              >
+                预览
+              </el-button>
+              <el-button
+                :disabled="!videoAsset?.prompt"
+                :icon="Document"
+                @click="videoAsset && openPromptInspect(videoAsset)"
+              >
+                提示词
+              </el-button>
+              <el-button
+                :disabled="!videoAsset || !assetIsReady(videoAsset)"
+                :icon="Download"
+                @click="videoAsset && downloadAsset(videoAsset)"
+              >
+                下载
+              </el-button>
+            </div>
+          </div>
+          <button
+            v-if="videoAsset && assetIsReady(videoAsset)"
+            class="video-window ready"
+            type="button"
+            @click="openAssetPreview(videoAsset)"
+          >
+            <video :src="videoAsset.url" muted playsinline preload="metadata" />
+            <span><el-icon><VideoPlay /></el-icon></span>
+          </button>
+          <div v-else class="video-window" :class="{ working: videoAsset && isAssetWorking(videoAsset.status) }">
+            <el-icon v-if="videoAsset && isAssetWorking(videoAsset.status)" class="spin"><Loading /></el-icon>
+            <el-icon v-else><VideoPlay /></el-icon>
+            <span>{{ videoWindowText }}</span>
+          </div>
+        </div>
+
         <div class="section-head compact">
           <div>
-            <span class="kicker">图片资产</span>
+            <span class="kicker">素材资产</span>
             <h2>{{ assetMetricText }}</h2>
           </div>
-          <p>点击图片预览大图，支持下载或重新生成。</p>
+          <p>点击素材预览，支持下载或重新生成。</p>
         </div>
 
         <div v-if="visibleAssets.length" class="asset-grid">
@@ -1060,8 +1457,9 @@ onBeforeUnmount(() => {
             </header>
 
             <div class="asset-actions">
-              <el-button title="预览" :disabled="!assetHasImage(asset)" :icon="View" @click="openAssetPreview(asset)" />
-              <el-button title="下载" :disabled="!assetHasImage(asset)" :icon="Download" @click="downloadAsset(asset)" />
+              <el-button title="预览" :disabled="!assetCanPreview(asset)" :icon="View" @click="openAssetPreview(asset)" />
+              <el-button title="下载" :disabled="!assetIsReady(asset)" :icon="Download" @click="downloadAsset(asset)" />
+              <el-button title="参考图与提示词" :icon="Document" @click="openPromptInspect(asset)" />
               <el-button
                 v-if="isAssetWorking(asset.status)"
                 title="取消生成"
@@ -1084,10 +1482,15 @@ onBeforeUnmount(() => {
             <button v-if="assetHasImage(asset)" class="asset-image" type="button" @click="openAssetPreview(asset)">
               <img :src="thumbURL(asset.url)" :alt="assetText[asset.asset_type] || asset.asset_type" @error="markBrokenAsset(asset)" />
             </button>
+            <button v-else-if="isVideoAsset(asset) && assetIsReady(asset)" class="asset-image asset-video-thumb" type="button" @click="openAssetPreview(asset)">
+              <el-icon><VideoPlay /></el-icon>
+              <span>预览视频</span>
+            </button>
             <div v-else class="asset-placeholder" :class="{ working: isAssetWorking(asset.status) }">
               <el-icon v-if="isAssetWorking(asset.status)" class="spin"><Loading /></el-icon>
+              <el-icon v-else-if="isVideoAsset(asset)"><VideoPlay /></el-icon>
               <el-icon v-else><Picture /></el-icon>
-              <span>{{ isAssetWorking(asset.status) ? '等待生成' : (asset.error || '暂无图片') }}</span>
+              <span>{{ isAssetWorking(asset.status) ? '等待生成' : (asset.error || (isVideoAsset(asset) ? '暂无视频' : '暂无图片')) }}</span>
             </div>
 
             <footer>
@@ -1112,7 +1515,7 @@ onBeforeUnmount(() => {
           </article>
         </div>
 
-        <el-empty v-else description="任务开始后生成图片资产" :image-size="86" />
+        <el-empty v-else description="任务开始后生成素材资产" :image-size="86" />
       </section>
     </main>
 
@@ -1124,6 +1527,16 @@ onBeforeUnmount(() => {
             <h2>任务记录</h2>
           </div>
           <span v-if="tasks.length" class="task-count">{{ tasks.length }}/{{ tasksTotal || tasks.length }}</span>
+        </div>
+        <div class="task-search">
+          <el-input
+            v-model="taskKeyword"
+            clearable
+            placeholder="搜索标题、商品资料、平台、模板"
+            @keyup.enter="searchTasks"
+            @clear="clearTaskSearch"
+          />
+          <el-button :loading="tasksLoading" @click="searchTasks">搜索</el-button>
         </div>
 
         <div
@@ -1152,6 +1565,7 @@ onBeforeUnmount(() => {
               <b>{{ task.output_json?.product_title || task.requirement || '未命名任务' }}</b>
               <span class="task-tags">
                 <i>{{ task.platform_name || '未知平台' }}</i>
+                <i>{{ task.language_name || ecommerceLanguageName(task.language) }}</i>
                 <i>{{ task.prompt_name || '默认模板' }}</i>
                 <i>{{ task.style_name || '默认风格' }}</i>
               </span>
@@ -1171,13 +1585,23 @@ onBeforeUnmount(() => {
               >
                 重试
               </el-button>
+              <el-button
+                class="task-delete-btn"
+                text
+                type="danger"
+                :loading="deletingTaskID === task.task_id"
+                :icon="Close"
+                @click="deleteTask(task, $event)"
+              >
+                删除
+              </el-button>
             </span>
           </button>
           <div v-if="tasksLoading" class="task-list-more">加载中...</div>
           <div v-else-if="hasMoreTasks" class="task-list-more">继续下拉加载</div>
           <div v-else class="task-list-more">已加载全部</div>
         </div>
-        <el-empty v-else description="暂无任务" :image-size="64" />
+        <el-empty v-else :description="taskKeyword.trim() ? '没有匹配任务' : '暂无任务'" :image-size="64" />
       </section>
 
       <section class="surface side-block">
@@ -1221,7 +1645,7 @@ onBeforeUnmount(() => {
           </el-button>
           <el-button :loading="downloadingAll" :disabled="!doneAssetCount" @click="downloadAllAssets">
             <el-icon><FolderOpened /></el-icon>
-            下载图片资产
+            下载素材资产
           </el-button>
           <el-button :disabled="!detailDoc" @click="openDetailPreview">
             <el-icon><View /></el-icon>
@@ -1235,11 +1659,18 @@ onBeforeUnmount(() => {
       v-model="previewVisible"
       width="920px"
       append-to-body
-      :title="previewAsset ? (assetText[previewAsset.asset_type] || previewAsset.asset_type) : '图片预览'"
+      :title="previewAsset ? (assetText[previewAsset.asset_type] || previewAsset.asset_type) : '素材预览'"
       class="asset-dialog"
     >
-      <div v-if="previewAsset" class="asset-dialog-body">
-        <img :src="thumbURL(previewAsset.url, 500)" :alt="previewAsset.asset_type" />
+      <div v-if="previewAsset" class="asset-dialog-body" v-loading="previewImageLoading">
+        <video
+          v-if="isVideoAsset(previewAsset) && previewImageURL"
+          :src="previewImageURL"
+          controls
+          playsinline
+          preload="metadata"
+        />
+        <img v-else-if="previewImageURL" :src="previewImageURL" :alt="previewAsset.asset_type" />
       </div>
       <template #footer>
         <el-button v-if="previewAsset" @click="downloadAsset(previewAsset)">
@@ -1247,6 +1678,56 @@ onBeforeUnmount(() => {
           下载
         </el-button>
         <el-button type="primary" @click="previewVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="promptVisible"
+      width="980px"
+      append-to-body
+      :title="promptDialogTitle"
+      class="prompt-inspect-dialog"
+    >
+      <div v-if="promptAsset" class="prompt-inspect-body">
+        <section class="prompt-reference-pane">
+          <div class="inspect-pane-head">
+            <b>参考图</b>
+            <span>{{ promptReferenceCount }} 张</span>
+          </div>
+          <div v-if="promptReferenceGroups.length" class="reference-group-list">
+            <div v-for="group in promptReferenceGroups" :key="group.title" class="reference-group">
+              <h3>{{ group.title }}</h3>
+              <div class="reference-grid">
+                <a
+                  v-for="img in group.images"
+                  :key="`${group.title}-${img.label}`"
+                  class="reference-thumb"
+                  :href="img.href"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <img :src="img.url" :alt="img.label" />
+                </a>
+              </div>
+            </div>
+          </div>
+          <el-empty v-else description="暂无参考图" :image-size="72" />
+        </section>
+        <section class="prompt-text-pane">
+          <div class="inspect-pane-head">
+            <b>生成提示词</b>
+            <span>{{ promptAsset.prompt ? `${promptAsset.prompt.length} 字符` : '暂无' }}</span>
+          </div>
+          <pre v-if="promptAsset.prompt" class="prompt-text">{{ promptAsset.prompt }}</pre>
+          <el-empty v-else description="暂无提示词" :image-size="72" />
+        </section>
+      </div>
+      <template #footer>
+        <el-button :disabled="!promptAsset?.prompt" @click="copyAssetPrompt()">
+          <el-icon><CopyDocument /></el-icon>
+          复制提示词
+        </el-button>
+        <el-button type="primary" @click="promptVisible = false">关闭</el-button>
       </template>
     </el-dialog>
 
@@ -1447,6 +1928,83 @@ h3 {
 
 .brief-form :deep(.el-select) {
   width: 100%;
+}
+
+.library-picker-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0;
+}
+
+.asset-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.asset-option img {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex: 0 0 auto;
+}
+
+.asset-option span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asset-option small {
+  margin-left: auto;
+  color: var(--el-text-color-secondary);
+}
+
+.selected-library-assets {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin: -4px 0 12px;
+}
+
+.selected-library-card {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  gap: 10px;
+  align-items: center;
+  min-height: 52px;
+  padding: 8px;
+  border: 1px solid rgba(31, 41, 55, .08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .72);
+}
+
+.selected-library-card img {
+  width: 44px;
+  height: 44px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+
+.selected-library-card strong,
+.selected-library-card span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selected-library-card strong {
+  font-size: 13px;
+  color: #111827;
+}
+
+.selected-library-card span {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #64748b;
 }
 
 .brief-form :deep(.el-input__wrapper),
@@ -1924,6 +2482,231 @@ h3 {
   margin-bottom: 10px;
 }
 
+.video-panel {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 320px);
+  gap: 12px;
+  border: 1px solid rgba(20, 139, 127, 0.22);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+  background: #f8fffd;
+}
+
+.video-panel-main {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.video-hint,
+.video-meta {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.video-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.video-meta span {
+  border-radius: 6px;
+  padding: 3px 8px;
+  background: #eef8f6;
+}
+
+.video-stepper {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.video-step {
+  position: relative;
+  min-width: 0;
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.video-step::before {
+  content: '';
+  position: absolute;
+  top: 11px;
+  left: calc(-50% + 14px);
+  width: calc(100% - 28px);
+  height: 2px;
+  background: #d0d5dd;
+}
+
+.video-step:first-child::before {
+  display: none;
+}
+
+.video-step.done::before,
+.video-step.active::before {
+  background: var(--green);
+}
+
+.video-step.failed::before,
+.video-stepper.failed .video-step.active::before {
+  background: var(--red);
+}
+
+.video-step-dot {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid #d0d5dd;
+  border-radius: 50%;
+  color: var(--muted);
+  background: #fff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.video-step.done .video-step-dot {
+  border-color: var(--green);
+  color: #fff;
+  background: var(--green);
+}
+
+.video-step.active .video-step-dot {
+  border-color: var(--amber);
+  color: #fff;
+  background: var(--amber);
+  box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.14);
+}
+
+.video-step.failed .video-step-dot {
+  border-color: var(--red);
+  color: #fff;
+  background: var(--red);
+}
+
+.video-step b,
+.video-step small {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.video-step b {
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.video-step small {
+  min-height: 18px;
+  border-radius: 6px;
+  padding: 1px 6px;
+  color: #a15c00;
+  background: #fff7e6;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 16px;
+}
+
+.video-progress-line {
+  width: 100%;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e4e7ec;
+}
+
+.video-progress-line span {
+  display: block;
+  height: 100%;
+  min-width: 8px;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--green), #3b82f6);
+  transition: width .24s ease;
+}
+
+.video-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.video-actions :deep(.el-button) {
+  margin: 0;
+}
+
+.video-actions :deep(.el-button--primary) {
+  border-color: var(--green);
+  background: linear-gradient(180deg, #14b8a6, var(--green-strong));
+}
+
+.video-error {
+  margin: 0;
+}
+
+.video-window {
+  min-width: 0;
+  height: 180px;
+  box-sizing: border-box;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  color: var(--green);
+  background: #ffffff;
+  font-size: 13px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.video-window.ready {
+  position: relative;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  background: #111827;
+}
+
+.video-window.working {
+  color: var(--amber);
+  background: #fffbeb;
+}
+
+.video-window video {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.video-window > span {
+  pointer-events: none;
+}
+
+.video-window.ready > span {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: rgba(15, 23, 42, 0.24);
+  font-size: 34px;
+}
+
 .asset-section .section-head p {
   max-width: 360px;
   color: var(--muted);
@@ -1999,6 +2782,21 @@ h3 {
   object-fit: cover;
 }
 
+.asset-video-thumb {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  color: var(--green);
+  background: linear-gradient(180deg, #f0fdfa, #ecfeff);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.asset-video-thumb :deep(.el-icon) {
+  font-size: 28px;
+}
+
 .asset-placeholder {
   display: grid;
   place-content: center;
@@ -2021,7 +2819,7 @@ h3 {
 
 .asset-actions {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 5px;
 }
 
@@ -2074,6 +2872,17 @@ h3 {
   white-space: nowrap;
 }
 
+.task-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.task-search :deep(.el-input__wrapper) {
+  border-radius: 8px;
+}
+
 .task-list {
   display: grid;
   gap: 10px;
@@ -2108,7 +2917,8 @@ h3 {
   gap: 4px;
 }
 
-.task-retry-btn {
+.task-retry-btn,
+.task-delete-btn {
   min-height: 20px;
   padding: 0;
 }
@@ -2331,10 +3141,105 @@ h3 {
   place-items: center;
 }
 
-.asset-dialog-body img {
+.asset-dialog-body img,
+.asset-dialog-body video {
   max-width: 100%;
   max-height: 72vh;
   border-radius: 8px;
+}
+
+.prompt-inspect-body {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.75fr) minmax(0, 1.25fr);
+  gap: 14px;
+  min-height: 420px;
+}
+
+.prompt-reference-pane,
+.prompt-text-pane {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.inspect-pane-head {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid var(--line);
+  padding: 10px 12px;
+  background: #f8fafc;
+}
+
+.inspect-pane-head b {
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.inspect-pane-head span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.reference-group-list {
+  display: grid;
+  gap: 12px;
+  max-height: 520px;
+  overflow-y: auto;
+  padding: 10px;
+}
+
+.reference-group {
+  display: grid;
+  gap: 8px;
+}
+
+.reference-group h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.prompt-reference-pane .reference-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px;
+}
+
+.reference-thumb {
+  display: block;
+  aspect-ratio: 1;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f8fafc;
+}
+
+.reference-thumb img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.prompt-text {
+  max-height: 520px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  color: #111827;
+  background: #fcfcfd;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .detail-frame {
@@ -2411,8 +3316,14 @@ h3 {
 
   .step-line,
   .copy-grid,
-  .detail-section-grid {
+  .detail-section-grid,
+  .video-panel,
+  .prompt-inspect-body {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .prompt-inspect-body {
+    min-height: 0;
   }
 
   .step-item {

@@ -23,9 +23,12 @@ package gateway
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -47,7 +50,7 @@ var imageUpscaleCache = image.NewUpscaleCache(0, 0)
 // ImageAccountResolver 按账号 ID 解出构造 chatgpt client 所需的敏感字段。
 // 由 main.go 注入。接口里不直接依赖 account 包,保持本层解耦。
 type ImageAccountResolver interface {
-	AuthToken(ctx context.Context, accountID uint64) (at, deviceID, cookies string, err error)
+	AuthToken(ctx context.Context, accountID uint64) (at, deviceID, sessionID, cookies string, err error)
 	ProxyURL(ctx context.Context, accountID uint64) string
 }
 
@@ -107,6 +110,13 @@ func (h *ImagesHandler) ImageProxy(c *gin.Context) {
 		return
 	}
 	ref := fids[idx] // 可能是 "sed:xxxx" 或 "xxxx"
+
+	resultURLs := t.DecodeResultURLs()
+	if idx < len(resultURLs) && strings.TrimSpace(resultURLs[idx]) != "" {
+		h.proxyStoredImageURL(c, t, idx, resultURLs[idx], thumbKB)
+		return
+	}
+
 	if t.AccountID == 0 || h.ImageAccResolver == nil {
 		c.AbortWithStatus(http.StatusServiceUnavailable)
 		return
@@ -115,7 +125,7 @@ func (h *ImagesHandler) ImageProxy(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
 	defer cancel()
 
-	at, deviceID, cookies, err := h.ImageAccResolver.AuthToken(ctx, t.AccountID)
+	at, deviceID, sessionID, cookies, err := h.ImageAccResolver.AuthToken(ctx, t.AccountID)
 	if err != nil {
 		logger.L().Warn("image proxy resolve account",
 			zap.Error(err), zap.Uint64("account_id", t.AccountID))
@@ -127,6 +137,7 @@ func (h *ImagesHandler) ImageProxy(c *gin.Context) {
 	cli, err := chatgpt.New(chatgpt.Options{
 		AuthToken: at,
 		DeviceID:  deviceID,
+		SessionID: sessionID,
 		ProxyURL:  proxyURL,
 		Cookies:   cookies,
 		Timeout:   h.upstreamTimeout(),
@@ -218,4 +229,108 @@ func (h *ImagesHandler) ImageProxy(c *gin.Context) {
 
 	c.Header("Cache-Control", "private, max-age=1800")
 	c.Data(http.StatusOK, ct, body)
+}
+
+func (h *ImagesHandler) proxyStoredImageURL(c *gin.Context, t *image.Task, idx int, rawURL string, thumbKB int) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
+	defer cancel()
+
+	body, ct, err := fetchStoredImage(ctx, rawURL, 32*1024*1024)
+	if err != nil {
+		logger.L().Warn("image proxy stored url fetch",
+			zap.Error(err), zap.String("task_id", t.TaskID), zap.Int("idx", idx))
+		c.AbortWithStatus(http.StatusBadGateway)
+		return
+	}
+	if ct == "" {
+		ct = "image/png"
+	}
+
+	scale := image.ValidateUpscale(t.Upscale)
+	if thumbKB > 0 {
+		scale = ""
+		thumbBytes, thumbCT, err := image.MakeThumbJPEG(body, thumbKB*1024)
+		if err != nil {
+			logger.L().Warn("image proxy stored thumb",
+				zap.Error(err), zap.String("task_id", t.TaskID),
+				zap.Int("thumb_kb", thumbKB))
+		} else {
+			body = thumbBytes
+			ct = thumbCT
+			c.Header("X-Thumb-KB", strconv.Itoa(thumbKB))
+		}
+	}
+
+	cacheKey := ""
+	if scale != "" {
+		cacheKey = fmt.Sprintf("%s|%d|%s", t.TaskID, idx, scale)
+		if data, ctCache, ok := imageUpscaleCache.Get(cacheKey); ok {
+			c.Header("Cache-Control", "private, max-age=3600")
+			c.Header("X-Upscale", scale+";cache=hit")
+			c.Data(http.StatusOK, ctCache, data)
+			return
+		}
+		imageUpscaleCache.Acquire()
+		upBytes, upCT, err := image.DoUpscale(body, scale)
+		imageUpscaleCache.Release()
+		if err != nil {
+			logger.L().Warn("image proxy stored upscale",
+				zap.Error(err), zap.String("task_id", t.TaskID),
+				zap.String("scale", scale))
+			c.Header("Cache-Control", "private, max-age=1800")
+			c.Header("X-Upscale", scale+";err")
+			c.Data(http.StatusOK, ct, body)
+			return
+		}
+		if upCT != "" {
+			ct = upCT
+		}
+		if len(upBytes) > 0 {
+			body = upBytes
+			imageUpscaleCache.Put(cacheKey, body, ct)
+			c.Header("X-Upscale", scale+";cache=miss")
+		} else {
+			c.Header("X-Upscale", scale+";noop")
+		}
+		c.Header("Cache-Control", "private, max-age=3600")
+		c.Data(http.StatusOK, ct, body)
+		return
+	}
+
+	c.Header("Cache-Control", "private, max-age=1800")
+	c.Data(http.StatusOK, ct, body)
+}
+
+func fetchStoredImage(ctx context.Context, rawURL string, limit int64) ([]byte, string, error) {
+	rawURL = strings.TrimSpace(rawURL)
+	if strings.HasPrefix(strings.ToLower(rawURL), "data:") {
+		comma := strings.IndexByte(rawURL, ',')
+		if comma < 0 {
+			return nil, "", fmt.Errorf("invalid data url")
+		}
+		meta := rawURL[5:comma]
+		ct := strings.Split(meta, ";")[0]
+		data, err := base64.StdEncoding.DecodeString(rawURL[comma+1:])
+		return data, ct, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer res.Body.Close()
+	if res.StatusCode >= 400 {
+		return nil, "", fmt.Errorf("stored image upstream %d", res.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(res.Body, limit+1))
+	if err != nil {
+		return nil, "", err
+	}
+	if int64(len(body)) > limit {
+		return nil, "", fmt.Errorf("stored image exceeds %d bytes", limit)
+	}
+	return body, res.Header.Get("Content-Type"), nil
 }

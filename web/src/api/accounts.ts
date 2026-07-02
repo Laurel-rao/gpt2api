@@ -199,6 +199,7 @@ export interface QuotaResult {
   default_model?: string
   blocked_features?: string[]
   error?: string
+  debug?: string
 }
 export interface QuotaAllResult {
   total: number

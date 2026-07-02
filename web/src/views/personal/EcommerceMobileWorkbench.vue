@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
   ArrowDown,
   Check,
@@ -13,36 +13,44 @@ import {
   Plus,
   Refresh,
   RefreshRight,
+  VideoPlay,
   View,
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox, type UploadFile } from 'element-plus'
 import {
+  ECOMMERCE_LANGUAGES,
   cancelEcommerceTask,
   createEcommerceTask,
+  ecommerceLanguageName,
   getEcommerceOptions,
   getEcommerceTask,
+  listEcommerceLibraryAssets,
   listEcommerceTasks,
   retryEcommerceAsset,
   type EcommerceAsset,
+  type EcommerceLibraryAsset,
   type EcommercePlatform,
   type EcommercePromptTemplate,
   type EcommerceStyleTemplate,
   type EcommerceTask,
 } from '@/api/ecommerce'
 import { formatDateTime } from '@/utils/format'
+import { getCachedImageObjectURL, peekCachedImageObjectURL } from '@/utils/imageCache'
 
 const MAX_IMAGES = 4
 const MAX_IMAGE_MB = 20
 const POLL_INTERVAL = 2500
 const TASK_PAGE_SIZE = 5
 
-const assetOrder = ['title_image', 'main_image', 'white_image', 'detail_image', 'price_image']
+const assetOrder = ['title_image', 'main_image', 'white_image', 'detail_image', 'price_image', 'product_video']
+const imageAssetOrder = ['title_image', 'main_image', 'white_image', 'detail_image', 'price_image']
 const assetText: Record<string, string> = {
   title_image: '主图',
   main_image: '场景图',
   white_image: '白底图',
   detail_image: '详情图',
   price_image: '价格图',
+  product_video: '商品视频',
 }
 
 const statusText: Record<string, string> = {
@@ -75,10 +83,14 @@ const ticker = ref<number | null>(null)
 const previewVisible = ref(false)
 const detailVisible = ref(false)
 const previewAsset = ref<EcommerceAsset | null>(null)
+const previewImageURL = ref('')
+const previewImageLoading = ref(false)
 const activeTask = ref<EcommerceTask | null>(null)
 const platforms = ref<EcommercePlatform[]>([])
 const prompts = ref<EcommercePromptTemplate[]>([])
 const styles = ref<EcommerceStyleTemplate[]>([])
+const productLibraryAssets = ref<EcommerceLibraryAsset[]>([])
+const modelLibraryAssets = ref<EcommerceLibraryAsset[]>([])
 const tasks = ref<EcommerceTask[]>([])
 const brokenAssetIDs = ref<Set<number>>(new Set())
 const brokenTaskThumbIDs = ref<Set<number>>(new Set())
@@ -90,8 +102,11 @@ const form = reactive({
   platform_id: 0,
   prompt_template_id: 0,
   style_template_id: 0,
+  language: 'zh-CN',
   requirement: '',
   reference_images: [] as string[],
+  product_asset_id: '',
+  model_asset_id: '',
 })
 
 const output = computed<Record<string, any>>(() => activeTask.value?.output_json || {})
@@ -104,20 +119,22 @@ const visibleAssets = computed(() => [...assets.value].sort((a, b) => assetRank(
 const assetSlots = computed(() => assetOrder.map((type) => ({
   type,
   asset: visibleAssets.value.find((asset) => asset.asset_type === type),
-})))
+})).filter((slot) => slot.type !== 'product_video' || slot.asset))
 const running = computed(() => isWorkingStatus(activeTask.value?.status || ''))
 const hasMoreTasks = computed(() => tasks.value.length < tasksTotal.value)
 const currentPlatform = computed(() => platforms.value.find((p) => p.id === form.platform_id))
 const activePlatform = computed(() => platforms.value.find((p) => p.id === activeTask.value?.platform_id))
-const selectedLanguage = computed(() => currentPlatform.value?.language || '自动')
-const activeLanguage = computed(() => activePlatform.value?.language || selectedLanguage.value)
+const selectedLanguage = computed(() => ecommerceLanguageName(form.language || currentPlatform.value?.language))
+const selectedProductAsset = computed(() => productLibraryAssets.value.find((asset) => asset.asset_id === form.product_asset_id))
+const selectedModelAsset = computed(() => modelLibraryAssets.value.find((asset) => asset.asset_id === form.model_asset_id))
+const activeLanguage = computed(() => activeTask.value?.language_name || ecommerceLanguageName(activeTask.value?.language || activePlatform.value?.language || form.language))
 const activePercent = computed(() => activeTask.value?.progress || 0)
 const taskElapsed = computed(() => activeTask.value ? generationElapsed(activeTask.value.started_at, activeTask.value.finished_at, running.value) : '0秒')
 const taskQueueElapsed = computed(() => activeTask.value ? queueElapsed(activeTask.value.created_at, activeTask.value.started_at, activeTask.value.finished_at, running.value) : '0秒')
 const doneAssetCount = computed(() => assetSlots.value.filter((slot) => slot.asset && assetIsReady(slot.asset)).length)
-const assetMetricText = computed(() => `${doneAssetCount.value}/${assetOrder.length}`)
+const assetMetricText = computed(() => `${doneAssetCount.value}/${assetSlots.value.length || imageAssetOrder.length}`)
 const heroTitle = computed(() => output.value?.product_title || productInfo.value?.canonical_title || activeTask.value?.requirement || '等待创建任务')
-const heroDescription = computed(() => output.value?.description || productInfo.value?.core_value || '提交商品资料后，这里会展示生成进度、图片资产和交付结果。')
+const heroDescription = computed(() => output.value?.description || productInfo.value?.core_value || '提交商品资料后，这里会展示生成进度、素材资产和交付结果。')
 const priceCopy = computed(() => output.value?.price_copy || priceInfo.value?.price_text || priceInfo.value?.promotion_text || '')
 const marketingCopy = computed<string[]>(() => asStringArray(output.value?.marketing_copy))
 const sellingPoints = computed<string[]>(() => asStringArray(productInfo.value?.selling_points))
@@ -153,7 +170,7 @@ const detailDoc = computed(() => {
 const deliveryItems = computed(() => [
   { key: 'brief', label: '商品资料', value: activeTask.value?.requirement ? '完成' : '-', done: !!activeTask.value?.requirement },
   { key: 'copy', label: `文案输出（${activeLanguage.value}）`, value: output.value?.product_title ? '完成' : '-', done: !!output.value?.product_title },
-  { key: 'assets', label: '图片资产', value: assetMetricText.value, done: doneAssetCount.value > 0 && doneAssetCount.value === assetOrder.length },
+  { key: 'assets', label: '素材资产', value: assetMetricText.value, done: doneAssetCount.value > 0 && doneAssetCount.value === (assetSlots.value.length || imageAssetOrder.length) },
   { key: 'detail', label: '详情页预览', value: detailDoc.value ? '可预览' : '-', done: !!detailDoc.value },
   { key: 'poster', label: '长图导出', value: doneAssetCount.value > 0 ? '可导出' : '-', done: doneAssetCount.value > 0 },
 ])
@@ -199,8 +216,18 @@ function assetIsReady(asset: EcommerceAsset) {
   return !!asset.url && asset.status === 'success'
 }
 
+function isVideoAsset(assetOrType: EcommerceAsset | string) {
+  const type = typeof assetOrType === 'string' ? assetOrType : assetOrType.asset_type
+  return type === 'product_video'
+}
+
 function assetHasImage(asset: EcommerceAsset) {
+  if (isVideoAsset(asset)) return false
   return assetIsReady(asset) && !brokenAssetIDs.value.has(asset.id)
+}
+
+function assetCanPreview(asset: EcommerceAsset) {
+  return isVideoAsset(asset) ? assetIsReady(asset) : assetHasImage(asset)
 }
 
 function markBrokenAsset(asset: EcommerceAsset) {
@@ -212,7 +239,7 @@ function markBrokenAsset(asset: EcommerceAsset) {
 function taskThumbnailAsset(task: EcommerceTask) {
   return [...(task.assets || [])]
     .sort((a, b) => assetRank(a.asset_type) - assetRank(b.asset_type))
-    .find((asset) => !!asset.url && asset.status === 'success' && !brokenTaskThumbIDs.value.has(asset.id))
+    .find((asset) => !isVideoAsset(asset) && !!asset.url && asset.status === 'success' && !brokenTaskThumbIDs.value.has(asset.id))
 }
 
 function markBrokenTaskThumb(asset: EcommerceAsset) {
@@ -271,6 +298,7 @@ function taskRequirementPreview(task: EcommerceTask) {
 }
 
 function imageSpecText(assetType: string) {
+  if (isVideoAsset(assetType)) return '短视频'
   const spec = imageSpecs.value?.[assetType] || {}
   return [spec.size, spec.aspect_ratio].filter(Boolean).join(' · ') || '1024 x 1024'
 }
@@ -309,9 +337,21 @@ async function loadOptions() {
   platforms.value = data.platforms || []
   prompts.value = data.prompt_templates || []
   styles.value = data.style_templates || []
-  if (!form.platform_id && platforms.value[0]) form.platform_id = platforms.value[0].id
+  if (!form.platform_id && platforms.value[0]) {
+    form.platform_id = platforms.value[0].id
+    form.language = platforms.value[0].language || 'zh-CN'
+  }
   if (!form.prompt_template_id && prompts.value[0]) form.prompt_template_id = prompts.value[0].id
   if (!form.style_template_id && styles.value[0]) form.style_template_id = styles.value[0].id
+}
+
+async function loadLibraryAssets() {
+  const [products, models] = await Promise.all([
+    listEcommerceLibraryAssets({ kind: 'product', limit: 100 }),
+    listEcommerceLibraryAssets({ kind: 'model', limit: 100 }),
+  ])
+  productLibraryAssets.value = products.items || []
+  modelLibraryAssets.value = models.items || []
 }
 
 async function loadTasks(reset = true) {
@@ -356,7 +396,7 @@ function onTaskListWheel(event: WheelEvent) {
 async function initialize() {
   loading.value = true
   try {
-    await Promise.all([loadOptions(), loadTasks()])
+    await Promise.all([loadOptions(), loadLibraryAssets(), loadTasks()])
     if (!activeTask.value && tasks.value[0]) {
       await openTask(tasks.value[0])
     }
@@ -410,8 +450,11 @@ async function submit() {
       platform_id: form.platform_id,
       prompt_template_id: form.prompt_template_id,
       style_template_id: form.style_template_id,
+      language: form.language,
       requirement: form.requirement.trim(),
       reference_images: form.reference_images,
+      product_asset_id: form.product_asset_id || undefined,
+      model_asset_id: form.model_asset_id || undefined,
     })
     activeTask.value = task
     brokenAssetIDs.value = new Set()
@@ -507,10 +550,34 @@ function stopPolling() {
   pollingTaskID.value = ''
 }
 
-function openAssetPreview(asset: EcommerceAsset) {
-  if (!assetHasImage(asset)) return
+async function openAssetPreview(asset: EcommerceAsset) {
+  if (!assetCanPreview(asset)) return
+  if (isVideoAsset(asset)) {
+    previewAsset.value = asset
+    previewImageURL.value = asset.url
+    previewImageLoading.value = false
+    previewVisible.value = true
+    return
+  }
+  const sourceURL = thumbURL(asset.url, 500)
   previewAsset.value = asset
+  previewImageURL.value = peekCachedImageObjectURL(sourceURL)
   previewVisible.value = true
+  if (previewImageURL.value) {
+    previewImageLoading.value = false
+    return
+  }
+
+  previewImageLoading.value = true
+  try {
+    const objectURL = await getCachedImageObjectURL(sourceURL)
+    if (previewAsset.value?.id === asset.id) previewImageURL.value = objectURL
+  } catch (err) {
+    console.error('load ecommerce preview image failed:', err)
+    if (previewAsset.value?.id === asset.id) previewImageURL.value = sourceURL
+  } finally {
+    if (previewAsset.value?.id === asset.id) previewImageLoading.value = false
+  }
 }
 
 function openDetailPreview() {
@@ -523,7 +590,8 @@ function openDetailPreview() {
 
 function assetFileName(asset: EcommerceAsset) {
   const taskID = activeTask.value?.task_id || asset.task_id || 'ecommerce'
-  return `${taskID}-${asset.asset_type || 'image'}.png`
+  const ext = isVideoAsset(asset) ? 'mp4' : 'png'
+  return `${taskID}-${asset.asset_type || 'asset'}.${ext}`
 }
 
 async function downloadAsset(asset: EcommerceAsset) {
@@ -542,7 +610,7 @@ async function downloadAsset(asset: EcommerceAsset) {
 async function downloadAllAssets() {
   const imageAssets = visibleAssets.value.filter(assetIsReady)
   if (!imageAssets.length) {
-    ElMessage.warning('暂无可下载图片资产')
+    ElMessage.warning('暂无可下载素材资产')
     return
   }
   downloadingAll.value = true
@@ -600,8 +668,8 @@ function downloadCanvas(canvas: HTMLCanvasElement, filename: string) {
 
 async function exportPoster() {
   if (!activeTask.value) return
-  const imageAssets = assetOrder
-    .map((type) => assets.value.find((asset) => asset.asset_type === type && assetIsReady(asset)))
+  const imageAssets = imageAssetOrder
+    .map((type) => assets.value.find((asset) => asset.asset_type === type && assetHasImage(asset)))
     .filter(Boolean) as EcommerceAsset[]
   if (!imageAssets.length) {
     ElMessage.warning('暂无可导出的图片')
@@ -707,6 +775,14 @@ onMounted(() => {
   }, 1000)
 })
 
+watch(
+  () => form.platform_id,
+  (id) => {
+    const platform = platforms.value.find((item) => item.id === id)
+    form.language = platform?.language || 'zh-CN'
+  },
+)
+
 onBeforeUnmount(() => {
   stopPolling()
   if (ticker.value) window.clearInterval(ticker.value)
@@ -767,7 +843,7 @@ onBeforeUnmount(() => {
             :key="slot.type"
             class="strip-item"
             type="button"
-            :disabled="!slot.asset || !assetHasImage(slot.asset)"
+            :disabled="!slot.asset || !assetCanPreview(slot.asset)"
             @click="slot.asset && openAssetPreview(slot.asset)"
           >
             <img
@@ -776,7 +852,9 @@ onBeforeUnmount(() => {
               :alt="assetText[slot.type]"
               @error="markBrokenAsset(slot.asset)"
             />
+            <el-icon v-else-if="slot.asset && isVideoAsset(slot.asset) && assetIsReady(slot.asset)"><VideoPlay /></el-icon>
             <el-icon v-else-if="slot.asset && isWorkingStatus(slot.asset.status)" class="spin"><Loading /></el-icon>
+            <el-icon v-else-if="isVideoAsset(slot.type)"><VideoPlay /></el-icon>
             <el-icon v-else><Picture /></el-icon>
             <span>{{ assetText[slot.type] }}</span>
           </button>
@@ -794,7 +872,10 @@ onBeforeUnmount(() => {
 
         <div class="form-stack">
           <el-select v-model="form.platform_id" placeholder="选择平台" size="large">
-            <el-option v-for="item in platforms" :key="item.id" :label="item.name" :value="item.id" />
+            <el-option v-for="item in platforms" :key="item.id" :label="`${item.name} · 默认：${ecommerceLanguageName(item.language)}`" :value="item.id" />
+          </el-select>
+          <el-select v-model="form.language" placeholder="选择文案语言" size="large">
+            <el-option v-for="lang in ECOMMERCE_LANGUAGES" :key="lang.value" :label="lang.label" :value="lang.value" />
           </el-select>
           <el-select v-model="form.prompt_template_id" placeholder="选择模板" size="large">
             <el-option v-for="item in prompts" :key="item.id" :label="item.name" :value="item.id" />
@@ -802,6 +883,22 @@ onBeforeUnmount(() => {
           <el-select v-model="form.style_template_id" placeholder="选择风格" size="large">
             <el-option v-for="item in styles" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
+          <el-select v-model="form.product_asset_id" placeholder="可选：商品资产" size="large" filterable clearable>
+            <el-option v-for="item in productLibraryAssets" :key="item.asset_id" :label="item.name" :value="item.asset_id" />
+          </el-select>
+          <el-select v-model="form.model_asset_id" placeholder="可选：模特资产" size="large" filterable clearable>
+            <el-option v-for="item in modelLibraryAssets" :key="item.asset_id" :label="item.name" :value="item.asset_id" />
+          </el-select>
+          <div v-if="selectedProductAsset || selectedModelAsset" class="mobile-library-summary">
+            <div v-if="selectedProductAsset">
+              <img v-if="selectedProductAsset.cover_url" :src="selectedProductAsset.cover_url" :alt="selectedProductAsset.name" />
+              <span>{{ selectedProductAsset.name }}</span>
+            </div>
+            <div v-if="selectedModelAsset">
+              <img v-if="selectedModelAsset.cover_url" :src="selectedModelAsset.cover_url" :alt="selectedModelAsset.name" />
+              <span>{{ selectedModelAsset.name }}</span>
+            </div>
+          </div>
           <el-input
             v-model="form.requirement"
             type="textarea"
@@ -851,7 +948,7 @@ onBeforeUnmount(() => {
       <section class="assets-card panel">
         <div class="section-title">
           <div>
-            <span class="eyebrow">图片资产</span>
+            <span class="eyebrow">素材资产</span>
             <h2>统一管理</h2>
           </div>
           <span>{{ assetMetricText }}</span>
@@ -871,7 +968,7 @@ onBeforeUnmount(() => {
             </header>
 
             <div class="asset-actions">
-              <el-button title="预览" :disabled="!slot.asset || !assetHasImage(slot.asset)" :icon="View" @click="slot.asset && openAssetPreview(slot.asset)" />
+              <el-button title="预览" :disabled="!slot.asset || !assetCanPreview(slot.asset)" :icon="View" @click="slot.asset && openAssetPreview(slot.asset)" />
               <el-button title="下载" :disabled="!slot.asset || !assetIsReady(slot.asset)" :icon="Download" @click="slot.asset && downloadAsset(slot.asset)" />
               <el-button
                 v-if="slot.asset && isWorkingStatus(slot.asset.status)"
@@ -896,10 +993,15 @@ onBeforeUnmount(() => {
             <button v-if="slot.asset && assetHasImage(slot.asset)" class="asset-image" type="button" @click="openAssetPreview(slot.asset)">
               <img :src="thumbURL(slot.asset.url)" :alt="assetText[slot.type]" @error="markBrokenAsset(slot.asset)" />
             </button>
+            <button v-else-if="slot.asset && isVideoAsset(slot.asset) && assetIsReady(slot.asset)" class="asset-image asset-video-thumb" type="button" @click="openAssetPreview(slot.asset)">
+              <el-icon><VideoPlay /></el-icon>
+              <span>预览视频</span>
+            </button>
             <div v-else class="asset-placeholder" :class="{ working: slot.asset && isWorkingStatus(slot.asset.status) }">
               <el-icon v-if="slot.asset && isWorkingStatus(slot.asset.status)" class="spin"><Loading /></el-icon>
+              <el-icon v-else-if="isVideoAsset(slot.type)"><VideoPlay /></el-icon>
               <el-icon v-else><Picture /></el-icon>
-              <span>{{ slot.asset?.error || (slot.asset && isWorkingStatus(slot.asset.status) ? '等待生成' : '暂无图片') }}</span>
+              <span>{{ slot.asset?.error || (slot.asset && isWorkingStatus(slot.asset.status) ? '等待生成' : (isVideoAsset(slot.type) ? '暂无视频' : '暂无图片')) }}</span>
             </div>
 
             <footer v-if="slot.asset">
@@ -970,7 +1072,7 @@ onBeforeUnmount(() => {
           </el-button>
           <el-button :loading="downloadingAll" :disabled="!doneAssetCount" @click="downloadAllAssets">
             <el-icon><FolderOpened /></el-icon>
-            下载图片
+            下载素材
           </el-button>
           <el-button :disabled="!detailDoc" @click="openDetailPreview">
             <el-icon><View /></el-icon>
@@ -1009,6 +1111,7 @@ onBeforeUnmount(() => {
               <b>{{ task.output_json?.product_title || task.requirement || '未命名任务' }}</b>
               <span class="task-tags">
                 <i>{{ task.platform_name || '未知平台' }}</i>
+                <i>{{ task.language_name || ecommerceLanguageName(task.language) }}</i>
                 <i>{{ task.prompt_name || '默认模板' }}</i>
                 <i>{{ task.style_name || '默认风格' }}</i>
               </span>
@@ -1033,11 +1136,18 @@ onBeforeUnmount(() => {
       v-model="previewVisible"
       width="92vw"
       append-to-body
-      :title="previewAsset ? (assetText[previewAsset.asset_type] || previewAsset.asset_type) : '图片预览'"
+      :title="previewAsset ? (assetText[previewAsset.asset_type] || previewAsset.asset_type) : '素材预览'"
       class="asset-dialog"
     >
-      <div v-if="previewAsset" class="asset-dialog-body">
-        <img :src="thumbURL(previewAsset.url, 500)" :alt="previewAsset.asset_type" />
+      <div v-if="previewAsset" class="asset-dialog-body" v-loading="previewImageLoading">
+        <video
+          v-if="isVideoAsset(previewAsset) && previewImageURL"
+          :src="previewImageURL"
+          controls
+          playsinline
+          preload="metadata"
+        />
+        <img v-else-if="previewImageURL" :src="previewImageURL" :alt="previewAsset.asset_type" />
       </div>
       <template #footer>
         <el-button v-if="previewAsset" @click="downloadAsset(previewAsset)">
@@ -1274,6 +1384,40 @@ h2 {
   gap: 10px;
 }
 
+.mobile-library-summary {
+  display: grid;
+  gap: 8px;
+}
+
+.mobile-library-summary > div {
+  display: grid;
+  grid-template-columns: 36px 1fr;
+  gap: 8px;
+  align-items: center;
+  min-height: 44px;
+  padding: 7px;
+  border: 1px solid rgba(148, 163, 184, .24);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .76);
+}
+
+.mobile-library-summary img {
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+
+.mobile-library-summary span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #111827;
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .upload-grid {
   margin-top: 12px;
   display: grid;
@@ -1412,6 +1556,22 @@ h2 {
     height: 100%;
     object-fit: cover;
     display: block;
+  }
+}
+
+.asset-video-thumb {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #0f766e;
+  background: linear-gradient(180deg, #f0fdfa, #ecfeff);
+  font-size: 13px;
+  font-weight: 800;
+
+  :deep(.el-icon) {
+    font-size: 28px;
   }
 }
 
@@ -1725,7 +1885,8 @@ h2 {
   border-radius: 10px;
   overflow: hidden;
 
-  img {
+  img,
+  video {
     max-width: 100%;
     max-height: 70vh;
     object-fit: contain;

@@ -1,11 +1,11 @@
 // Package scheduler 负责 chatgpt.com 账号的并发安全调度。
 //
 // 核心规则(参考 RISK_AND_SAAS.md):
-//   1. 一号一锁:同账号同时只允许 1 个请求占用(Redis SETNX)。
-//   2. 最小间隔:同账号相邻请求 >= min_interval_sec。
-//   3. 每日配额:today_used_count < daily_image_quota * daily_usage_ratio。
-//   4. 状态机:healthy -> warned -> throttled -> suspicious -> dead,冷却过期自动恢复。
-//   5. 选择策略:status=healthy + cooldown 到期 + last_used_at 最早的优先。
+//  1. 单号并发槽:同账号最多 account_concurrency 个请求占用(Redis SETNX)。
+//  2. 最小间隔:同账号相邻请求 >= min_interval_sec。
+//  3. 每日配额:today_used_count < daily_image_quota * daily_usage_ratio。
+//  4. 状态机:healthy -> warned -> throttled -> suspicious -> dead,冷却过期自动恢复。
+//  5. 选择策略:status=healthy + cooldown 到期 + last_used_at 最早的优先。
 package scheduler
 
 import (
@@ -59,6 +59,8 @@ type RuntimeParams struct {
 	WarnedPauseHrs  func() int
 	// QueueWaitSec 拿不到空闲账号时最长排队等待秒数,≤0 表示不排队(老语义)。
 	QueueWaitSec func() int
+	// AccountConcurrency 单账号同时允许持有的租约槽位数。
+	AccountConcurrency func() int
 }
 
 // Scheduler 账号调度器。
@@ -87,6 +89,9 @@ func New(
 	}
 	if cfg.Cooldown429Sec <= 0 {
 		cfg.Cooldown429Sec = 300
+	}
+	if cfg.AccountConcurrency <= 0 {
+		cfg.AccountConcurrency = 3
 	}
 	return &Scheduler{accSvc: accSvc, proxySvc: proxySvc, lock: rl, cfg: cfg}
 }
@@ -137,10 +142,29 @@ func (s *Scheduler) queueWait() time.Duration {
 	return 120 * time.Second
 }
 
+func (s *Scheduler) accountConcurrency() int {
+	if s.rt.AccountConcurrency != nil {
+		if v := s.rt.AccountConcurrency(); v > 0 {
+			if v > 10 {
+				return 10
+			}
+			return v
+		}
+	}
+	if s.cfg.AccountConcurrency <= 0 {
+		return 3
+	}
+	if s.cfg.AccountConcurrency > 10 {
+		return 10
+	}
+	return s.cfg.AccountConcurrency
+}
+
 // Dispatch 为本次请求挑选一个账号并加锁。调用方必须 defer lease.Release(ctx)。
 //
-// 语义(一号一任务 + 排队):
-//   - 同账号同时只允许 1 个请求持有 Redis 锁(acct:lock:{id},SETNX+TTL)。
+// 语义(单号多槽 + 排队):
+//   - 同账号同时最多 account_concurrency 个请求持有 Redis 锁
+//     (acct:lock:{id}:slot:{n},SETNX+TTL)。
 //   - 扫一遍所有 candidate 都被锁住 / 不满足 min_interval / 日配额时,
 //     不立即返回失败,而是按指数退避轮询重试,直到拿到锁或超过 queueWait。
 //   - queueWait=0 时退化为老语义(扫一次,失败即返回 ErrNoAvailable)。
@@ -241,11 +265,23 @@ func (s *Scheduler) tryDispatchOnce(ctx context.Context, modelType string) (*Lea
 }
 
 func (s *Scheduler) tryLock(ctx context.Context, acc *account.Account) (*Lease, error) {
-	key := fmt.Sprintf("acct:lock:%d", acc.ID)
 	token := uuid.NewString()
 	ttl := time.Duration(s.cfg.LockTTLSec) * time.Second
-	if err := s.lock.Acquire(ctx, key, token, ttl); err != nil {
-		return nil, err
+	var key string
+	acquired := false
+	for slot := 0; slot < s.accountConcurrency(); slot++ {
+		key = fmt.Sprintf("acct:lock:%d:slot:%d", acc.ID, slot)
+		if err := s.lock.Acquire(ctx, key, token, ttl); err != nil {
+			if errors.Is(err, lock.ErrNotAcquired) {
+				continue
+			}
+			return nil, err
+		}
+		acquired = true
+		break
+	}
+	if !acquired {
+		return nil, lock.ErrNotAcquired
 	}
 
 	authToken, err := s.accSvc.DecryptAuthToken(acc)

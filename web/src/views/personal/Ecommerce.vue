@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox, type UploadFile } from 'element-plus'
 import {
+  ECOMMERCE_LANGUAGES,
   cancelEcommerceTask,
   createEcommerceTask,
+  ecommerceLanguageName,
   getEcommerceOptions,
   getEcommerceTask,
   listEcommerceTasks,
@@ -15,6 +17,7 @@ import {
   type EcommerceTask,
 } from '@/api/ecommerce'
 import { formatDateTime } from '@/utils/format'
+import { getCachedImageObjectURL, peekCachedImageObjectURL } from '@/utils/imageCache'
 
 const MAX_IMAGES = 4
 const POLL_INTERVAL = 2500
@@ -30,6 +33,8 @@ const ticker = ref<number | null>(null)
 const nowTs = ref(Date.now())
 const previewVisible = ref(false)
 const previewAsset = ref<EcommerceAsset | null>(null)
+const previewImageURL = ref('')
+const previewImageLoading = ref(false)
 const brokenAssetIDs = ref<Set<number>>(new Set())
 const retryPrompts = ref<Record<number, string>>({})
 const previewThumbKB = 100
@@ -45,6 +50,7 @@ const form = reactive({
   platform_id: 0,
   prompt_template_id: 0,
   style_template_id: 0,
+  language: 'zh-CN',
   requirement: '',
   reference_images: [] as string[],
 })
@@ -84,8 +90,8 @@ const assets = computed(() => activeTask.value?.assets || [])
 const running = computed(() => ['queued', 'running'].includes(activeTask.value?.status || ''))
 const currentPlatform = computed(() => platforms.value.find((p) => p.id === form.platform_id))
 const activePlatform = computed(() => platforms.value.find((p) => p.id === activeTask.value?.platform_id))
-const selectedLanguage = computed(() => currentPlatform.value?.language || '自动')
-const activeLanguage = computed(() => activePlatform.value?.language || '自动')
+const selectedLanguage = computed(() => ecommerceLanguageName(form.language || currentPlatform.value?.language))
+const activeLanguage = computed(() => activeTask.value?.language_name || ecommerceLanguageName(activeTask.value?.language || activePlatform.value?.language || form.language))
 const visibleAssets = computed(() => [...assets.value].sort((a, b) => assetRank(a.asset_type) - assetRank(b.asset_type)))
 const doneAssetCount = computed(() => assets.value.filter((asset) => asset.status === 'success' && asset.url && !brokenAssetIDs.value.has(asset.id)).length)
 const totalAssetCount = computed(() => Math.max(assets.value.length, 5))
@@ -205,7 +211,10 @@ async function loadOptions() {
   platforms.value = data.platforms || []
   prompts.value = data.prompt_templates || []
   styles.value = data.style_templates || []
-  if (!form.platform_id && platforms.value[0]) form.platform_id = platforms.value[0].id
+  if (!form.platform_id && platforms.value[0]) {
+    form.platform_id = platforms.value[0].id
+    form.language = platforms.value[0].language || 'zh-CN'
+  }
   if (!form.prompt_template_id && prompts.value[0]) form.prompt_template_id = prompts.value[0].id
   if (!form.style_template_id && styles.value[0]) form.style_template_id = styles.value[0].id
 }
@@ -270,6 +279,7 @@ async function submit() {
       platform_id: form.platform_id,
       prompt_template_id: form.prompt_template_id,
       style_template_id: form.style_template_id,
+      language: form.language,
       requirement: form.requirement.trim(),
       reference_images: form.reference_images,
     })
@@ -365,10 +375,27 @@ function stopPolling() {
   pollingTaskID.value = ''
 }
 
-function openAssetPreview(asset: EcommerceAsset) {
+async function openAssetPreview(asset: EcommerceAsset) {
   if (!assetHasImage(asset)) return
+  const sourceURL = thumbURL(asset.url, 500)
   previewAsset.value = asset
+  previewImageURL.value = peekCachedImageObjectURL(sourceURL)
   previewVisible.value = true
+  if (previewImageURL.value) {
+    previewImageLoading.value = false
+    return
+  }
+
+  previewImageLoading.value = true
+  try {
+    const objectURL = await getCachedImageObjectURL(sourceURL)
+    if (previewAsset.value?.id === asset.id) previewImageURL.value = objectURL
+  } catch (err) {
+    console.error('load ecommerce preview image failed:', err)
+    if (previewAsset.value?.id === asset.id) previewImageURL.value = sourceURL
+  } finally {
+    if (previewAsset.value?.id === asset.id) previewImageLoading.value = false
+  }
 }
 
 function assetFileName(asset: EcommerceAsset) {
@@ -524,6 +551,14 @@ onMounted(() => {
   initialize()
 })
 
+watch(
+  () => form.platform_id,
+  (id) => {
+    const platform = platforms.value.find((item) => item.id === id)
+    form.language = platform?.language || 'zh-CN'
+  },
+)
+
 onBeforeUnmount(() => {
   stopPolling()
   if (ticker.value) window.clearInterval(ticker.value)
@@ -581,7 +616,12 @@ onBeforeUnmount(() => {
             <div class="option-grid">
               <el-form-item label="电商平台">
                 <el-select v-model="form.platform_id" placeholder="选择平台" filterable>
-                  <el-option v-for="platform in platforms" :key="platform.id" :label="`${platform.name} · ${platform.language || 'auto'}`" :value="platform.id" />
+                  <el-option v-for="platform in platforms" :key="platform.id" :label="`${platform.name} · 默认：${ecommerceLanguageName(platform.language)}`" :value="platform.id" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="文案语言">
+                <el-select v-model="form.language" placeholder="选择文案语言" filterable>
+                  <el-option v-for="lang in ECOMMERCE_LANGUAGES" :key="lang.value" :label="lang.label" :value="lang.value" />
                 </el-select>
               </el-form-item>
               <el-form-item label="提示词模板">
@@ -638,6 +678,7 @@ onBeforeUnmount(() => {
             <span class="history-time">{{ formatDateTime(task.created_at) }}</span>
             <div class="history-meta">
               <span>{{ task.platform_name || '未知平台' }}</span>
+              <span>{{ task.language_name || ecommerceLanguageName(task.language) }}</span>
               <span>{{ task.prompt_name || '默认提示词' }}</span>
               <span>{{ task.style_name || '默认风格' }}</span>
             </div>
@@ -773,8 +814,8 @@ onBeforeUnmount(() => {
     </section>
 
     <el-dialog v-model="previewVisible" width="920px" append-to-body :title="previewAsset ? (assetText[previewAsset.asset_type] || previewAsset.asset_type) : '图片预览'" class="asset-dialog">
-      <div v-if="previewAsset" class="asset-dialog-body">
-        <img :src="thumbURL(previewAsset.url, 500)" :alt="previewAsset.asset_type" />
+      <div v-if="previewAsset" class="asset-dialog-body" v-loading="previewImageLoading">
+        <img v-if="previewImageURL" :src="previewImageURL" :alt="previewAsset.asset_type" />
       </div>
       <template #footer>
         <el-button v-if="previewAsset" @click="downloadAsset(previewAsset)"><el-icon><Download /></el-icon> 下载</el-button>

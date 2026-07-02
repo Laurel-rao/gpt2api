@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	"github.com/432539/gpt2api/internal/account"
@@ -31,8 +32,10 @@ import (
 	"github.com/432539/gpt2api/internal/scheduler"
 	"github.com/432539/gpt2api/internal/server"
 	"github.com/432539/gpt2api/internal/settings"
+	"github.com/432539/gpt2api/internal/textgen"
 	"github.com/432539/gpt2api/internal/usage"
 	"github.com/432539/gpt2api/internal/user"
+	"github.com/432539/gpt2api/internal/videogen"
 	"github.com/432539/gpt2api/pkg/crypto"
 	pkgjwt "github.com/432539/gpt2api/pkg/jwt"
 	"github.com/432539/gpt2api/pkg/lock"
@@ -76,6 +79,7 @@ func main() {
 		zap.String("env", cfg.App.Env),
 		zap.String("listen", cfg.App.Listen),
 	)
+	image.SetProxySecret(cfg.Crypto.AESKey + "|" + cfg.JWT.Secret)
 
 	sqldb, err := db.NewMySQL(cfg.MySQL)
 	if err != nil {
@@ -151,6 +155,36 @@ func main() {
 
 	imageDAO := image.NewDAO(sqldb)
 	imageRunner := image.NewRunner(sched, imageDAO)
+	imageGenClient := image.NewAIZeroClient(image.AIZeroConfig{
+		BaseURL:        cfg.ImageGen.BaseURL,
+		APIKey:         cfg.ImageGen.APIKey,
+		APIKeyEnv:      cfg.ImageGen.APIKeyEnv,
+		TimeoutSec:     cfg.ImageGen.TimeoutSec,
+		Quality:        cfg.ImageGen.Quality,
+		Background:     cfg.ImageGen.Background,
+		OutputFormat:   cfg.ImageGen.OutputFormat,
+		ResponseFormat: cfg.ImageGen.ResponseFormat,
+	})
+	textGenClient := textgen.NewClient(textgen.Config{
+		BaseURL:    cfg.TextGen.BaseURL,
+		APIKey:     cfg.TextGen.APIKey,
+		APIKeyEnv:  cfg.TextGen.APIKeyEnv,
+		Model:      cfg.TextGen.Model,
+		TimeoutSec: cfg.TextGen.TimeoutSec,
+	})
+	videoGenClient := videogen.NewClient(videogen.Config{
+		BaseURL:       cfg.VideoGen.BaseURL,
+		APIKey:        cfg.VideoGen.APIKey,
+		APIKeyEnv:     cfg.VideoGen.APIKeyEnv,
+		Model:         cfg.VideoGen.Model,
+		TimeoutSec:    cfg.VideoGen.TimeoutSec,
+		DurationSec:   cfg.VideoGen.DurationSec,
+		AspectRatio:   cfg.VideoGen.AspectRatio,
+		Resolution:    cfg.VideoGen.Resolution,
+		GenerateAudio: cfg.VideoGen.GenerateAudio,
+	})
+	gwH.TextGen = textGenClient
+	imageRunner.SetAIZeroClient(imageGenClient)
 	imageRunner.SetQuotaDecrementor(accDAO) // 生图成功后立即扣减账号额度
 	imagesH := &gateway.ImagesHandler{
 		Handler: gwH,
@@ -184,6 +218,9 @@ func main() {
 	adminImageH := image.NewAdminHandler(imageDAO)
 	ecommerceDAO := ecommerce.NewDAO(sqldb)
 	ecommerceRunner := ecommerce.NewRunner(ecommerceDAO, modelReg, sched, accSvc, channelRouter, imageDAO, imageRunner, cfg.Ecommerce.ImageConcurrency)
+	ecommerceRunner.SetTextGenClient(textGenClient)
+	ecommerceRunner.SetVideoGenClient(videoGenClient)
+	ecommerceRunner.SetAppBaseURL(cfg.App.BaseURL)
 	ecommerceH := ecommerce.NewHandler(ecommerceDAO, ecommerceRunner, auditDAO)
 
 	mailSvc := mailer.New(mailer.Config{
@@ -213,15 +250,32 @@ func main() {
 	settingsH := settings.NewHandler(settingsSvc, mailSvc, auditDAO)
 	authSvc.SetSettings(settingsSvc)
 	authSvc.SetBilling(billEngine)
+	imageGenClient.SetConfigProvider(settingsSvc)
+	textGenClient.SetConfigProvider(settingsSvc)
+	videoGenClient.SetConfigProvider(settingsSvc)
+	settingsH.SetImageGenProbe(func(ctx context.Context) (int64, int, error) {
+		res, err := imageGenClient.Probe(ctx)
+		if err != nil {
+			return 0, 0, err
+		}
+		return res.DurationMs, len(res.SignedURLs), nil
+	})
+	settingsH.SetTextGenProbe(func(ctx context.Context) (int64, string, error) {
+		return textGenClient.Probe(ctx)
+	})
+	settingsH.SetVideoGenProbe(func(ctx context.Context) (int64, int, string, []videogen.ProbeModel, error) {
+		return videoGenClient.ProbeModels(ctx)
+	})
 
 	// 把 settings 注入到其它受控业务(可热更)
 	keySvc.SetSettings(settingsSvc)
 	gwH.Settings = settingsSvc
 	sched.SetRuntime(scheduler.RuntimeParams{
-		DailyUsageRatio: settingsSvc.DailyUsageRatio,
-		Cooldown429Sec:  settingsSvc.Cooldown429Sec,
-		WarnedPauseHrs:  settingsSvc.WarnedPauseHours,
-		QueueWaitSec:    settingsSvc.DispatchQueueWaitSec,
+		DailyUsageRatio:    settingsSvc.DailyUsageRatio,
+		Cooldown429Sec:     settingsSvc.Cooldown429Sec,
+		WarnedPauseHrs:     settingsSvc.WarnedPauseHours,
+		QueueWaitSec:       settingsSvc.DispatchQueueWaitSec,
+		AccountConcurrency: settingsSvc.AccountConcurrency,
 	})
 	// JWT TTL 热更:每次 Issue 时从 settings 读取,<=0 回退启动值
 	jm.SetTTLProvider(func() (int, int) {
@@ -378,22 +432,34 @@ func (r *accountProxyResolver) ProxyURLByID(ctx context.Context, proxyID uint64)
 	return u
 }
 
-// AuthToken 给图片代理端点用:按 accountID 解出 AT / DeviceID / cookies。
+// AuthToken 给图片代理端点用:按 accountID 解出 AT / DeviceID / SessionID / cookies。
 // 实现 gateway.ImageAccountResolver。
-func (r *accountProxyResolver) AuthToken(ctx context.Context, accountID uint64) (string, string, string, error) {
+func (r *accountProxyResolver) AuthToken(ctx context.Context, accountID uint64) (string, string, string, string, error) {
 	if r == nil || r.accSvc == nil {
-		return "", "", "", fmt.Errorf("account service not ready")
+		return "", "", "", "", fmt.Errorf("account service not ready")
 	}
 	a, err := r.accSvc.Get(ctx, accountID)
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", "", err
 	}
 	at, err := r.accSvc.DecryptAuthToken(a)
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", "", err
+	}
+	deviceID := a.OAIDeviceID
+	if deviceID == "" {
+		if fixed, err := r.accSvc.DAO().EnsureDeviceID(ctx, a.ID, uuid.NewString()); err == nil {
+			deviceID = fixed
+		}
+	}
+	sessionID := a.OAISessionID
+	if sessionID == "" {
+		if fixed, err := r.accSvc.DAO().EnsureSessionID(ctx, a.ID, uuid.NewString()); err == nil {
+			sessionID = fixed
+		}
 	}
 	cookies, _ := r.accSvc.DecryptCookies(ctx, accountID)
-	return at, a.OAIDeviceID, cookies, nil
+	return at, deviceID, sessionID, cookies, nil
 }
 
 // ProxyURL 给图片代理端点用:等价于 ProxyURLForAccount。

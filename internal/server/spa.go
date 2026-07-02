@@ -73,6 +73,7 @@ func mountSPA(r *gin.Engine) bool {
 // API 前缀白名单:凡是命中这里的请求不做 SPA fallback。
 var apiPrefixes = []string{
 	"/api/",
+	"/_gateway/",
 	"/v1/",
 	"/healthz",
 	"/readyz",

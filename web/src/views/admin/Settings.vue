@@ -10,14 +10,21 @@ import {
   Connection,
   Wallet,
   Message as MailIcon,
+  Picture,
+  ChatDotRound,
+  VideoPlay,
 } from '@element-plus/icons-vue'
 import {
   listSettings,
   updateSettings,
   reloadSettings,
   sendTestEmail,
+  testImageGen,
+  testTextGen,
+  testVideoGen,
   uploadSiteAsset,
   type SettingItem,
+  type VideoGenProbeModel,
 } from '@/api/settings'
 import { useSiteStore } from '@/stores/site'
 
@@ -32,6 +39,9 @@ const tabs = [
   { name: 'auth', label: '安全与认证', icon: Lock },
   { name: 'defaults', label: '用户默认值', icon: User },
   { name: 'gateway', label: '网关服务', icon: Connection },
+  { name: 'imagegen', label: '生图网关', icon: Picture },
+  { name: 'textgen', label: '文本网关', icon: ChatDotRound },
+  { name: 'videogen', label: '视频网关', icon: VideoPlay },
   { name: 'billing', label: '计费与充值', icon: Wallet },
   { name: 'mail', label: '邮件设置', icon: MailIcon },
 ] as const
@@ -39,7 +49,7 @@ const activeTab = ref<(typeof tabs)[number]['name']>('site')
 
 const grouped = computed(() => {
   const map: Record<string, SettingItem[]> = {
-    site: [], auth: [], defaults: [], gateway: [], billing: [], mail: [],
+    site: [], auth: [], defaults: [], gateway: [], imagegen: [], textgen: [], videogen: [], billing: [], mail: [],
   }
   for (const it of items.value) {
     // 旧 category "limit" 归并到 defaults 显示
@@ -77,14 +87,111 @@ function reset() {
 function isBool(it: SettingItem) { return it.type === 'bool' }
 function isInt(it: SettingItem) { return it.type === 'int' }
 function isFloat(it: SettingItem) { return it.type === 'float' }
+function isPassword(it: SettingItem) { return it.type === 'password' }
 function isFavicon(it: SettingItem) { return it.key === 'site.favicon_url' }
 function isLogo(it: SettingItem) { return it.key === 'site.logo_url' }
 function isSiteAsset(it: SettingItem) { return isFavicon(it) || isLogo(it) }
+function isVideoModelSetting(it: SettingItem) { return it.key === 'videogen.model' }
 function siteAssetName(it: SettingItem) { return isLogo(it) ? 'Logo' : '图标' }
 function inputType(it: SettingItem) {
   if (it.type === 'email') return 'email'
   if (it.type === 'url') return 'url'
   return 'text'
+}
+
+const imageGenTesting = ref(false)
+const textGenTesting = ref(false)
+const videoGenTesting = ref(false)
+const videoGenModels = ref<VideoGenProbeModel[]>([])
+async function doTestImageGen() {
+  if (dirtyCount.value > 0) {
+    await ElMessageBox.confirm('当前有未保存修改。是否先保存后再探测?', '确认', {
+      type: 'warning',
+    })
+    await save()
+  }
+  imageGenTesting.value = true
+  try {
+    const res = await testImageGen()
+    ElMessage.success(`探测成功: ${res.image_count} 张图, ${res.duration_ms}ms`)
+  } catch {
+    // 拦截器已处理
+  } finally {
+    imageGenTesting.value = false
+  }
+}
+
+async function doTestTextGen() {
+  if (dirtyCount.value > 0) {
+    await ElMessageBox.confirm('当前有未保存修改。是否先保存后再探测?', '确认', {
+      type: 'warning',
+    })
+    await save()
+  }
+  textGenTesting.value = true
+  try {
+    const res = await testTextGen()
+    ElMessage.success(`探测成功: ${res.content || 'OK'}, ${res.duration_ms}ms`)
+  } catch {
+    // 拦截器已处理
+  } finally {
+    textGenTesting.value = false
+  }
+}
+
+async function doTestVideoGen() {
+  if (dirtyCount.value > 0) {
+    await ElMessageBox.confirm('当前有未保存修改。是否先保存后再探测?', '确认', {
+      type: 'warning',
+    })
+    await save()
+  }
+  videoGenTesting.value = true
+  try {
+    const res = await testVideoGen()
+    videoGenModels.value = normalizeVideoModels(res.models || [])
+    const currentModel = String(draft['videogen.model'] || '').trim()
+    const matched = videoGenModels.value.find((model) => model.value === currentModel || model.name === currentModel)
+    if (matched) {
+      draft['videogen.model'] = matched.value
+    } else if (!currentModel && videoGenModels.value[0]) {
+      draft['videogen.model'] = videoGenModels.value[0].value
+    }
+    ElMessage.success(`探测成功: ${res.model_name || '已连接'}, 可选视频模型 ${videoGenModels.value.length} 个 / 上游总模型 ${res.model_count} 个, ${res.duration_ms}ms`)
+  } catch {
+    // 拦截器已处理
+  } finally {
+    videoGenTesting.value = false
+  }
+}
+
+function normalizeVideoModels(models: VideoGenProbeModel[]) {
+  const seen = new Set<string>()
+  const out: VideoGenProbeModel[] = []
+  for (const item of models) {
+    const id = String(item.id || '').trim()
+    const name = String(item.name || '').trim()
+    const value = String(id || item.value || name).trim()
+    if (!value || seen.has(value)) continue
+    seen.add(value)
+    out.push({
+      id,
+      name: String(name || value),
+      type: String(item.type || ''),
+      label: String(item.label || name || value),
+      value,
+    })
+  }
+  return out
+}
+
+function videoModelOptions(current: string) {
+  const opts = [...videoGenModels.value]
+  const value = String(current || '').trim()
+  if (value && !opts.some((item) => item.value === value || item.id === value || item.name === value)) {
+    opts.unshift({ id: value, name: value, type: '', label: `${value}（当前配置）`, value })
+  }
+  return opts
 }
 
 async function onSiteAssetChange(it: SettingItem, uploadFile: any) {
@@ -167,6 +274,24 @@ onMounted(load)
         <div class="flex-wrap-gap">
           <el-button :icon="Refresh" @click="doReload">强制重载</el-button>
           <el-button :icon="MailIcon" @click="mailDlg = true">发测试邮件</el-button>
+          <el-button
+            v-if="activeTab === 'imagegen'"
+            :icon="Picture"
+            :loading="imageGenTesting"
+            @click="doTestImageGen"
+          >探测生图</el-button>
+          <el-button
+            v-if="activeTab === 'textgen'"
+            :icon="ChatDotRound"
+            :loading="textGenTesting"
+            @click="doTestTextGen"
+          >探测文本</el-button>
+          <el-button
+            v-if="activeTab === 'videogen'"
+            :icon="VideoPlay"
+            :loading="videoGenTesting"
+            @click="doTestVideoGen"
+          >探测视频</el-button>
           <el-button :disabled="dirtyCount === 0" @click="reset">重置</el-button>
           <el-button
             type="primary"
@@ -249,6 +374,38 @@ onMounted(load)
                       <div class="hint">上传后保存到服务器本地静态目录，并自动写回当前设置值。</div>
                     </div>
                   </div>
+                  <el-input
+                    v-else-if="isPassword(it)"
+                    v-model="draft[it.key]"
+                    :placeholder="it.desc || it.label"
+                    type="password"
+                    show-password
+                    clearable
+                    autocomplete="new-password"
+                    style="max-width: 520px"
+                  />
+                  <el-select
+                    v-else-if="isVideoModelSetting(it)"
+                    v-model="draft[it.key]"
+                    filterable
+                    allow-create
+                    default-first-option
+                    clearable
+                    placeholder="请先点击探测视频获取模型"
+                    style="max-width: 520px; width: 100%"
+                  >
+                    <el-option
+                      v-for="model in videoModelOptions(draft[it.key])"
+                      :key="model.value"
+                      :label="model.label"
+                      :value="model.value"
+                    >
+                      <div class="model-option">
+                        <span>{{ model.name || model.value }}</span>
+                        <small v-if="model.type">{{ model.type }}</small>
+                      </div>
+                    </el-option>
+                  </el-select>
                   <el-input
                     v-else
                     v-model="draft[it.key]"
@@ -355,6 +512,15 @@ onMounted(load)
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+.model-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.model-option small {
+  color: var(--el-text-color-secondary);
 }
 
 @media (max-width: 640px) {

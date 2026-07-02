@@ -16,11 +16,27 @@ import (
 	"github.com/432539/gpt2api/internal/billing"
 	"github.com/432539/gpt2api/internal/channel"
 	modelpkg "github.com/432539/gpt2api/internal/model"
+	"github.com/432539/gpt2api/internal/textgen"
 	"github.com/432539/gpt2api/internal/upstream/adapter"
 	"github.com/432539/gpt2api/internal/upstream/chatgpt"
 	"github.com/432539/gpt2api/internal/usage"
 	"github.com/432539/gpt2api/pkg/logger"
 )
+
+func textgenOptions(m *modelpkg.Model, req *ChatCompletionsRequest) textgen.Options {
+	model := m.UpstreamModelSlug
+	if model == "" || model == "auto" {
+		model = m.Slug
+	}
+	return textgen.Options{
+		Model:       model,
+		Messages:    req.Messages,
+		Stream:      req.Stream,
+		Temperature: req.Temperature,
+		TopP:        req.TopP,
+		MaxTokens:   req.MaxTokens,
+	}
+}
 
 // dispatchChatToChannel 尝试把 chat 请求路由到外置渠道。
 //
@@ -163,6 +179,106 @@ func (h *Handler) dispatchChatToChannel(c *gin.Context,
 	completionTokens := h.lastCompletionTokens(c)
 
 	actual := billing.ComputeChatCost(m, promptTokens, completionTokens, ratio*channelRatio)
+	if err := h.Billing.Settle(context.Background(), ak.UserID, ak.ID, estCost, actual, refID, "chat settle"); err != nil {
+		logger.L().Error("billing settle", zap.Error(err), zap.String("ref", refID))
+	}
+	_ = h.Keys.DAO().TouchUsage(context.Background(), ak.ID, c.ClientIP(), actual)
+
+	if h.Limiter != nil {
+		real := int64(promptTokens + completionTokens)
+		est := int64(promptTokens + estTokens)
+		if diff := real - est; diff > 0 {
+			h.Limiter.AdjustTPM(context.Background(), ak.ID, tpmCap, diff)
+		}
+	}
+	rec.Status = usage.StatusSuccess
+	rec.InputTokens = promptTokens
+	rec.OutputTokens = completionTokens
+	rec.CreditCost = actual
+	_ = startAt
+	return true
+}
+
+func (h *Handler) dispatchChatToTextGen(c *gin.Context,
+	ak *apikey.APIKey, m *modelpkg.Model, req *ChatCompletionsRequest,
+	rec *usage.Log, ratio float64, rpmCap int, tpmCap int64, startAt time.Time,
+) bool {
+	if h.TextGen == nil || !h.TextGen.Enabled() {
+		return false
+	}
+
+	refID := uuid.NewString()
+	rec.RequestID = refID
+	rec.ModelID = m.ID
+
+	if h.Limiter != nil {
+		if ok, _, err := h.Limiter.AllowRPM(c.Request.Context(), ak.ID, rpmCap); err == nil && !ok {
+			rec.Status = usage.StatusFailed
+			rec.ErrorCode = "rate_limit_rpm"
+			openAIError(c, http.StatusTooManyRequests, "rate_limit_rpm",
+				"触发每分钟请求数限制 (RPM),请稍后再试")
+			return true
+		}
+	}
+
+	promptTokens := roughEstimateTokens(req.Messages)
+	estTokens := req.MaxTokens
+	if estTokens <= 0 {
+		estTokens = 2048
+	}
+	estCost := billing.EstimateChat(m, promptTokens, req.MaxTokens, ratio)
+
+	if h.Limiter != nil {
+		if ok, _, err := h.Limiter.AllowTPM(c.Request.Context(), ak.ID, tpmCap,
+			int64(promptTokens+estTokens)); err == nil && !ok {
+			rec.Status = usage.StatusFailed
+			rec.ErrorCode = "rate_limit_tpm"
+			openAIError(c, http.StatusTooManyRequests, "rate_limit_tpm",
+				"触发每分钟 Token 限制 (TPM),请稍后再试")
+			return true
+		}
+	}
+
+	if err := h.Billing.PreDeduct(c.Request.Context(), ak.UserID, ak.ID, estCost, refID, "chat prepay"); err != nil {
+		rec.Status = usage.StatusFailed
+		if errors.Is(err, billing.ErrInsufficient) {
+			rec.ErrorCode = "insufficient_balance"
+			openAIError(c, http.StatusPaymentRequired, "insufficient_balance",
+				"积分不足,请前往「账单与充值」充值后再试")
+			return true
+		}
+		rec.ErrorCode = "billing_error"
+		openAIError(c, http.StatusInternalServerError, "billing_error", "计费异常:"+err.Error())
+		return true
+	}
+	refunded := false
+	refund := func(code string) {
+		rec.Status = usage.StatusFailed
+		rec.ErrorCode = code
+		if refunded {
+			return
+		}
+		refunded = true
+		_ = h.Billing.Refund(context.Background(), ak.UserID, ak.ID, estCost, refID, "chat refund")
+	}
+
+	stream, err := h.TextGen.Chat(c.Request.Context(), textgenOptions(m, req))
+	if err != nil {
+		refund("upstream_error")
+		logger.L().Warn("textgen chat fail", zap.String("model", m.Slug), zap.Error(err))
+		openAIError(c, http.StatusBadGateway, "upstream_error", "文本网关请求失败:"+err.Error())
+		return true
+	}
+
+	id := "chatcmpl-" + uuid.NewString()
+	if req.Stream {
+		h.streamChannel(c, id, m.Slug, stream)
+	} else {
+		h.collectChannel(c, id, m.Slug, stream)
+	}
+	completionTokens := h.lastCompletionTokens(c)
+
+	actual := billing.ComputeChatCost(m, promptTokens, completionTokens, ratio)
 	if err := h.Billing.Settle(context.Background(), ak.UserID, ak.ID, estCost, actual, refID, "chat settle"); err != nil {
 		logger.L().Error("billing settle", zap.Error(err), zap.String("ref", refID))
 	}

@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import { Upload } from '@element-plus/icons-vue'
 import * as accountApi from '@/api/accounts'
 import * as proxyApi from '@/api/proxies'
+import { listSettings, updateSettings } from '@/api/settings'
 import { formatDateShort } from '@/utils/format'
 
 // ========== 列表 & 筛选 ==========
@@ -55,6 +56,8 @@ function onReset() {
 // ========== 自动刷新开关 ==========
 const autoRefreshEnabled = ref(false)
 const autoRefreshSaving = ref(false)
+const accountConcurrency = ref(3)
+const accountConcurrencySaving = ref(false)
 
 async function loadAutoRefresh() {
   try {
@@ -81,6 +84,31 @@ async function onToggleAutoRefresh(val: boolean | string | number) {
     ElMessage.error(e?.message || '保存失败')
   } finally {
     autoRefreshSaving.value = false
+  }
+}
+
+async function loadAccountConcurrency() {
+  try {
+    const d = await listSettings()
+    const item = (d.items || []).find((it) => it.key === 'gateway.account_concurrency')
+    const n = Number(item?.value || 3)
+    accountConcurrency.value = Number.isFinite(n) && n > 0 ? Math.min(10, Math.max(1, Math.trunc(n))) : 3
+  } catch {
+    accountConcurrency.value = 3
+  }
+}
+
+async function saveAccountConcurrency() {
+  const n = Math.min(10, Math.max(1, Math.trunc(Number(accountConcurrency.value) || 3)))
+  accountConcurrency.value = n
+  accountConcurrencySaving.value = true
+  try {
+    await updateSettings({ 'gateway.account_concurrency': String(n) })
+    ElMessage.success(`单号并发已设为 ${n}`)
+  } catch (e: any) {
+    ElMessage.error(e?.message || '保存失败')
+  } finally {
+    accountConcurrencySaving.value = false
   }
 }
 
@@ -361,7 +389,13 @@ async function onProbeOne(row: accountApi.Account) {
       }
       ElMessage.success(parts.join(' · '))
     } else {
-      ElMessage.error(r.error || '探测失败')
+      const base = r.error || '探测失败'
+      const message = r.debug && !base.includes(r.debug) ? `${base}\n${r.debug}` : base
+      ElNotification.error({
+        title: '额度探测失败',
+        message,
+        duration: 12000,
+      })
     }
     fetchList()
   } catch (e: any) {
@@ -697,6 +731,7 @@ onMounted(() => {
   fetchList()
   fetchProxies()
   loadAutoRefresh()
+  loadAccountConcurrency()
   loadQuotaSummary()
 })
 </script>
@@ -721,6 +756,20 @@ onMounted(() => {
           </div>
         </div>
         <div class="actions">
+          <div class="acct-concurrency">
+            <span class="muted">单号并发</span>
+            <el-input-number
+              v-model="accountConcurrency"
+              :min="1"
+              :max="10"
+              :step="1"
+              size="small"
+              controls-position="right"
+            />
+            <el-button size="small" :loading="accountConcurrencySaving" @click="saveAccountConcurrency">
+              保存
+            </el-button>
+          </div>
           <el-button :loading="batchRunning === 'probe'" :disabled="loading" @click="onProbeAll">
             全部探测
           </el-button>
@@ -1281,7 +1330,17 @@ onMounted(() => {
 .actions {
   display: flex;
   gap: 8px;
+  align-items: center;
   flex-wrap: wrap;
+}
+.acct-concurrency {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 4px;
+}
+.acct-concurrency :deep(.el-input-number) {
+  width: 96px;
 }
 .flex-between {
   display: flex; align-items: center; justify-content: space-between; gap: 16px;

@@ -37,6 +37,10 @@ export function register(req: { email: string; password: string; nickname?: stri
   return http.post('/api/auth/register', req)
 }
 
+export function logout(): Promise<{ ok: boolean }> {
+  return http.post('/api/auth/logout', {})
+}
+
 export interface MeResp {
   user: UserInfo
   role: string

@@ -18,6 +18,13 @@ type renderData struct {
 	Prompt               PromptTemplate
 	Style                StyleTemplate
 	Output               Output
+	ProductTitle         string
+	ProductCoreValue     string
+	PriceText            string
+	SellingPointsText    string
+	KeySpecsText         string
+	MarketingCopyText    string
+	CompactRequirement   string
 	AssetType            string
 	UnifiedInfo          string
 	ImageTextPlan        string
@@ -26,6 +33,7 @@ type renderData struct {
 	VisualDirection      string
 	CompactLanguageRule  string
 	RetryExtra           string
+	RetryExtraLine       string
 	LanguageCode         string
 	LanguageName         string
 	LanguageRule         string
@@ -52,12 +60,24 @@ func newRenderData(requirement string, platform Platform, prompt PromptTemplate,
 		Prompt:              prompt,
 		Style:               style,
 		Output:              out,
+		ProductTitle:        firstNonEmpty(out.ProductInfo.CanonicalTitle, out.ProductTitle),
+		ProductCoreValue:    firstNonEmpty(out.ProductInfo.CoreValue, out.Description),
+		PriceText:           firstNonEmpty(out.PriceInfo.PriceText, out.PriceCopy, out.PriceInfo.PromotionText),
+		SellingPointsText:   strings.Join(out.ProductInfo.SellingPoints, " / "),
+		KeySpecsText:        strings.Join(out.ProductInfo.KeySpecs, " / "),
+		MarketingCopyText:   strings.Join(out.MarketingCopy, " / "),
+		CompactRequirement:  compactRequirement(requirement, 220),
 		VisualDirection:     combineVisualDirection(prompt.ImagePrompt, style.StylePrompt),
 		LanguageCode:        code,
 		LanguageName:        platformLanguageName(code),
 		LanguageRule:        platformLanguageRule(code),
 		CompactLanguageRule: compactLanguageRule(code),
 	}
+}
+
+func platformWithLanguage(platform Platform, language string) Platform {
+	platform.Language = normalizeLanguageCode(language)
+	return platform
 }
 
 func platformLanguageCode(platform Platform) string {
@@ -75,6 +95,14 @@ func normalizeLanguageCode(s string) string {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "en", "en-us", "english":
 		return "en-US"
+	case "ja", "jp", "ja-jp", "japanese", "日本语", "日语":
+		return "ja-JP"
+	case "ko", "kr", "ko-kr", "korean", "韩语", "韓語":
+		return "ko-KR"
+	case "es", "es-es", "spanish", "西班牙语", "西班牙語":
+		return "es-ES"
+	case "th", "th-th", "thai", "泰语", "泰語":
+		return "th-TH"
 	case "zh", "zh-cn", "cn", "chinese", "中文":
 		return "zh-CN"
 	default:
@@ -86,24 +114,54 @@ func normalizeLanguageCode(s string) string {
 }
 
 func platformLanguageName(code string) string {
-	if strings.HasPrefix(strings.ToLower(code), "en") {
+	switch normalizeLanguageCode(code) {
+	case "en-US":
 		return "English"
+	case "ja-JP":
+		return "日本语"
+	case "ko-KR":
+		return "韩语"
+	case "es-ES":
+		return "Español"
+	case "th-TH":
+		return "ไทย"
+	default:
+		return "简体中文"
 	}
-	return "简体中文"
 }
 
 func platformLanguageRule(code string) string {
-	if strings.HasPrefix(strings.ToLower(code), "en") {
+	switch normalizeLanguageCode(code) {
+	case "en-US":
 		return "All user-facing copy, platform fields, detail page text and image text plans must be written in English. Preserve user-provided brand names, model numbers, dimensions, prices and SKUs exactly; do not output Chinese unless it is a brand/model/spec explicitly provided by the user."
+	case "ja-JP":
+		return "All user-facing copy, platform fields, detail page text and image text plans must be written in Japanese. Preserve user-provided brand names, model numbers, dimensions, prices and SKUs exactly; do not output Chinese unless it is a brand/model/spec explicitly provided by the user."
+	case "ko-KR":
+		return "All user-facing copy, platform fields, detail page text and image text plans must be written in Korean. Preserve user-provided brand names, model numbers, dimensions, prices and SKUs exactly; do not output Chinese unless it is a brand/model/spec explicitly provided by the user."
+	case "es-ES":
+		return "All user-facing copy, platform fields, detail page text and image text plans must be written in Spanish. Preserve user-provided brand names, model numbers, dimensions, prices and SKUs exactly; do not output Chinese unless it is a brand/model/spec explicitly provided by the user."
+	case "th-TH":
+		return "All user-facing copy, platform fields, detail page text and image text plans must be written in Thai. Preserve user-provided brand names, model numbers, dimensions, prices and SKUs exactly; do not output Chinese unless it is a brand/model/spec explicitly provided by the user."
+	default:
+		return "所有面向用户的文案、平台字段、详情页文字和图片文字计划必须使用简体中文。用户提供的品牌名、型号、尺寸、价格和 SKU 必须逐字保留。"
 	}
-	return "所有面向用户的文案、平台字段、详情页文字和图片文字计划必须使用简体中文。用户提供的品牌名、型号、尺寸、价格和 SKU 必须逐字保留。"
 }
 
 func compactLanguageRule(code string) string {
-	if strings.HasPrefix(strings.ToLower(code), "en") {
+	switch normalizeLanguageCode(code) {
+	case "en-US":
 		return "Visible text must stay in English and keep provided brand/model/price/spec wording exactly."
+	case "ja-JP":
+		return "Visible text must stay in Japanese and keep provided brand/model/price/spec wording exactly."
+	case "ko-KR":
+		return "Visible text must stay in Korean and keep provided brand/model/price/spec wording exactly."
+	case "es-ES":
+		return "Visible text must stay in Spanish and keep provided brand/model/price/spec wording exactly."
+	case "th-TH":
+		return "Visible text must stay in Thai and keep provided brand/model/price/spec wording exactly."
+	default:
+		return "可见文字必须使用简体中文，并逐字保留用户给出的品牌、型号、价格和规格。"
 	}
-	return "可见文字必须使用简体中文，并逐字保留用户给出的品牌、型号、价格和规格。"
 }
 
 func combineVisualDirection(parts ...string) string {
@@ -377,7 +435,7 @@ func formatUnifiedInfo(out Output) string {
 }
 
 func formatUnifiedInfoForLanguage(out Output, languageCode string) string {
-	if strings.HasPrefix(strings.ToLower(languageCode), "en") {
+	if normalizeLanguageCode(languageCode) != "zh-CN" {
 		lines := []string{
 			"Canonical product title: " + firstNonEmpty(out.ProductInfo.CanonicalTitle, out.ProductTitle),
 			"Short title: " + firstNonEmpty(out.ProductInfo.ShortTitle, out.ProductTitle),
@@ -418,7 +476,7 @@ func limitStrings(items []string, n int) []string {
 }
 
 func formatCompactUnifiedInfoForLanguage(out Output, languageCode string) string {
-	if strings.HasPrefix(strings.ToLower(languageCode), "en") {
+	if normalizeLanguageCode(languageCode) != "zh-CN" {
 		lines := []string{
 			"Title: " + firstNonEmpty(out.ProductInfo.CanonicalTitle, out.ProductTitle),
 			"Core value: " + out.ProductInfo.CoreValue,
@@ -443,7 +501,7 @@ func formatCompactUnifiedInfoForLanguage(out Output, languageCode string) string
 }
 
 func formatCompactUnifiedInfoForAssetLanguage(out Output, assetType, languageCode string) string {
-	if strings.HasPrefix(strings.ToLower(languageCode), "en") {
+	if normalizeLanguageCode(languageCode) != "zh-CN" {
 		lines := []string{
 			"Title: " + firstNonEmpty(out.ProductInfo.CanonicalTitle, out.ProductTitle),
 			"Category: " + out.ProductInfo.Category,
@@ -498,7 +556,7 @@ func formatImageTextPlan(plan ImageTextPlan) string {
 }
 
 func formatImageTextPlanForLanguage(plan ImageTextPlan, languageCode string) string {
-	if strings.HasPrefix(strings.ToLower(languageCode), "en") {
+	if normalizeLanguageCode(languageCode) != "zh-CN" {
 		lines := []string{
 			"Title: " + plan.Title,
 			"Subtitle: " + plan.Subtitle,
@@ -529,29 +587,26 @@ func formatImageTextPlanForLanguage(plan ImageTextPlan, languageCode string) str
 func formatCompactImageTextPlanForLanguage(plan ImageTextPlan, assetType, languageCode string) string {
 	var lines []string
 	switch {
-	case strings.HasPrefix(strings.ToLower(languageCode), "en"):
+	case normalizeLanguageCode(languageCode) != "zh-CN":
 		switch assetType {
 		case AssetTitle, AssetMain:
 			lines = []string{
 				"Title: " + plan.Title,
-				"Subtitle: " + plan.Subtitle,
-				"Badges: " + strings.Join(limitStrings(plan.Badges, 2), "; "),
+				"Badge: " + firstString(plan.Badges),
 				"CTA: " + plan.CTA,
 			}
 		case AssetPrice:
 			lines = []string{
 				"Title: " + plan.Title,
 				"Price: " + plan.PriceText,
-				"Promotion: " + plan.PromotionText,
 				"CTA: " + plan.CTA,
-				"Badges: " + strings.Join(limitStrings(plan.Badges, 2), "; "),
+				"Badge: " + firstString(plan.Badges),
 			}
 		default:
 			lines = []string{
 				"Title: " + plan.Title,
 				"Subtitle: " + plan.Subtitle,
-				"Selling points: " + strings.Join(limitStrings(plan.SellingPoints, 3), "; "),
-				"Specs: " + strings.Join(limitStrings(plan.Specs, 3), "; "),
+				"Selling point: " + firstString(plan.SellingPoints),
 			}
 		}
 	default:
@@ -559,28 +614,34 @@ func formatCompactImageTextPlanForLanguage(plan ImageTextPlan, assetType, langua
 		case AssetTitle, AssetMain:
 			lines = []string{
 				"标题：" + plan.Title,
-				"副标题：" + plan.Subtitle,
-				"标签：" + strings.Join(limitStrings(plan.Badges, 2), "；"),
+				"标签：" + firstString(plan.Badges),
 				"行动号召：" + plan.CTA,
 			}
 		case AssetPrice:
 			lines = []string{
 				"标题：" + plan.Title,
 				"价格：" + plan.PriceText,
-				"促销：" + plan.PromotionText,
 				"行动号召：" + plan.CTA,
-				"标签：" + strings.Join(limitStrings(plan.Badges, 2), "；"),
+				"标签：" + firstString(plan.Badges),
 			}
 		default:
 			lines = []string{
 				"标题：" + plan.Title,
 				"副标题：" + plan.Subtitle,
-				"卖点：" + strings.Join(limitStrings(plan.SellingPoints, 3), "；"),
-				"规格：" + strings.Join(limitStrings(plan.Specs, 3), "；"),
+				"卖点：" + firstString(plan.SellingPoints),
 			}
 		}
 	}
 	return strings.Join(nonEmptyLines(lines), "\n")
+}
+
+func firstString(items []string) string {
+	for _, item := range items {
+		if strings.TrimSpace(item) != "" {
+			return item
+		}
+	}
+	return ""
 }
 
 func nonEmptyLines(lines []string) []string {

@@ -18,6 +18,9 @@ type Config struct {
 	Security  SecurityConfig  `mapstructure:"security"`
 	Scheduler SchedulerConfig `mapstructure:"scheduler"`
 	Upstream  UpstreamConfig  `mapstructure:"upstream"`
+	ImageGen  ImageGenConfig  `mapstructure:"imagegen"`
+	TextGen   TextGenConfig   `mapstructure:"textgen"`
+	VideoGen  VideoGenConfig  `mapstructure:"videogen"`
 	Ecommerce EcommerceConfig `mapstructure:"ecommerce"`
 	EPay      EPayConfig      `mapstructure:"epay"`
 	Backup    BackupConfig    `mapstructure:"backup"`
@@ -68,17 +71,49 @@ type SecurityConfig struct {
 }
 
 type SchedulerConfig struct {
-	MinIntervalSec   int     `mapstructure:"min_interval_sec"`
-	DailyUsageRatio  float64 `mapstructure:"daily_usage_ratio"`
-	LockTTLSec       int     `mapstructure:"lock_ttl_sec"`
-	Cooldown429Sec   int     `mapstructure:"cooldown_429_sec"`
-	WarnedPauseHours int     `mapstructure:"warned_pause_hours"`
+	MinIntervalSec     int     `mapstructure:"min_interval_sec"`
+	DailyUsageRatio    float64 `mapstructure:"daily_usage_ratio"`
+	LockTTLSec         int     `mapstructure:"lock_ttl_sec"`
+	AccountConcurrency int     `mapstructure:"account_concurrency"`
+	Cooldown429Sec     int     `mapstructure:"cooldown_429_sec"`
+	WarnedPauseHours   int     `mapstructure:"warned_pause_hours"`
 }
 
 type UpstreamConfig struct {
 	BaseURL           string `mapstructure:"base_url"`
 	RequestTimeoutSec int    `mapstructure:"request_timeout_sec"`
 	SSEReadTimeoutSec int    `mapstructure:"sse_read_timeout_sec"`
+}
+
+type ImageGenConfig struct {
+	BaseURL        string `mapstructure:"base_url"`
+	APIKey         string `mapstructure:"api_key"`
+	APIKeyEnv      string `mapstructure:"api_key_env"`
+	TimeoutSec     int    `mapstructure:"timeout_sec"`
+	Quality        string `mapstructure:"quality"`
+	Background     string `mapstructure:"background"`
+	OutputFormat   string `mapstructure:"output_format"`
+	ResponseFormat string `mapstructure:"response_format"`
+}
+
+type TextGenConfig struct {
+	BaseURL    string `mapstructure:"base_url"`
+	APIKey     string `mapstructure:"api_key"`
+	APIKeyEnv  string `mapstructure:"api_key_env"`
+	Model      string `mapstructure:"model"`
+	TimeoutSec int    `mapstructure:"timeout_sec"`
+}
+
+type VideoGenConfig struct {
+	BaseURL       string `mapstructure:"base_url"`
+	APIKey        string `mapstructure:"api_key"`
+	APIKeyEnv     string `mapstructure:"api_key_env"`
+	Model         string `mapstructure:"model"`
+	TimeoutSec    int    `mapstructure:"timeout_sec"`
+	DurationSec   int    `mapstructure:"duration_sec"`
+	AspectRatio   string `mapstructure:"aspect_ratio"`
+	Resolution    string `mapstructure:"resolution"`
+	GenerateAudio bool   `mapstructure:"generate_audio"`
 }
 
 type EcommerceConfig struct {

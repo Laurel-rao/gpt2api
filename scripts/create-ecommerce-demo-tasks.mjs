@@ -51,6 +51,7 @@ const plan = [
   {
     itemIndex: 1,
     platformCode: 'amazon',
+    language: 'en-US',
     promptCode: 'cross_border',
     styleCode: 'premium_dark',
     scenario: 'Amazon 跨境详情页',
@@ -126,6 +127,7 @@ for (const step of plan) {
 
   const body = {
     platform_id: platform.id,
+    language: step.language || platform.language || 'zh-CN',
     prompt_template_id: prompt.id,
     style_template_id: style.id,
     requirement: buildRequirement(item, step),
@@ -148,6 +150,7 @@ for (const step of plan) {
   created.push({
     scenario: step.scenario,
     platform: platform.name,
+    language: step.language || platform.language || 'zh-CN',
     prompt: prompt.name,
     style: style.name,
     itemName: item.name,

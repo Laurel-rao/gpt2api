@@ -4,8 +4,8 @@ import { http } from './http'
 export interface SettingItem {
   key: string
   value: string
-  type: 'string' | 'bool' | 'int' | 'email' | 'url' | string
-  category: 'site' | 'auth' | 'limit' | 'mail' | string
+  type: 'string' | 'password' | 'bool' | 'int' | 'email' | 'url' | string
+  category: 'site' | 'auth' | 'limit' | 'mail' | 'imagegen' | 'textgen' | 'videogen' | string
   label: string
   desc: string
 }
@@ -24,6 +24,32 @@ export function reloadSettings(): Promise<{ reloaded: boolean }> {
 
 export function sendTestEmail(to: string): Promise<{ sent: boolean; to: string }> {
   return http.post('/api/admin/settings/test-email', { to })
+}
+
+export function testImageGen(): Promise<{ ok: boolean; duration_ms: number; image_count: number }> {
+  return http.post('/api/admin/settings/test-imagegen', {})
+}
+
+export function testTextGen(): Promise<{ ok: boolean; duration_ms: number; content: string }> {
+  return http.post('/api/admin/settings/test-textgen', {})
+}
+
+export interface VideoGenProbeModel {
+  id: string
+  name: string
+  type: string
+  label: string
+  value: string
+}
+
+export function testVideoGen(): Promise<{
+  ok: boolean
+  duration_ms: number
+  model_count: number
+  model_name: string
+  models?: VideoGenProbeModel[]
+}> {
+  return http.post('/api/admin/settings/test-videogen', {})
 }
 
 export function uploadSiteAsset(key: string, file: File): Promise<{ key: string; url: string }> {

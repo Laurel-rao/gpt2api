@@ -68,7 +68,13 @@ export const useUserStore = defineStore(
     }
 
     async function logout() {
-      clear()
+      try {
+        await authApi.logout()
+      } catch {
+        // 退出登录以本地清理为准:即使网络异常或旧服务端未提供接口,也不要阻塞用户离开。
+      } finally {
+        clear()
+      }
     }
 
     return {

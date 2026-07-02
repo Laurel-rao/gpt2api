@@ -2,7 +2,6 @@ import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import BasicLayout from '@/layouts/BasicLayout.vue'
 import BlankLayout from '@/layouts/BlankLayout.vue'
 import { useUserStore } from '@/stores/user'
-import Ecommerce from '@/views/personal/Ecommerce.vue'
 
 /**
  * 路由约定:
@@ -47,10 +46,11 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '账单与充值', perm: 'self:recharge' } },
       { path: 'play', component: () => import('@/views/personal/OnlinePlay.vue'),
         meta: { title: '在线体验', perm: ['self:image', 'self:usage'] } },
-      { path: 'ecommerce', component: Ecommerce,
-        meta: { title: '电商板块', perm: 'self:ecommerce' } },
+      { path: 'ecommerce', redirect: '/personal/ecommerce-v2' },
       { path: 'ecommerce-v2', component: () => import('@/views/personal/EcommerceWorkbench.vue'),
         meta: { title: '电商智能体', perm: 'self:ecommerce' } },
+      { path: 'ecommerce-assets', component: () => import('@/views/personal/EcommerceAssets.vue'),
+        meta: { title: '电商资产库', perm: 'self:ecommerce' } },
       { path: 'ecommerce-mobile', component: () => import('@/views/personal/EcommerceMobileWorkbench.vue'),
         meta: { title: '电商移动工作台', perm: 'self:ecommerce' } },
       { path: 'docs', component: () => import('@/views/personal/ApiDocs.vue'),
@@ -93,6 +93,8 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '提示词模板', perm: 'ecommerce:manage' } },
       { path: 'ecommerce-styles', component: () => import('@/views/admin/EcommerceStyles.vue'),
         meta: { title: '风格模板', perm: 'ecommerce:manage' } },
+      { path: 'ecommerce-assets', component: () => import('@/views/admin/EcommerceAssets.vue'),
+        meta: { title: '电商资产审核', perm: 'ecommerce:manage' } },
       { path: 'audit', component: () => import('@/views/admin/Audit.vue'),
         meta: { title: '审计日志', perm: 'audit:read' } },
       { path: 'backup', component: () => import('@/views/admin/Backup.vue'),

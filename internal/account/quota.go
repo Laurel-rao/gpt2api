@@ -8,11 +8,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
 
 	"go.uber.org/zap"
+	"golang.org/x/net/publicsuffix"
 
 	"github.com/432539/gpt2api/internal/upstream/chatgpt"
 )
@@ -35,6 +38,7 @@ type QuotaResult struct {
 	DefaultModel    string    `json:"default_model,omitempty"`    // 如 gpt-5-3
 	BlockedFeatures []string  `json:"blocked_features,omitempty"` // 被风控限制的功能列表
 	Error           string    `json:"error,omitempty"`
+	Debug           string    `json:"debug,omitempty"` // 脱敏诊断信息,供后台手动探测排查
 }
 
 // QuotaProber 后台定期探测账号图片剩余额度。
@@ -81,9 +85,11 @@ func (q *QuotaProber) clientFor(ctx context.Context, accountID uint64) *http.Cli
 	if err != nil {
 		q.log.Warn("build utls transport for quota probe failed, fallback std http",
 			zap.Uint64("account_id", accountID), zap.Error(err))
-		return q.client
+		jar, _ := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
+		return &http.Client{Timeout: q.client.Timeout, Jar: jar}
 	}
-	return &http.Client{Transport: tr, Timeout: q.client.Timeout}
+	jar, _ := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
+	return &http.Client{Transport: tr, Timeout: q.client.Timeout, Jar: jar}
 }
 
 func (q *QuotaProber) Kick() {
@@ -176,6 +182,9 @@ func (q *QuotaProber) ProbeOne(ctx context.Context, a *Account) (*QuotaResult, e
 	probe, probeErr := q.doProbe(ctx, a, at)
 	if probeErr != nil {
 		res.Error = friendlyProbeErr(probeErr)
+		if pe := asProbeHTTPError(probeErr); pe != nil {
+			res.Debug = pe.DebugString()
+		}
 		_ = q.svc.dao.ApplyQuotaResult(ctx, a.ID, -1, -1, nil)
 		return res, probeErr
 	}
@@ -197,12 +206,125 @@ func (q *QuotaProber) ProbeOne(ctx context.Context, a *Account) (*QuotaResult, e
 	return res, nil
 }
 
+func (q *QuotaProber) bootstrapBrowserCookies(ctx context.Context, hc *http.Client, a *Account, proxyLabel string) {
+	bootCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(bootCtx, http.MethodGet, chatgpt.BaseURL+"/", nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("User-Agent", chatgpt.DefaultUserAgent)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6")
+	req.Header.Set("Sec-Ch-Ua", `"Microsoft Edge";v="143", "Chromium";v="143", "Not A(Brand";v="24"`)
+	req.Header.Set("Sec-Ch-Ua-Mobile", "?0")
+	req.Header.Set("Sec-Ch-Ua-Platform", `"Windows"`)
+	req.Header.Set("Sec-Fetch-Dest", "document")
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	req.Header.Set("Sec-Fetch-Site", "none")
+	req.Header.Set("Sec-Fetch-User", "?1")
+	req.Header.Set("Upgrade-Insecure-Requests", "1")
+
+	start := time.Now()
+	resp, err := hc.Do(req)
+	elapsed := time.Since(start)
+	if err != nil {
+		q.log.Warn("quota probe bootstrap failed",
+			zap.Uint64("account_id", a.ID),
+			zap.String("email", a.Email),
+			zap.String("proxy", proxyLabel),
+			zap.Duration("elapsed", elapsed),
+			zap.Error(err),
+		)
+		return
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode >= 400 {
+		q.log.Warn("quota probe bootstrap returned non-2xx",
+			zap.Uint64("account_id", a.ID),
+			zap.String("email", a.Email),
+			zap.Int("http_status", resp.StatusCode),
+			zap.String("proxy", proxyLabel),
+			zap.Duration("elapsed", elapsed),
+			zap.String("content_type", resp.Header.Get("Content-Type")),
+			zap.String("server", resp.Header.Get("Server")),
+			zap.String("cf_ray", resp.Header.Get("Cf-Ray")),
+		)
+	}
+}
+
 type probeOutcome struct {
 	remaining       int
 	total           int
 	resetAt         time.Time
 	defaultModel    string
 	blockedFeatures []string
+}
+
+type probeHTTPError struct {
+	Stage       string
+	Method      string
+	URL         string
+	Status      int
+	Body        string
+	AccountID   uint64
+	Email       string
+	Proxy       string
+	DeviceID    string
+	SessionID   string
+	TokenTail   string
+	Elapsed     time.Duration
+	ContentType string
+	Server      string
+	CFRay       string
+}
+
+func (e *probeHTTPError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return fmt.Sprintf("%s http=%d body=%s", e.Stage, e.Status, e.Body)
+}
+
+func (e *probeHTTPError) DebugString() string {
+	if e == nil {
+		return ""
+	}
+	parts := []string{
+		fmt.Sprintf("stage=%s", e.Stage),
+		fmt.Sprintf("method=%s", e.Method),
+		fmt.Sprintf("url=%s", e.URL),
+		fmt.Sprintf("http=%d", e.Status),
+		fmt.Sprintf("elapsed=%s", e.Elapsed.Round(time.Millisecond)),
+		fmt.Sprintf("proxy=%s", e.Proxy),
+		fmt.Sprintf("device_id=%s", maskMiddle(e.DeviceID)),
+		fmt.Sprintf("has_session_id=%t", strings.TrimSpace(e.SessionID) != ""),
+		fmt.Sprintf("session_id=%s", maskMiddle(e.SessionID)),
+		fmt.Sprintf("token_tail=%s", e.TokenTail),
+	}
+	if e.ContentType != "" {
+		parts = append(parts, "content_type="+e.ContentType)
+	}
+	if e.Server != "" {
+		parts = append(parts, "server="+e.Server)
+	}
+	if e.CFRay != "" {
+		parts = append(parts, "cf_ray="+e.CFRay)
+	}
+	if e.Body != "" {
+		parts = append(parts, "body="+e.Body)
+	}
+	return strings.Join(parts, " | ")
+}
+
+func asProbeHTTPError(err error) *probeHTTPError {
+	var pe *probeHTTPError
+	if errors.As(err, &pe) {
+		return pe
+	}
+	return nil
 }
 
 // doProbe 调 /backend-api/conversation/init。
@@ -275,6 +397,7 @@ func (q *QuotaProber) doProbe(ctx context.Context, a *Account, accessToken strin
 	if sid := strings.TrimSpace(a.OAISessionID); sid != "" {
 		req.Header.Set("Oai-Session-Id", sid)
 	}
+	sessionID := strings.TrimSpace(a.OAISessionID)
 	req.Header.Set("Oai-Language", chatgpt.DefaultLanguage)
 	req.Header.Set("Oai-Client-Version", chatgpt.DefaultClientVersion)
 	req.Header.Set("Oai-Client-Build-Number", chatgpt.DefaultClientBuildNum)
@@ -283,15 +406,73 @@ func (q *QuotaProber) doProbe(ctx context.Context, a *Account, accessToken strin
 	req.Header.Set("X-Openai-Target-Path", req.URL.Path)
 	req.Header.Set("X-Openai-Target-Route", req.URL.Path)
 
-	resp, e := q.clientFor(ctx, a.ID).Do(req)
+	proxyLabel := "direct"
+	if q.proxyResolver != nil {
+		proxyLabel = sanitizeProxyURL(q.proxyResolver.ProxyURLForAccount(ctx, a.ID))
+		if proxyLabel == "" {
+			proxyLabel = "direct"
+		}
+	}
+	hc := q.clientFor(ctx, a.ID)
+	q.bootstrapBrowserCookies(ctx, hc, a, proxyLabel)
+	start := time.Now()
+	resp, e := hc.Do(req)
+	elapsed := time.Since(start)
 	if e != nil {
+		q.log.Warn("quota probe request failed",
+			zap.Uint64("account_id", a.ID),
+			zap.String("email", a.Email),
+			zap.String("stage", "conversation/init"),
+			zap.String("method", req.Method),
+			zap.String("url", req.URL.String()),
+			zap.String("proxy", proxyLabel),
+			zap.String("device_id", maskMiddle(deviceID)),
+			zap.Bool("has_session_id", sessionID != ""),
+			zap.Duration("elapsed", elapsed),
+			zap.Error(e),
+		)
 		err = e
 		return
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
-		err = fmt.Errorf("conversation/init http=%d body=%s", resp.StatusCode, truncate(string(data), 200))
+		pe := &probeHTTPError{
+			Stage:       "conversation/init",
+			Method:      req.Method,
+			URL:         req.URL.String(),
+			Status:      resp.StatusCode,
+			Body:        summarizeProbeBody(string(data), resp.Header.Get("Content-Type"), resp.Header.Get("Server")),
+			AccountID:   a.ID,
+			Email:       a.Email,
+			Proxy:       proxyLabel,
+			DeviceID:    deviceID,
+			SessionID:   sessionID,
+			TokenTail:   tokenTail(accessToken),
+			Elapsed:     elapsed,
+			ContentType: resp.Header.Get("Content-Type"),
+			Server:      resp.Header.Get("Server"),
+			CFRay:       resp.Header.Get("Cf-Ray"),
+		}
+		q.log.Warn("quota probe upstream rejected",
+			zap.Uint64("account_id", pe.AccountID),
+			zap.String("email", pe.Email),
+			zap.String("stage", pe.Stage),
+			zap.String("method", pe.Method),
+			zap.String("url", pe.URL),
+			zap.Int("http_status", pe.Status),
+			zap.String("proxy", pe.Proxy),
+			zap.String("device_id", maskMiddle(pe.DeviceID)),
+			zap.Bool("has_session_id", pe.SessionID != ""),
+			zap.String("session_id", maskMiddle(pe.SessionID)),
+			zap.String("token_tail", pe.TokenTail),
+			zap.Duration("elapsed", pe.Elapsed),
+			zap.String("content_type", pe.ContentType),
+			zap.String("server", pe.Server),
+			zap.String("cf_ray", pe.CFRay),
+			zap.String("body", pe.Body),
+		)
+		err = pe
 		return
 	}
 
@@ -349,9 +530,99 @@ func isImageFeature(name string) bool {
 	return strings.Contains(n, "image_gen") || strings.Contains(n, "img_gen")
 }
 
+func sanitizeProxyURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "configured"
+	}
+	if u.User != nil {
+		username := u.User.Username()
+		if username != "" {
+			u.User = url.UserPassword(maskMiddle(username), "***")
+		} else {
+			u.User = url.UserPassword("***", "***")
+		}
+	}
+	return u.String()
+}
+
+func tokenTail(token string) string {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return ""
+	}
+	if len(token) <= 8 {
+		return "***" + token
+	}
+	return "***" + token[len(token)-8:]
+}
+
+func maskMiddle(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if len(s) <= 8 {
+		return "***"
+	}
+	return s[:4] + "..." + s[len(s)-4:]
+}
+
+func summarizeProbeBody(body, contentType, server string) string {
+	s := strings.TrimSpace(body)
+	if s == "" {
+		return ""
+	}
+	lowBody := strings.ToLower(s)
+	lowCT := strings.ToLower(contentType)
+	lowServer := strings.ToLower(server)
+	if strings.Contains(lowCT, "text/html") || strings.HasPrefix(lowBody, "<!doctype html") || strings.HasPrefix(lowBody, "<html") || strings.HasPrefix(lowBody, "<meta ") {
+		label := "html"
+		if strings.Contains(lowServer, "cloudflare") || strings.Contains(lowBody, "cloudflare") || strings.Contains(lowBody, "cf-browser-verification") {
+			label = "cloudflare html challenge"
+		}
+		title := extractHTMLTitle(s)
+		if title != "" {
+			return label + ": title=" + title
+		}
+		return label + ": " + truncate(compactWhitespace(s), 180)
+	}
+	return truncate(compactWhitespace(s), 500)
+}
+
+func extractHTMLTitle(s string) string {
+	low := strings.ToLower(s)
+	start := strings.Index(low, "<title>")
+	end := strings.Index(low, "</title>")
+	if start < 0 || end <= start {
+		return ""
+	}
+	return truncate(compactWhitespace(s[start+len("<title>"):end]), 120)
+}
+
+func compactWhitespace(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
 func friendlyProbeErr(err error) string {
 	if err == nil {
 		return ""
+	}
+	if pe := asProbeHTTPError(err); pe != nil {
+		switch pe.Status {
+		case http.StatusUnauthorized:
+			return "AT 已过期,无法探测额度:" + pe.DebugString()
+		case http.StatusForbidden:
+			return "上游拒绝访问(403):" + pe.DebugString()
+		case http.StatusTooManyRequests:
+			return "上游速率限制(429):" + pe.DebugString()
+		default:
+			return fmt.Sprintf("上游返回异常(%d):%s", pe.Status, pe.DebugString())
+		}
 	}
 	s := err.Error()
 	low := strings.ToLower(s)

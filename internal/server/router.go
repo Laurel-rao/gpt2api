@@ -92,6 +92,7 @@ func New(d *Deps) *gin.Engine {
 			authGrp.POST("/register", d.AuthH.Register)
 			authGrp.POST("/login", d.AuthH.Login)
 			authGrp.POST("/refresh", d.AuthH.Refresh)
+			authGrp.POST("/logout", d.AuthH.Logout)
 		}
 
 		authed := api.Group("", middleware.JWTAuth(d.JWT))
@@ -145,12 +146,24 @@ func New(d *Deps) *gin.Engine {
 				eg := authed.Group("/me/ecommerce", middleware.RequirePerm(rbac.PermSelfEcommerce))
 				{
 					eg.GET("/options", d.EcommerceH.Options)
+					lag := eg.Group("/library/assets")
+					{
+						lag.GET("", d.EcommerceH.ListLibraryAssets)
+						lag.POST("", d.EcommerceH.CreateLibraryAsset)
+						lag.GET("/:asset_id", d.EcommerceH.GetLibraryAsset)
+						lag.PUT("/:asset_id", d.EcommerceH.UpdateLibraryAsset)
+						lag.DELETE("/:asset_id", d.EcommerceH.DeleteLibraryAsset)
+						lag.POST("/:asset_id/files", d.EcommerceH.UploadLibraryAssetFile)
+						lag.POST("/:asset_id/submit-review", d.EcommerceH.SubmitLibraryAssetReview)
+					}
 					eg.POST("/tasks", d.EcommerceH.CreateTask)
 					eg.GET("/tasks", d.EcommerceH.ListTasks)
 					eg.GET("/tasks/:id", d.EcommerceH.GetTask)
+					eg.DELETE("/tasks/:id", d.EcommerceH.DeleteTask)
 					eg.GET("/tasks/:id/export", d.EcommerceH.ExportPoster)
 					eg.POST("/tasks/:id/cancel", d.EcommerceH.CancelTask)
 					eg.POST("/tasks/:id/retry", d.EcommerceH.RetryTask)
+					eg.POST("/tasks/:id/video", d.EcommerceH.GenerateVideo)
 					eg.POST("/tasks/:id/assets/:asset_id/retry", d.EcommerceH.RetryAsset)
 				}
 			}
@@ -298,6 +311,13 @@ func New(d *Deps) *gin.Engine {
 						stg.PUT("/:id", d.EcommerceH.AdminUpdateStyle)
 						stg.DELETE("/:id", d.EcommerceH.AdminDeleteStyle)
 					}
+					lag := eg.Group("/library/assets")
+					{
+						lag.GET("", d.EcommerceH.AdminListLibraryAssets)
+						lag.GET("/:asset_id", d.EcommerceH.AdminGetLibraryAsset)
+						lag.POST("/:asset_id/review", d.EcommerceH.AdminReviewLibraryAsset)
+						lag.POST("/:asset_id/enabled", d.EcommerceH.AdminSetLibraryAssetEnabled)
+					}
 				}
 			}
 
@@ -388,6 +408,9 @@ func New(d *Deps) *gin.Engine {
 					sg.PUT("", d.SettingsH.Update)
 					sg.POST("/reload", d.SettingsH.Reload)
 					sg.POST("/test-email", d.SettingsH.TestMail)
+					sg.POST("/test-imagegen", d.SettingsH.TestImageGen)
+					sg.POST("/test-textgen", d.SettingsH.TestTextGen)
+					sg.POST("/test-videogen", d.SettingsH.TestVideoGen)
 					sg.POST("/site-asset", d.SettingsH.UploadSiteAsset)
 				}
 			}
@@ -405,6 +428,12 @@ func New(d *Deps) *gin.Engine {
 				}
 			}
 		}
+	}
+
+	// 兼容旧前端包使用的网关前缀。退出登录是无状态幂等操作,不要求 JWT,
+	// 避免 token 失效后用户反而无法退出。
+	if d.AuthH != nil {
+		r.POST("/_gateway/auth/logout", d.AuthH.Logout)
 	}
 
 	// ---- OpenAI 兼容网关(API Key) ----
@@ -426,6 +455,9 @@ func New(d *Deps) *gin.Engine {
 	}
 	if err := os.MkdirAll(settings.SiteAssetDir(), 0o755); err == nil {
 		r.Static("/site-assets", settings.SiteAssetDir())
+	}
+	if err := os.MkdirAll(ecommerce.LibraryAssetDir(), 0o755); err == nil {
+		r.Static("/ecommerce-assets", ecommerce.LibraryAssetDir())
 	}
 
 	// ---- 前端 SPA(可选;找不到 dist 就跳过) ----

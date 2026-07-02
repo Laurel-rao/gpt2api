@@ -72,7 +72,7 @@ func (d *DAO) ListPromptTemplates(ctx context.Context, f ListFilter) ([]PromptTe
 	where, args := buildConfigWhere(f)
 	var out []PromptTemplate
 	err := d.db.SelectContext(ctx, &out, `
-SELECT id, code, name, content_prompt, image_prompt, remark, enabled, created_at, updated_at, deleted_at
+SELECT id, code, name, content_prompt, image_prompt, video_prompt, remark, enabled, created_at, updated_at, deleted_at
   FROM ecommerce_prompt_templates
  WHERE `+where+`
  ORDER BY id DESC`, args...)
@@ -82,7 +82,7 @@ SELECT id, code, name, content_prompt, image_prompt, remark, enabled, created_at
 func (d *DAO) GetPromptTemplate(ctx context.Context, id uint64) (*PromptTemplate, error) {
 	var p PromptTemplate
 	err := d.db.GetContext(ctx, &p, `
-SELECT id, code, name, content_prompt, image_prompt, remark, enabled, created_at, updated_at, deleted_at
+SELECT id, code, name, content_prompt, image_prompt, video_prompt, remark, enabled, created_at, updated_at, deleted_at
   FROM ecommerce_prompt_templates
  WHERE id=? AND deleted_at IS NULL`, id)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -93,8 +93,8 @@ SELECT id, code, name, content_prompt, image_prompt, remark, enabled, created_at
 
 func (d *DAO) CreatePromptTemplate(ctx context.Context, p *PromptTemplate) error {
 	res, err := d.db.ExecContext(ctx, `
-INSERT INTO ecommerce_prompt_templates (code, name, content_prompt, image_prompt, remark, enabled)
-VALUES (?, ?, ?, ?, ?, ?)`, p.Code, p.Name, p.ContentPrompt, p.ImagePrompt, p.Remark, p.Enabled)
+INSERT INTO ecommerce_prompt_templates (code, name, content_prompt, image_prompt, video_prompt, remark, enabled)
+VALUES (?, ?, ?, ?, ?, ?, ?)`, p.Code, p.Name, p.ContentPrompt, p.ImagePrompt, p.VideoPrompt, p.Remark, p.Enabled)
 	if err != nil {
 		return err
 	}
@@ -106,8 +106,8 @@ VALUES (?, ?, ?, ?, ?, ?)`, p.Code, p.Name, p.ContentPrompt, p.ImagePrompt, p.Re
 func (d *DAO) UpdatePromptTemplate(ctx context.Context, p *PromptTemplate) error {
 	res, err := d.db.ExecContext(ctx, `
 UPDATE ecommerce_prompt_templates
-   SET code=?, name=?, content_prompt=?, image_prompt=?, remark=?, enabled=?
- WHERE id=? AND deleted_at IS NULL`, p.Code, p.Name, p.ContentPrompt, p.ImagePrompt, p.Remark, p.Enabled, p.ID)
+   SET code=?, name=?, content_prompt=?, image_prompt=?, video_prompt=?, remark=?, enabled=?
+ WHERE id=? AND deleted_at IS NULL`, p.Code, p.Name, p.ContentPrompt, p.ImagePrompt, p.VideoPrompt, p.Remark, p.Enabled, p.ID)
 	return checkRows(res, err)
 }
 
@@ -167,10 +167,10 @@ func (d *DAO) DeleteStyleTemplate(ctx context.Context, id uint64) error {
 func (d *DAO) CreateTask(ctx context.Context, t *Task) error {
 	res, err := d.db.ExecContext(ctx, `
 INSERT INTO ecommerce_tasks
-  (task_id, user_id, platform_id, prompt_template_id, style_template_id, requirement, reference_images, status, progress)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  (task_id, user_id, platform_id, prompt_template_id, style_template_id, language, requirement, reference_images, product_asset_id, model_asset_id, status, progress)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.TaskID, t.UserID, t.PlatformID, t.PromptTemplateID, t.StyleTemplateID,
-		t.Requirement, nullJSON(t.ReferenceImages.RawMessage()), nullEmpty(t.Status, StatusQueued), t.Progress)
+		nullEmpty(t.Language, "zh-CN"), t.Requirement, nullJSON(t.ReferenceImages.RawMessage()), t.ProductAssetID, t.ModelAssetID, nullEmpty(t.Status, StatusQueued), t.Progress)
 	if err != nil {
 		return err
 	}
@@ -181,7 +181,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 
 func (d *DAO) GetTask(ctx context.Context, taskID string) (*TaskRow, error) {
 	var t TaskRow
-	err := d.db.GetContext(ctx, &t, taskSelectSQL()+` WHERE t.task_id=?`, taskID)
+	err := d.db.GetContext(ctx, &t, taskSelectSQL()+` WHERE t.task_id=? AND t.deleted_at IS NULL`, taskID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -192,7 +192,7 @@ func (d *DAO) ListTasksByUser(ctx context.Context, userID uint64, f ListFilter, 
 	if limit <= 0 {
 		limit = 10
 	}
-	where := []string{"t.user_id=?"}
+	where := []string{"t.user_id=?", "t.deleted_at IS NULL"}
 	args := []interface{}{userID}
 	if f.Status != "" {
 		where = append(where, "t.status=?")
@@ -200,8 +200,8 @@ func (d *DAO) ListTasksByUser(ctx context.Context, userID uint64, f ListFilter, 
 	}
 	if f.Keyword != "" {
 		like := "%" + f.Keyword + "%"
-		where = append(where, "(t.requirement LIKE ? OR p.name LIKE ? OR pt.name LIKE ? OR st.name LIKE ?)")
-		args = append(args, like, like, like, like)
+		where = append(where, "(t.task_id LIKE ? OR t.requirement LIKE ? OR CAST(t.output_json AS CHAR) LIKE ? OR p.name LIKE ? OR pt.name LIKE ? OR st.name LIKE ?)")
+		args = append(args, like, like, like, like, like, like)
 	}
 	countSQL := `
 SELECT COUNT(*)
@@ -218,6 +218,14 @@ SELECT COUNT(*)
 	err := d.db.SelectContext(ctx, &out, taskSelectSQL()+` WHERE `+strings.Join(where, " AND ")+`
  ORDER BY t.id DESC LIMIT ? OFFSET ?`, append(args, limit, offset)...)
 	return out, total, err
+}
+
+func (d *DAO) DeleteTask(ctx context.Context, taskID string, userID uint64) error {
+	res, err := d.db.ExecContext(ctx, `
+UPDATE ecommerce_tasks
+   SET deleted_at=NOW(), deleted_by=?
+ WHERE task_id=? AND user_id=? AND deleted_at IS NULL`, userID, taskID, userID)
+	return checkRows(res, err)
 }
 
 func (d *DAO) MarkTaskRunning(ctx context.Context, taskID string) error {
@@ -239,8 +247,8 @@ UPDATE ecommerce_tasks
 }
 
 func (d *DAO) MarkTaskRetrying(ctx context.Context, taskID string) error {
-	_, err := d.db.ExecContext(ctx, `UPDATE ecommerce_tasks SET status='running', error='', finished_at=NULL WHERE task_id=? AND status<>'canceled'`, taskID)
-	return err
+	res, err := d.db.ExecContext(ctx, `UPDATE ecommerce_tasks SET status='running', error='', finished_at=NULL WHERE task_id=?`, taskID)
+	return checkRows(res, err)
 }
 
 func (d *DAO) ResetTaskForRetry(ctx context.Context, taskID string) error {
@@ -302,8 +310,8 @@ UPDATE ecommerce_tasks
 
 func (d *DAO) CreateAsset(ctx context.Context, a *Asset) error {
 	res, err := d.db.ExecContext(ctx, `
-INSERT INTO ecommerce_assets (task_id, asset_type, image_task_id, url, file_id, prompt, status, error)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, a.TaskID, a.AssetType, a.ImageTaskID, a.URL, a.FileID, a.Prompt, nullEmpty(a.Status, StatusQueued), a.Error)
+INSERT INTO ecommerce_assets (task_id, asset_type, image_task_id, url, file_id, prompt, status, progress, error)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, a.TaskID, a.AssetType, a.ImageTaskID, a.URL, a.FileID, a.Prompt, nullEmpty(a.Status, StatusQueued), clampProgress(a.Progress), a.Error)
 	if err != nil {
 		return err
 	}
@@ -313,23 +321,45 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, a.TaskID, a.AssetType, a.ImageTaskID, a.URL, a
 }
 
 func (d *DAO) UpdateAssetResult(ctx context.Context, id uint64, status, imageTaskID, url, fileID, errMsg string) error {
+	progress := progressForStatus(status, 0)
 	res, err := d.db.ExecContext(ctx, `
 UPDATE ecommerce_assets
-   SET status=?, image_task_id=?, url=?, file_id=?, error=?,
+   SET status=?, image_task_id=?, url=?, file_id=?, progress=?, error=?,
        started_at=CASE
          WHEN ?='running' THEN COALESCE(started_at, NOW())
          WHEN ?='success' THEN COALESCE(started_at, NOW())
          ELSE started_at
        END,
        finished_at=CASE WHEN ? IN ('success','failed') THEN NOW() ELSE NULL END
- WHERE id=? AND status<>'canceled'`, status, imageTaskID, url, fileID, truncate(errMsg, 500), status, status, status, id)
+ WHERE id=? AND status<>'canceled'`, status, imageTaskID, url, fileID, progress, truncate(errMsg, 500), status, status, status, id)
+	return checkRows(res, err)
+}
+
+func (d *DAO) UpdateAssetProgress(ctx context.Context, id uint64, progress int) error {
+	_, err := d.db.ExecContext(ctx, `
+UPDATE ecommerce_assets
+   SET progress=GREATEST(progress, ?)
+ WHERE id=? AND status='running'`, clampProgress(progress), id)
+	return err
+}
+
+func (d *DAO) UpdateAssetVideoProgress(ctx context.Context, id uint64, status, imageTaskID string, progress int) error {
+	localStatus := StatusQueued
+	if isVideoProcessingStatus(status) {
+		localStatus = StatusRunning
+	}
+	res, err := d.db.ExecContext(ctx, `
+UPDATE ecommerce_assets
+   SET status=?, image_task_id=?, progress=?,
+       started_at=CASE WHEN ?='running' THEN COALESCE(started_at, NOW()) ELSE started_at END
+ WHERE id=? AND status IN ('queued','running')`, localStatus, imageTaskID, progressForStatus(localStatus, progress), localStatus, id)
 	return checkRows(res, err)
 }
 
 func (d *DAO) GetAsset(ctx context.Context, id uint64) (*Asset, error) {
 	var a Asset
 	err := d.db.GetContext(ctx, &a, `
-SELECT id, task_id, asset_type, image_task_id, url, file_id, prompt, status, error, created_at, started_at, finished_at, updated_at
+SELECT id, task_id, asset_type, image_task_id, url, file_id, prompt, status, progress, error, created_at, started_at, finished_at, updated_at
   FROM ecommerce_assets
  WHERE id=?`, id)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -341,8 +371,8 @@ SELECT id, task_id, asset_type, image_task_id, url, file_id, prompt, status, err
 func (d *DAO) MarkAssetRetrying(ctx context.Context, id uint64, imageTaskID, prompt string) error {
 	res, err := d.db.ExecContext(ctx, `
 UPDATE ecommerce_assets
-   SET status='running', image_task_id=?, url='', file_id='', prompt=?, error='', started_at=NOW(), finished_at=NULL
- WHERE id=? AND status<>'canceled'`, imageTaskID, prompt, id)
+   SET status='running', image_task_id=?, url='', file_id='', prompt=?, progress=10, error='', started_at=NOW(), finished_at=NULL
+ WHERE id=? AND status NOT IN ('queued','running')`, imageTaskID, prompt, id)
 	return checkRows(res, err)
 }
 
@@ -357,11 +387,25 @@ UPDATE ecommerce_assets
 func (d *DAO) ListAssets(ctx context.Context, taskID string) ([]Asset, error) {
 	var out []Asset
 	err := d.db.SelectContext(ctx, &out, `
-SELECT id, task_id, asset_type, image_task_id, url, file_id, prompt, status, error, created_at, started_at, finished_at, updated_at
+SELECT id, task_id, asset_type, image_task_id, url, file_id, prompt, status, progress, error, created_at, started_at, finished_at, updated_at
   FROM ecommerce_assets
  WHERE task_id=?
  ORDER BY id ASC`, taskID)
 	return out, err
+}
+
+func (d *DAO) GetLatestAssetByType(ctx context.Context, taskID, assetType string) (*Asset, error) {
+	var a Asset
+	err := d.db.GetContext(ctx, &a, `
+SELECT id, task_id, asset_type, image_task_id, url, file_id, prompt, status, progress, error, created_at, started_at, finished_at, updated_at
+  FROM ecommerce_assets
+ WHERE task_id=? AND asset_type=?
+ ORDER BY id DESC
+ LIMIT 1`, taskID, assetType)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &a, err
 }
 
 func buildConfigWhere(f ListFilter) (string, []interface{}) {
@@ -381,9 +425,9 @@ func buildConfigWhere(f ListFilter) (string, []interface{}) {
 func taskSelectSQL() string {
 	return `
 SELECT t.id, t.task_id, t.user_id, t.platform_id, t.prompt_template_id, t.style_template_id,
-       t.requirement, t.reference_images, t.status, t.progress, t.output_json,
+       t.language, t.requirement, t.reference_images, COALESCE(t.product_asset_id, '') AS product_asset_id, COALESCE(t.model_asset_id, '') AS model_asset_id, t.status, t.progress, t.output_json,
        COALESCE(t.output_html, '') AS output_html, t.error,
-       t.created_at, t.started_at, t.finished_at,
+       t.created_at, t.started_at, t.finished_at, t.deleted_at, COALESCE(t.deleted_by, 0) AS deleted_by,
        p.name AS platform_name, pt.name AS prompt_name, st.name AS style_name
   FROM ecommerce_tasks t
   JOIN ecommerce_platforms p ON p.id=t.platform_id
@@ -421,6 +465,41 @@ func nullEmpty(s, fallback string) string {
 		return fallback
 	}
 	return s
+}
+
+func clampProgress(progress int) int {
+	if progress < 0 {
+		return 0
+	}
+	if progress > 100 {
+		return 100
+	}
+	return progress
+}
+
+func progressForStatus(status string, progress int) int {
+	switch status {
+	case StatusSuccess:
+		return 100
+	case StatusRunning:
+		if progress <= 0 {
+			return 10
+		}
+		return clampProgress(progress)
+	case StatusQueued, StatusFailed, StatusCanceled:
+		return 0
+	default:
+		return clampProgress(progress)
+	}
+}
+
+func isVideoProcessingStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "processing", "running", "generating":
+		return true
+	default:
+		return false
+	}
 }
 
 func truncate(s string, max int) string {
