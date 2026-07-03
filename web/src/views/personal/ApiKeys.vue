@@ -2,7 +2,7 @@
 import { ref, reactive, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as keyApi from '@/api/apikey'
-import { formatCredit, formatDateTime, nullVal } from '@/utils/format'
+import { formatCredit, formatDateTime } from '@/utils/format'
 
 const loading = ref(false)
 const page = ref(1)
@@ -17,7 +17,6 @@ const form = reactive({
   quota_limit: 0,      // 0 = 无限
   rpm: 0,
   tpm: 0,
-  allowed_models: '' as string,   // 逗号分隔
   allowed_ips: '' as string,
 })
 
@@ -36,7 +35,7 @@ async function fetchList() {
 }
 
 function openCreate() {
-  Object.assign(form, { name: '', quota_limit: 0, rpm: 0, tpm: 0, allowed_models: '', allowed_ips: '' })
+  Object.assign(form, { name: '', quota_limit: 0, rpm: 0, tpm: 0, allowed_ips: '' })
   dialogVisible.value = true
 }
 
@@ -52,8 +51,6 @@ async function onCreate() {
       quota_limit: Number(form.quota_limit) || 0,
       rpm: Number(form.rpm) || 0,
       tpm: Number(form.tpm) || 0,
-      allowed_models: form.allowed_models
-        .split(',').map((s) => s.trim()).filter(Boolean),
       allowed_ips: form.allowed_ips
         .split(',').map((s) => s.trim()).filter(Boolean),
     })
@@ -110,7 +107,7 @@ onMounted(fetchList)
         <div>
           <h2 class="page-title" style="margin:0">API Keys</h2>
           <div style="color:var(--el-text-color-secondary);font-size:13px;margin-top:4px">
-            管理你的下游调用 Key,支持 RPM / TPM 限流、IP 白名单、模型白名单;Key 只在创建时完整展示一次,请妥善保存。
+            管理你的下游调用 Key,支持 RPM / TPM 限流和 IP 白名单;Key 只在创建时完整展示一次,请妥善保存。
           </div>
         </div>
         <el-button type="primary" @click="openCreate">
@@ -142,12 +139,6 @@ onMounted(fetchList)
               <div>RPM: {{ row.rpm || '分组默认' }}</div>
               <div>TPM: {{ row.tpm || '分组默认' }}</div>
             </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="允许模型" min-width="140">
-          <template #default="{ row }">
-            <el-tag v-if="!nullVal(row.allowed_models)" type="info" size="small">全部</el-tag>
-            <span v-else>{{ nullVal(row.allowed_models) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="90">
@@ -205,9 +196,6 @@ onMounted(fetchList)
         </el-form-item>
         <el-form-item label="TPM">
           <el-input-number v-model="form.tpm" :min="0" :step="1000" />
-        </el-form-item>
-        <el-form-item label="允许模型">
-          <el-input v-model="form.allowed_models" placeholder="逗号分隔,留空表示全部" />
         </el-form-item>
         <el-form-item label="IP 白名单">
           <el-input v-model="form.allowed_ips" placeholder="逗号分隔,留空表示不限" />

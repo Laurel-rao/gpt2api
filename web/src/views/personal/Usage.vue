@@ -5,7 +5,7 @@ import * as meApi from '@/api/me'
 import { formatCredit, formatDateTime, formatErrorCode } from '@/utils/format'
 import { ENABLE_CHAT_MODEL } from '@/config/feature'
 
-// ==================== 概览 + 每日 + 模型 TOP ====================
+// ==================== 概览 + 每日趋势 ====================
 
 const statsLoading = ref(false)
 const stats = ref<meApi.MyStatsResp | null>(null)
@@ -30,7 +30,6 @@ async function loadStats() {
 
 const overall = computed(() => stats.value?.overall)
 const daily = computed(() => stats.value?.daily || [])
-const byModel = computed(() => stats.value?.by_model || [])
 
 // ============ 每日请求图表(SVG)============
 // 自适应宽度:随容器大小重绘
@@ -293,7 +292,7 @@ onMounted(() => {
       </el-row>
     </div>
 
-    <!-- 每日柱状 + 模型 TOP -->
+    <!-- 每日柱状 -->
     <div class="card-block">
       <div class="flex-between" style="margin-bottom:12px">
         <div>
@@ -428,33 +427,6 @@ onMounted(() => {
           </g>
         </svg>
       </div>
-
-      <div style="margin-top:18px">
-        <h3 class="page-title" style="margin:0 0 10px;font-size:16px">模型 TOP</h3>
-        <el-table :data="byModel" stripe size="small" v-loading="statsLoading" empty-text="暂无数据">
-          <el-table-column label="模型" min-width="180">
-            <template #default="{ row }">
-              <code>{{ row.model_slug || `#${row.model_id}` }}</code>
-            </template>
-          </el-table-column>
-          <el-table-column prop="type" label="类型" width="80">
-            <template #default="{ row }">
-              <el-tag size="small" :type="row.type === 'image' ? 'warning' : 'primary'">
-                {{ row.type || '-' }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column prop="requests" label="请求数" width="100" />
-          <el-table-column prop="failures" label="失败" width="80" />
-          <el-table-column prop="input_tokens" label="输入 tok" width="110" />
-          <el-table-column prop="output_tokens" label="输出 tok" width="110" />
-          <el-table-column prop="image_count" label="图数" width="80" />
-          <el-table-column label="扣费" width="120">
-            <template #default="{ row }">{{ formatCredit(row.credit_cost) }}</template>
-          </el-table-column>
-          <el-table-column prop="avg_dur_ms" label="平均耗时(ms)" width="130" />
-        </el-table>
-      </div>
     </div>
 
     <!-- 明细 Tabs -->
@@ -485,11 +457,6 @@ onMounted(() => {
           <el-table :data="logItems" stripe size="small" v-loading="logLoading" empty-text="暂无记录">
             <el-table-column prop="created_at" label="时间" width="170">
               <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
-            </el-table-column>
-            <el-table-column label="模型" min-width="150">
-              <template #default="{ row }">
-                <code>{{ row.model_slug || `#${row.model_id}` }}</code>
-              </template>
             </el-table-column>
             <el-table-column label="类型" width="80">
               <template #default="{ row }">

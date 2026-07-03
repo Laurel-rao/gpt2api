@@ -2,11 +2,9 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
-  listMyModels,
   listMyUsageLogs,
   listMyImageTasks,
   getMyUsageStats,
-  type SimpleModel,
   type UsageItem,
   type ImageTask,
   type MyStatsResp,
@@ -15,13 +13,7 @@ import { formatCredit, formatDateTime, formatErrorCode } from '@/utils/format'
 import { ENABLE_CHAT_MODEL } from '@/config/feature'
 
 const activeTab = ref<'chat' | 'image'>(ENABLE_CHAT_MODEL ? 'chat' : 'image')
-
-const models = ref<SimpleModel[]>([])
-const chatModels = computed(() => models.value.filter((m) => m.type === 'chat'))
-const imageModels = computed(() => models.value.filter((m) => m.type === 'image'))
-
-const selectedChatModel = ref<string>('')
-const selectedImageModel = ref<string>('')
+const API_MODEL_PLACEHOLDER = '<MODEL>'
 
 // 原点:浏览器当前地址,用于 SDK 示例的 base_url
 const origin = computed(() => window.location.origin)
@@ -115,12 +107,11 @@ function resetImageFilters() {
 
 // ---------- SDK 代码示例 ----------
 const chatCurl = computed(() => {
-  const model = selectedChatModel.value || 'gpt-5'
   return `curl ${origin.value}/v1/chat/completions \\
   -H "Authorization: Bearer \${YOUR_API_KEY}" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "${model}",
+    "model": "${API_MODEL_PLACEHOLDER}",
     "stream": true,
     "messages": [
       {"role": "user", "content": "你好,介绍一下你自己"}
@@ -129,7 +120,6 @@ const chatCurl = computed(() => {
 })
 
 const chatPython = computed(() => {
-  const model = selectedChatModel.value || 'gpt-5'
   return `from openai import OpenAI
 
 client = OpenAI(
@@ -138,7 +128,7 @@ client = OpenAI(
 )
 
 resp = client.chat.completions.create(
-    model="${model}",
+    model="${API_MODEL_PLACEHOLDER}",
     messages=[{"role": "user", "content": "你好"}],
     stream=True,
 )
@@ -147,12 +137,11 @@ for chunk in resp:
 })
 
 const imageCurl = computed(() => {
-  const model = selectedImageModel.value || 'gpt-image-2'
   return `curl ${origin.value}/v1/images/generations \\
   -H "Authorization: Bearer \${YOUR_API_KEY}" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "${model}",
+    "model": "${API_MODEL_PLACEHOLDER}",
     "prompt": "A cute orange cat playing with yarn, studio ghibli style",
     "n": 1,
     "size": "1024x1024"
@@ -160,12 +149,11 @@ const imageCurl = computed(() => {
 })
 
 const imageCurlWithRef = computed(() => {
-  const model = selectedImageModel.value || 'gpt-image-2'
   return `curl ${origin.value}/v1/images/generations \\
   -H "Authorization: Bearer \${YOUR_API_KEY}" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "${model}",
+    "model": "${API_MODEL_PLACEHOLDER}",
     "prompt": "根据参考图生成一个类似风格的图片",
     "n": 1,
     "size": "1024x1024",
@@ -181,7 +169,6 @@ const imageCurlWithRef = computed(() => {
 })
 
 const imagePython = computed(() => {
-  const model = selectedImageModel.value || 'gpt-image-2'
   return `from openai import OpenAI
 
 client = OpenAI(
@@ -190,7 +177,7 @@ client = OpenAI(
 )
 
 resp = client.images.generate(
-    model="${model}",
+    model="${API_MODEL_PLACEHOLDER}",
     prompt="A cute orange cat playing with yarn",
     n=1,
     size="1024x1024",
@@ -199,7 +186,6 @@ print(resp.data[0].url)`
 })
 
 const imagePythonRequests = computed(() => {
-  const model = selectedImageModel.value || 'gpt-image-2'
   return `import requests
 
 url = "${origin.value}/v1/images/generations"
@@ -208,7 +194,7 @@ headers = {
     "Content-Type": "application/json"
 }
 data = {
-    "model": "${model}",
+    "model": "${API_MODEL_PLACEHOLDER}",
     "prompt": "A cute orange cat playing with yarn",
     "n": 1,
     "size": "1024x1024"
@@ -220,7 +206,6 @@ print(result["data"][0]["url"])`
 })
 
 const imagePythonRequestsWithRef = computed(() => {
-  const model = selectedImageModel.value || 'gpt-image-2'
   return `import requests
 
 url = "${origin.value}/v1/images/generations"
@@ -229,7 +214,7 @@ headers = {
     "Content-Type": "application/json"
 }
 data = {
-    "model": "${model}",
+    "model": "${API_MODEL_PLACEHOLDER}",
     "prompt": "根据参考图生成一个类似风格的图片",
     "n": 1,
     "size": "1024x1024",
@@ -289,18 +274,6 @@ function downloadImage(url: string, prompt: string) {
 
 // ---------- 初始化 ----------
 onMounted(async () => {
-  try {
-    const m = await listMyModels()
-    models.value = ENABLE_CHAT_MODEL
-      ? m.items
-      : m.items.filter((x) => x.type !== 'chat')
-    const firstChat = m.items.find((x) => x.type === 'chat')
-    const firstImage = m.items.find((x) => x.type === 'image')
-    if (firstChat) selectedChatModel.value = firstChat.slug
-    if (firstImage) selectedImageModel.value = firstImage.slug
-  } catch {
-    // 忽略
-  }
   loadStats()
   if (ENABLE_CHAT_MODEL) loadChatLogs()
   loadImageTasks()
@@ -344,18 +317,10 @@ onMounted(async () => {
 
     <el-tabs v-model="activeTab" class="pg-tabs">
       <!-- ================== 文字对话 ================== -->
-      <el-tab-pane v-if="ENABLE_CHAT_MODEL" label="对话生成(文字模型)" name="chat">
+      <el-tab-pane v-if="ENABLE_CHAT_MODEL" label="对话生成" name="chat">
         <div class="card-block">
           <div class="row">
-            <div class="label">文字模型</div>
-            <el-select v-model="selectedChatModel" placeholder="选择模型" style="width: 320px">
-              <el-option
-                v-for="m in chatModels"
-                :key="m.id"
-                :label="`${m.slug}${m.description ? ' · ' + m.description : ''}`"
-                :value="m.slug"
-              />
-            </el-select>
+            <div class="label">调用示例</div>
             <router-link to="/personal/keys">
               <el-button text type="primary">没有 Key?去「API Keys」创建</el-button>
             </router-link>
@@ -382,7 +347,6 @@ onMounted(async () => {
             <el-table-column prop="created_at" label="时间" min-width="160">
               <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
             </el-table-column>
-            <el-table-column prop="model_slug" label="模型" min-width="140" />
             <el-table-column label="Token (in / out / cache)" min-width="170">
               <template #default="{ row }">
                 {{ row.input_tokens }} / {{ row.output_tokens }}
@@ -417,18 +381,10 @@ onMounted(async () => {
       </el-tab-pane>
 
       <!-- ================== 图片生成 ================== -->
-      <el-tab-pane label="图片生成(图片模型)" name="image">
+      <el-tab-pane label="图片生成" name="image">
         <div class="card-block">
           <div class="row">
-            <div class="label">图片模型</div>
-            <el-select v-model="selectedImageModel" placeholder="选择模型" style="width: 320px">
-              <el-option
-                v-for="m in imageModels"
-                :key="m.id"
-                :label="`${m.slug}${m.description ? ' · ' + m.description : ''}`"
-                :value="m.slug"
-              />
-            </el-select>
+            <div class="label">调用示例</div>
           </div>
 
           <el-tabs type="border-card" class="code-tabs">

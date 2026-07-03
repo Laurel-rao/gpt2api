@@ -27,11 +27,10 @@ const greeting = computed(() => {
   return '晚上好'
 })
 
-// ---------- 数据:API Keys / 模型 / 统计 / 最近日志 / 账变 ----------
+// ---------- 数据:API Keys / 统计 / 最近日志 / 账变 ----------
 const loading = ref(false)
 const keyTotal = ref(0)
 const keyActive = ref(0)
-const modelCount = ref(0)
 const stats14 = ref<meApi.MyStatsResp | null>(null)
 const stats1 = ref<meApi.MyStatsResp | null>(null)
 const recentLogs = ref<meApi.UsageItem[]>([])
@@ -41,9 +40,8 @@ async function loadAll() {
   loading.value = true
   try {
     await store.fetchMe()
-    const [keys, models, s14, s1, logs, credits] = await Promise.all([
+    const [keys, s14, s1, logs, credits] = await Promise.all([
       listKeys(1, 100),
-      meApi.listMyModels(),
       meApi.getMyUsageStats({ days: 14, top_n: 3 }),
       meApi.getMyUsageStats({ days: 1, top_n: 1 }),
       meApi.listMyUsageLogs({ limit: 6, offset: 0 }),
@@ -52,7 +50,6 @@ async function loadAll() {
     const keyList = Array.isArray(keys.list) ? keys.list : []
     keyTotal.value = keys.total || keyList.length
     keyActive.value = keyList.filter((k) => k.enabled).length
-    modelCount.value = models.total || (Array.isArray(models.items) ? models.items.length : 0)
     stats14.value = s14
     stats1.value = s1
     recentLogs.value = Array.isArray(logs.items) ? logs.items : []
@@ -66,7 +63,6 @@ async function loadAll() {
 const todayOverall = computed(() => stats1.value?.overall)
 const monthOverall = computed(() => stats14.value?.overall) // 近 14 天,作为"近期"展示
 const daily = computed(() => (Array.isArray(stats14.value?.daily) ? stats14.value!.daily : []))
-const topModels = computed(() => (Array.isArray(stats14.value?.by_model) ? stats14.value!.by_model : []).slice(0, 3))
 
 function successRate(o?: meApi.UsageOverall | null): string {
   if (!o || o.requests === 0) return '—'
@@ -154,9 +150,6 @@ const tipX = computed(() => (hoverIdx.value >= 0 ? xCenter(hoverIdx.value) : 0))
 const tipY = computed(() => (hoverIdx.value >= 0 ? pointY(daily.value[hoverIdx.value]?.requests || 0) : 0))
 const tipSide = computed<'left' | 'right'>(() => (tipX.value > chartW.value / 2 ? 'left' : 'right'))
 
-// ---------- TOP 模型横向条 ----------
-const maxTop = computed(() => topModels.value.reduce((x, r) => Math.max(x, r.requests), 0) || 1)
-
 // ---------- 最近请求/账变 辅助 ----------
 const statusMap: Record<string, { tag: 'success' | 'danger' | 'warning' | 'info'; label: string }> = {
   success: { tag: 'success', label: '成功' },
@@ -183,7 +176,7 @@ const quickTools = [
   },
   {
     title: '在线体验',
-    desc: '快速测试模型、图片和接口效果。',
+    desc: '快速测试图片和接口效果。',
     icon: ChatLineRound,
     path: '/personal/play',
   },
@@ -320,15 +313,15 @@ const quickTools = [
           <div class="kpi-body">
             <div class="kpi-label">API Key</div>
             <div class="kpi-value">{{ keyTotal }}</div>
-            <div class="kpi-sub">启用 {{ keyActive }} · 可用模型 {{ modelCount }}</div>
+            <div class="kpi-sub">启用 {{ keyActive }}</div>
           </div>
         </div>
       </el-col>
     </el-row>
 
-    <!-- ====== 趋势 + 热门模型 ====== -->
+    <!-- ====== 趋势 ====== -->
     <el-row :gutter="16">
-      <el-col :lg="16" :md="14" :sm="24">
+      <el-col :span="24">
         <div class="card-block">
           <div class="flex-between" style="margin-bottom:10px">
             <div>
@@ -437,42 +430,6 @@ const quickTools = [
           </div>
         </div>
       </el-col>
-
-      <el-col :lg="8" :md="10" :sm="24">
-        <div class="card-block">
-          <div class="flex-between" style="margin-bottom:10px">
-            <h3 class="page-title" style="margin:0;font-size:16px">热门模型</h3>
-            <span class="muted">近 14 天</span>
-          </div>
-          <div v-if="topModels.length === 0" class="muted" style="padding:16px 0;text-align:center">
-            暂无调用记录
-          </div>
-          <div v-else class="top-list">
-            <div v-for="(m, idx) in topModels" :key="m.model_id" class="top-row">
-              <div class="top-head">
-                <span class="top-rank" :class="'r' + (idx + 1)">{{ idx + 1 }}</span>
-                <code class="top-slug">{{ m.model_slug || `#${m.model_id}` }}</code>
-                <el-tag
-                  size="small"
-                  :type="m.type === 'image' ? 'warning' : 'primary'"
-                  effect="plain"
-                >{{ m.type || '-' }}</el-tag>
-                <span class="top-val">{{ m.requests }}</span>
-              </div>
-              <div class="top-bar">
-                <div
-                  class="top-bar-inner"
-                  :class="{ img: m.type === 'image' }"
-                  :style="{ width: ((m.requests / maxTop) * 100) + '%' }"
-                />
-              </div>
-              <div class="top-foot muted">
-                扣费 {{ formatCredit(m.credit_cost) }} · 平均 {{ m.avg_dur_ms || 0 }} ms
-              </div>
-            </div>
-          </div>
-        </div>
-      </el-col>
     </el-row>
 
     <!-- ====== 最近请求 + 最近账变 ====== -->
@@ -492,11 +449,6 @@ const quickTools = [
           >
             <el-table-column prop="created_at" label="时间" width="150">
               <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
-            </el-table-column>
-            <el-table-column label="模型" min-width="140">
-              <template #default="{ row }">
-                <code>{{ row.model_slug || `#${row.model_id}` }}</code>
-              </template>
             </el-table-column>
             <el-table-column label="类型" width="72">
               <template #default="{ row }">
@@ -825,54 +777,6 @@ code {
 }
 .chart-tip .tip-dot.primary { background: var(--el-color-primary); }
 .chart-tip .tip-dot.danger { background: var(--el-color-danger); }
-
-/* ==== 热门模型横向条 ==== */
-.top-list { display: flex; flex-direction: column; gap: 12px; }
-.top-row { min-width: 0; }
-.top-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-  font-size: 13px;
-}
-.top-rank {
-  width: 20px; height: 20px;
-  border-radius: 50%;
-  font-size: 11px;
-  font-weight: 700;
-  display: flex; align-items: center; justify-content: center;
-  background: var(--el-fill-color);
-  color: var(--el-text-color-secondary);
-  flex-shrink: 0;
-}
-.top-rank.r1 { background: #ffd43b; color: #7a5a00; }
-.top-rank.r2 { background: #ced4da; color: #495057; }
-.top-rank.r3 { background: #ffc9a5; color: #8a4708; }
-.top-slug {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.top-val { font-weight: 600; color: var(--el-text-color-primary); }
-.top-bar {
-  height: 6px;
-  background: var(--el-fill-color-light);
-  border-radius: 4px;
-  overflow: hidden;
-}
-.top-bar-inner {
-  height: 100%;
-  background: linear-gradient(90deg, var(--el-color-primary), #7c3aed);
-  border-radius: 4px;
-  transition: width 0.3s;
-}
-.top-bar-inner.img {
-  background: linear-gradient(90deg, var(--el-color-warning), var(--el-color-danger));
-}
-.top-foot { font-size: 11.5px; margin-top: 4px; }
 
 /* ==== 最近请求表格 ==== */
 .cost { font-weight: 600; color: var(--el-color-danger); }
