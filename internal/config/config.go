@@ -105,10 +105,26 @@ type TextGenConfig struct {
 }
 
 type VideoGenConfig struct {
-	BaseURL       string `mapstructure:"base_url"`
-	APIKey        string `mapstructure:"api_key"`
-	APIKeyEnv     string `mapstructure:"api_key_env"`
-	Model         string `mapstructure:"model"`
+	ChannelType string `mapstructure:"channel_type"`
+	BaseURL     string `mapstructure:"base_url"`
+	APIKey      string `mapstructure:"api_key"`
+	APIKeyEnv   string `mapstructure:"api_key_env"`
+	Model       string `mapstructure:"model"`
+	APIYI       struct {
+		BaseURL string `mapstructure:"base_url"`
+		APIKey  string `mapstructure:"api_key"`
+		Model   string `mapstructure:"model"`
+	} `mapstructure:"apiyi_seedance2"`
+	APIYIWan27 struct {
+		BaseURL string `mapstructure:"base_url"`
+		APIKey  string `mapstructure:"api_key"`
+		Model   string `mapstructure:"model"`
+	} `mapstructure:"apiyi_wan27"`
+	APIYIHappyHorse struct {
+		BaseURL string `mapstructure:"base_url"`
+		APIKey  string `mapstructure:"api_key"`
+		Model   string `mapstructure:"model"`
+	} `mapstructure:"apiyi_happyhorse"`
 	TimeoutSec    int    `mapstructure:"timeout_sec"`
 	DurationSec   int    `mapstructure:"duration_sec"`
 	AspectRatio   string `mapstructure:"aspect_ratio"`

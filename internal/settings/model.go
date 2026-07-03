@@ -101,17 +101,30 @@ const (
 	TextGenTimeoutSec = "textgen.timeout_sec"
 
 	// AI Gen Platform 视频网关
-	VideoGenEnabled       = "videogen.enabled"
-	VideoGenAccount       = "videogen.account"
-	VideoGenAPIKey        = "videogen.api_key"
-	VideoGenBaseURL       = "videogen.base_url"
-	VideoGenModel         = "videogen.model"
-	VideoGenTimeoutSec    = "videogen.timeout_sec"
-	VideoGenDurationSec   = "videogen.duration_sec"
-	VideoGenAspectRatio   = "videogen.aspect_ratio"
-	VideoGenResolution    = "videogen.resolution"
-	VideoGenGenerateAudio = "videogen.generate_audio"
-	VideoGenBillingRatio  = "videogen.billing_ratio"
+	VideoGenEnabled           = "videogen.enabled"
+	VideoGenChannelType       = "videogen.channel_type"
+	VideoGenAccount           = "videogen.account"
+	VideoGenAPIKey            = "videogen.api_key"
+	VideoGenBaseURL           = "videogen.base_url"
+	VideoGenModel             = "videogen.model"
+	VideoGenAPIYIAccount      = "videogen.apiyi_seedance2.account"
+	VideoGenAPIYIAPIKey       = "videogen.apiyi_seedance2.api_key"
+	VideoGenAPIYIBaseURL      = "videogen.apiyi_seedance2.base_url"
+	VideoGenAPIYIModel        = "videogen.apiyi_seedance2.model"
+	VideoGenWan27Account      = "videogen.apiyi_wan27.account"
+	VideoGenWan27APIKey       = "videogen.apiyi_wan27.api_key"
+	VideoGenWan27BaseURL      = "videogen.apiyi_wan27.base_url"
+	VideoGenWan27Model        = "videogen.apiyi_wan27.model"
+	VideoGenHappyHorseAccount = "videogen.apiyi_happyhorse.account"
+	VideoGenHappyHorseAPIKey  = "videogen.apiyi_happyhorse.api_key"
+	VideoGenHappyHorseBaseURL = "videogen.apiyi_happyhorse.base_url"
+	VideoGenHappyHorseModel   = "videogen.apiyi_happyhorse.model"
+	VideoGenTimeoutSec        = "videogen.timeout_sec"
+	VideoGenDurationSec       = "videogen.duration_sec"
+	VideoGenAspectRatio       = "videogen.aspect_ratio"
+	VideoGenResolution        = "videogen.resolution"
+	VideoGenGenerateAudio     = "videogen.generate_audio"
+	VideoGenBillingRatio      = "videogen.billing_ratio"
 
 	// 计费与充值
 	BillingCreditPerCNY        = "billing.credit_per_cny"
@@ -188,7 +201,7 @@ var Defs = []KeyDef{
 	{Key: ImageGenEnabled, Type: "bool", Category: "imagegen", Default: "false", Label: "启用生图网关", Desc: "开启后所有生图/图生图/电商图片都走此网关"},
 	{Key: ImageGenAccount, Type: "string", Category: "imagegen", Default: "", Label: "账号", Desc: "用于后台识别这组 AI Zero Token 配置,不参与接口鉴权"},
 	{Key: ImageGenAPIKey, Type: "password", Category: "imagegen", Default: "", Label: "密钥", Desc: "AI Zero Token API Key;保存后仅显示脱敏值,留空保存可清除"},
-	{Key: ImageGenBaseURL, Type: "url", Category: "imagegen", Default: "http://43.134.21.160/v1", Label: "Base URL", Desc: "OpenAI 兼容 /v1 地址"},
+	{Key: ImageGenBaseURL, Type: "url", Category: "imagegen", Default: "http://43.128.120.182/v1", Label: "Base URL", Desc: "OpenAI 兼容 /v1 地址"},
 	{Key: ImageGenQuality, Type: "string", Category: "imagegen", Default: "low", Label: "默认质量", Desc: "low / medium / high / auto;请求未指定时使用"},
 	{Key: ImageGenBackground, Type: "string", Category: "imagegen", Default: "auto", Label: "默认背景", Desc: "transparent / opaque / auto;请求未指定时使用"},
 	{Key: ImageGenOutputFormat, Type: "string", Category: "imagegen", Default: "png", Label: "输出格式", Desc: "png / webp / jpeg;请求未指定时使用"},
@@ -199,17 +212,30 @@ var Defs = []KeyDef{
 	{Key: TextGenEnabled, Type: "bool", Category: "textgen", Default: "false", Label: "启用文本网关", Desc: "开启后聊天接口和电商文案生成优先走 AI Zero Token 文本网关"},
 	{Key: TextGenAccount, Type: "string", Category: "textgen", Default: "", Label: "账号", Desc: "用于后台识别这组 AI Zero Token 文本配置,不参与接口鉴权"},
 	{Key: TextGenAPIKey, Type: "password", Category: "textgen", Default: "", Label: "密钥", Desc: "AI Zero Token API Key;保存后仅显示脱敏值,留空保存可清除"},
-	{Key: TextGenBaseURL, Type: "url", Category: "textgen", Default: "http://43.134.21.160/v1", Label: "Base URL", Desc: "OpenAI 兼容 /v1 地址"},
+	{Key: TextGenBaseURL, Type: "url", Category: "textgen", Default: "http://43.128.120.182/v1", Label: "Base URL", Desc: "OpenAI 兼容 /v1 地址"},
 	{Key: TextGenModel, Type: "string", Category: "textgen", Default: "gpt-5.4", Label: "默认模型", Desc: "当前网关支持 gpt-5.5 / gpt-5.4 / gpt-5.4-mini / gpt-5.3-codex-spark"},
 	{Key: TextGenTimeoutSec, Type: "int", Category: "textgen", Default: "120", Label: "超时(秒)", Desc: "文本生成等待上限"},
 
 	// ---------- AI Gen Platform 视频网关 ----------
 	{Key: VideoGenEnabled, Type: "bool", Category: "videogen", Default: "false", Label: "启用视频网关", Desc: "开启后电商任务会额外生成商品短视频"},
+	{Key: VideoGenChannelType, Type: "string", Category: "videogen", Default: "echoon", Label: "渠道类型", Desc: "echoon / apiyi_seedance2 / apiyi_wan27 / apiyi_happyhorse；API易渠道使用独立异步任务接口"},
 	{Key: VideoGenAccount, Type: "string", Category: "videogen", Default: "", Label: "账号", Desc: "用于后台识别这组 AI Gen Platform 配置,不参与接口鉴权"},
 	{Key: VideoGenAPIKey, Type: "password", Category: "videogen", Default: "", Label: "密钥", Desc: "AI Gen Platform API Key;保存后仅显示脱敏值,留空保存可清除"},
 	{Key: VideoGenBaseURL, Type: "url", Category: "videogen", Default: "http://app.echoon.top/api/v1", Label: "Base URL", Desc: "AI Gen Platform API 根地址"},
 	{Key: VideoGenModel, Type: "string", Category: "videogen", Default: "0e37fa2d-72b3-483a-81b4-ad595cd147c7", Label: "默认视频模型", Desc: "默认使用 Seedance-2.0-D-V；接口要求保存模型 ID"},
-	{Key: VideoGenTimeoutSec, Type: "int", Category: "videogen", Default: "900", Label: "超时(秒)", Desc: "视频任务轮询等待上限"},
+	{Key: VideoGenAPIYIAccount, Type: "string", Category: "videogen", Default: "API易 Seedance 2.0", Label: "API易账号", Desc: "用于后台识别 API易 Seedance 2.0 配置,不参与接口鉴权"},
+	{Key: VideoGenAPIYIAPIKey, Type: "password", Category: "videogen", Default: "", Label: "API易密钥", Desc: "API易 API Key；令牌需勾选 SeeDance2 分组"},
+	{Key: VideoGenAPIYIBaseURL, Type: "url", Category: "videogen", Default: "https://api.apiyi.com", Label: "API易 Base URL", Desc: "API易 Seedance 2.0 API 根地址"},
+	{Key: VideoGenAPIYIModel, Type: "string", Category: "videogen", Default: "doubao-seedance-2-0-fast-260128", Label: "API易默认模型", Desc: "doubao-seedance-2-0-fast-260128 / doubao-seedance-2-0-260128"},
+	{Key: VideoGenWan27Account, Type: "string", Category: "videogen", Default: "API易 Wan2.7", Label: "API易 Wan2.7 账号", Desc: "用于后台识别 API易 Wan2.7 配置,不参与接口鉴权"},
+	{Key: VideoGenWan27APIKey, Type: "password", Category: "videogen", Default: "", Label: "API易 Wan2.7 密钥", Desc: "API易 API Key；令牌需勾选 Wan 分组"},
+	{Key: VideoGenWan27BaseURL, Type: "url", Category: "videogen", Default: "https://api.apiyi.com", Label: "API易 Wan2.7 Base URL", Desc: "API易 Wan2.7 DashScope 透传 API 根地址"},
+	{Key: VideoGenWan27Model, Type: "string", Category: "videogen", Default: "wan2.7-r2v", Label: "API易 Wan2.7 默认模型", Desc: "wan2.7-r2v / wan2.7-t2v / wan2.7-i2v；无参考图时自动使用 wan2.7-t2v"},
+	{Key: VideoGenHappyHorseAccount, Type: "string", Category: "videogen", Default: "API易 HappyHorse", Label: "API易 HappyHorse 账号", Desc: "用于后台识别 API易 HappyHorse 配置,不参与接口鉴权"},
+	{Key: VideoGenHappyHorseAPIKey, Type: "password", Category: "videogen", Default: "", Label: "API易 HappyHorse 密钥", Desc: "API易 API Key；令牌需勾选 Wan 分组"},
+	{Key: VideoGenHappyHorseBaseURL, Type: "url", Category: "videogen", Default: "https://api.apiyi.com", Label: "API易 HappyHorse Base URL", Desc: "API易 HappyHorse DashScope 透传 API 根地址"},
+	{Key: VideoGenHappyHorseModel, Type: "string", Category: "videogen", Default: "happyhorse-1.0-r2v", Label: "API易 HappyHorse 默认模型", Desc: "happyhorse-1.0-r2v / happyhorse-1.0-t2v / happyhorse-1.0-i2v；无参考图时自动使用 happyhorse-1.0-t2v"},
+	{Key: VideoGenTimeoutSec, Type: "int", Category: "videogen", Default: "1800", Label: "超时(秒)", Desc: "视频任务轮询等待上限，默认 30 分钟"},
 	{Key: VideoGenDurationSec, Type: "int", Category: "videogen", Default: "5", Label: "默认时长(秒)", Desc: "电商短视频默认生成时长"},
 	{Key: VideoGenAspectRatio, Type: "string", Category: "videogen", Default: "16:9", Label: "默认画幅", Desc: "如 16:9 / 9:16 / 1:1"},
 	{Key: VideoGenResolution, Type: "string", Category: "videogen", Default: "720p", Label: "默认分辨率", Desc: "如 720p / 1080p，取决于模型支持"},

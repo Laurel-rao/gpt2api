@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/432539/gpt2api/internal/videogen"
 )
 
 // Service 带内存缓存的只读/可写访问层。
@@ -367,7 +369,7 @@ func (s *Service) ImageGenAPIKey() string {
 	return strings.TrimSpace(s.GetString(ImageGenAPIKey))
 }
 func (s *Service) ImageGenBaseURL() string {
-	return firstNonEmpty(strings.TrimSpace(s.GetString(ImageGenBaseURL)), "http://43.134.21.160/v1")
+	return firstNonEmpty(strings.TrimSpace(s.GetString(ImageGenBaseURL)), "http://43.128.120.182/v1")
 }
 func (s *Service) ImageGenQuality() string {
 	return firstNonEmpty(strings.TrimSpace(s.GetString(ImageGenQuality)), "low")
@@ -402,7 +404,7 @@ func (s *Service) TextGenAPIKey() string {
 	return strings.TrimSpace(s.GetString(TextGenAPIKey))
 }
 func (s *Service) TextGenBaseURL() string {
-	return firstNonEmpty(strings.TrimSpace(s.GetString(TextGenBaseURL)), "http://43.134.21.160/v1")
+	return firstNonEmpty(strings.TrimSpace(s.GetString(TextGenBaseURL)), "http://43.128.120.182/v1")
 }
 func (s *Service) TextGenModel() string {
 	return firstNonEmpty(strings.TrimSpace(s.GetString(TextGenModel)), "gpt-5.4")
@@ -417,22 +419,104 @@ func (s *Service) TextGenTimeoutSec() int {
 
 // -- videogen --
 func (s *Service) VideoGenEnabled() bool { return s.GetBool(VideoGenEnabled) }
+func (s *Service) VideoGenChannelType() string {
+	v := strings.ToLower(strings.TrimSpace(s.GetString(VideoGenChannelType)))
+	switch v {
+	case "", videogen.ChannelEchoon:
+		return videogen.ChannelEchoon
+	case videogen.ChannelAPIYISeedance:
+		return videogen.ChannelAPIYISeedance
+	case videogen.ChannelAPIYIWan27:
+		return videogen.ChannelAPIYIWan27
+	case videogen.ChannelAPIYIHappyHorse:
+		return videogen.ChannelAPIYIHappyHorse
+	default:
+		return videogen.ChannelEchoon
+	}
+}
 func (s *Service) VideoGenAccount() string {
-	return strings.TrimSpace(s.GetString(VideoGenAccount))
+	switch s.VideoGenChannelType() {
+	case videogen.ChannelAPIYISeedance:
+		return strings.TrimSpace(s.GetString(VideoGenAPIYIAccount))
+	case videogen.ChannelAPIYIWan27:
+		return strings.TrimSpace(s.GetString(VideoGenWan27Account))
+	case videogen.ChannelAPIYIHappyHorse:
+		return strings.TrimSpace(s.GetString(VideoGenHappyHorseAccount))
+	default:
+		return strings.TrimSpace(s.GetString(VideoGenAccount))
+	}
 }
 func (s *Service) VideoGenAPIKey() string {
-	return strings.TrimSpace(s.GetString(VideoGenAPIKey))
+	switch s.VideoGenChannelType() {
+	case videogen.ChannelAPIYISeedance:
+		return strings.TrimSpace(s.GetString(VideoGenAPIYIAPIKey))
+	case videogen.ChannelAPIYIWan27:
+		return strings.TrimSpace(s.GetString(VideoGenWan27APIKey))
+	case videogen.ChannelAPIYIHappyHorse:
+		return strings.TrimSpace(s.GetString(VideoGenHappyHorseAPIKey))
+	default:
+		return strings.TrimSpace(s.GetString(VideoGenAPIKey))
+	}
 }
 func (s *Service) VideoGenBaseURL() string {
-	return firstNonEmpty(strings.TrimSpace(s.GetString(VideoGenBaseURL)), "http://app.echoon.top/api/v1")
+	switch s.VideoGenChannelType() {
+	case videogen.ChannelAPIYISeedance:
+		return firstNonEmpty(strings.TrimSpace(s.GetString(VideoGenAPIYIBaseURL)), "https://api.apiyi.com")
+	case videogen.ChannelAPIYIWan27:
+		return firstNonEmpty(strings.TrimSpace(s.GetString(VideoGenWan27BaseURL)), "https://api.apiyi.com")
+	case videogen.ChannelAPIYIHappyHorse:
+		return firstNonEmpty(strings.TrimSpace(s.GetString(VideoGenHappyHorseBaseURL)), "https://api.apiyi.com")
+	default:
+		return firstNonEmpty(strings.TrimSpace(s.GetString(VideoGenBaseURL)), "http://app.echoon.top/api/v1")
+	}
 }
 func (s *Service) VideoGenModel() string {
-	return firstNonEmpty(strings.TrimSpace(s.GetString(VideoGenModel)), "0e37fa2d-72b3-483a-81b4-ad595cd147c7")
+	switch s.VideoGenChannelType() {
+	case videogen.ChannelAPIYISeedance:
+		return firstNonEmpty(strings.TrimSpace(s.GetString(VideoGenAPIYIModel)), "doubao-seedance-2-0-fast-260128")
+	case videogen.ChannelAPIYIWan27:
+		return firstNonEmpty(strings.TrimSpace(s.GetString(VideoGenWan27Model)), "wan2.7-r2v")
+	case videogen.ChannelAPIYIHappyHorse:
+		return firstNonEmpty(strings.TrimSpace(s.GetString(VideoGenHappyHorseModel)), "happyhorse-1.0-r2v")
+	default:
+		return firstNonEmpty(strings.TrimSpace(s.GetString(VideoGenModel)), "0e37fa2d-72b3-483a-81b4-ad595cd147c7")
+	}
+}
+func (s *Service) VideoGenConfigForChannel(channelType string) videogen.Config {
+	channelType = strings.ToLower(strings.TrimSpace(channelType))
+	cfg := videogen.Config{
+		ChannelType:   channelType,
+		TimeoutSec:    s.VideoGenTimeoutSec(),
+		DurationSec:   s.VideoGenDurationSec(),
+		AspectRatio:   s.VideoGenAspectRatio(),
+		Resolution:    s.VideoGenResolution(),
+		GenerateAudio: s.VideoGenGenerateAudio(),
+	}
+	switch channelType {
+	case videogen.ChannelAPIYISeedance:
+		cfg.BaseURL = firstNonEmpty(strings.TrimSpace(s.GetString(VideoGenAPIYIBaseURL)), "https://api.apiyi.com")
+		cfg.APIKey = strings.TrimSpace(s.GetString(VideoGenAPIYIAPIKey))
+		cfg.Model = firstNonEmpty(strings.TrimSpace(s.GetString(VideoGenAPIYIModel)), "doubao-seedance-2-0-fast-260128")
+	case videogen.ChannelAPIYIWan27:
+		cfg.BaseURL = firstNonEmpty(strings.TrimSpace(s.GetString(VideoGenWan27BaseURL)), "https://api.apiyi.com")
+		cfg.APIKey = strings.TrimSpace(s.GetString(VideoGenWan27APIKey))
+		cfg.Model = firstNonEmpty(strings.TrimSpace(s.GetString(VideoGenWan27Model)), "wan2.7-r2v")
+	case videogen.ChannelAPIYIHappyHorse:
+		cfg.BaseURL = firstNonEmpty(strings.TrimSpace(s.GetString(VideoGenHappyHorseBaseURL)), "https://api.apiyi.com")
+		cfg.APIKey = strings.TrimSpace(s.GetString(VideoGenHappyHorseAPIKey))
+		cfg.Model = firstNonEmpty(strings.TrimSpace(s.GetString(VideoGenHappyHorseModel)), "happyhorse-1.0-r2v")
+	default:
+		cfg.ChannelType = videogen.ChannelEchoon
+		cfg.BaseURL = firstNonEmpty(strings.TrimSpace(s.GetString(VideoGenBaseURL)), "http://app.echoon.top/api/v1")
+		cfg.APIKey = strings.TrimSpace(s.GetString(VideoGenAPIKey))
+		cfg.Model = firstNonEmpty(strings.TrimSpace(s.GetString(VideoGenModel)), "0e37fa2d-72b3-483a-81b4-ad595cd147c7")
+	}
+	return cfg
 }
 func (s *Service) VideoGenTimeoutSec() int {
 	n := int(s.GetInt(VideoGenTimeoutSec))
 	if n <= 0 {
-		return 900
+		return 1800
 	}
 	return n
 }
