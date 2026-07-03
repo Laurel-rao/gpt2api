@@ -258,6 +258,11 @@ func isUUID(s string) bool {
 	return err == nil
 }
 
+func isVideoUpstreamTaskID(s string) bool {
+	s = strings.TrimSpace(s)
+	return isUUID(s) || strings.HasPrefix(s, "cgt-")
+}
+
 // RawJSON 让 MySQL JSON NULL 可以安全扫进 Go，再按普通 JSON 输出。
 type RawJSON json.RawMessage
 

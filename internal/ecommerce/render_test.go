@@ -556,6 +556,18 @@ func TestVideoReferenceImagesUseProductAnchorDataURL(t *testing.T) {
 	}
 }
 
+func TestVideoUpstreamTaskIDAcceptsAPIYIIDs(t *testing.T) {
+	if !isVideoUpstreamTaskID("cgt-20260606160057-6bbjd") {
+		t.Fatal("apiyi cgt task id should be accepted")
+	}
+	if !isVideoUpstreamTaskID("0e37fa2d-72b3-483a-81b4-ad595cd147c7") {
+		t.Fatal("uuid task id should be accepted")
+	}
+	if isVideoUpstreamTaskID("vid_local_pending") {
+		t.Fatal("local pending id should not be treated as upstream task id")
+	}
+}
+
 func TestComputeVideoBillingCostUsesPlatformCreditsRatio(t *testing.T) {
 	got := computeVideoBillingCost(1.25, 10)
 	if got != 125000 {

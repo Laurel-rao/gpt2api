@@ -112,7 +112,7 @@ func (r *Runner) VideoEnabled() bool {
 }
 
 func (r *Runner) SyncVideoAsset(ctx context.Context, asset Asset) error {
-	if r.videoGen == nil || !r.videoGen.Enabled() || asset.AssetType != AssetVideo || !isUUID(asset.ImageTaskID) {
+	if r.videoGen == nil || !r.videoGen.Enabled() || asset.AssetType != AssetVideo || !isVideoUpstreamTaskID(asset.ImageTaskID) {
 		return nil
 	}
 	result, err := r.videoGen.GetTask(ctx, asset.ImageTaskID)

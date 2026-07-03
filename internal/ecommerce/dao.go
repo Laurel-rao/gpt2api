@@ -537,7 +537,7 @@ func progressForStatus(status string, progress int) int {
 
 func isVideoProcessingStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "processing", "running", "generating":
+	case "processing", "running", "generating", "in_progress":
 		return true
 	default:
 		return false

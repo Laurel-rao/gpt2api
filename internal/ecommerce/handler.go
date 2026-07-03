@@ -9,10 +9,12 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 
 	"github.com/432539/gpt2api/internal/audit"
 	imgpkg "github.com/432539/gpt2api/internal/image"
 	"github.com/432539/gpt2api/internal/middleware"
+	"github.com/432539/gpt2api/pkg/logger"
 	"github.com/432539/gpt2api/pkg/resp"
 )
 
@@ -185,7 +187,13 @@ func (h *Handler) ListTasks(c *gin.Context) {
 	}
 	items := make([]gin.H, 0, len(rows))
 	for i := range rows {
-		v, _ := h.taskViewFromRow(c.Request.Context(), &rows[i], false)
+		v, err := h.taskViewFromRow(c.Request.Context(), &rows[i], false)
+		if err != nil {
+			logger.L().Warn("ecommerce task view sync failed",
+				zap.String("task_id", rows[i].TaskID),
+				zap.Error(err))
+			continue
+		}
 		items = append(items, v)
 	}
 	resp.OK(c, gin.H{"items": items, "total": total, "limit": limit, "offset": offset})
@@ -420,6 +428,12 @@ func (h *Handler) taskViewFromRow(ctx context.Context, row *TaskRow, includeRefs
 			if fresh, getErr := h.dao.GetAsset(ctx, assets[i].ID); getErr == nil {
 				assets[i] = *fresh
 			}
+		} else {
+			logger.L().Warn("ecommerce video asset sync failed",
+				zap.String("task_id", row.TaskID),
+				zap.Uint64("asset_id", assets[i].ID),
+				zap.String("upstream_task_id", assets[i].ImageTaskID),
+				zap.Error(err))
 		}
 	}
 	latestAssets := latestAssetsByType(assets)

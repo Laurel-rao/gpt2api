@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { Close, CopyDocument, Document, Download, Refresh, RefreshRight, VideoPlay, View } from '@element-plus/icons-vue'
+import { ArrowDown, Close, CopyDocument, Document, Download, MoreFilled, Refresh, RefreshRight, VideoPlay, View } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox, type UploadFile } from 'element-plus'
 import {
   ECOMMERCE_LANGUAGES,
@@ -29,8 +29,13 @@ const MAX_IMAGES = 4
 const MAX_IMAGE_MB = 20
 const POLL_INTERVAL = 2500
 const TASK_PAGE_SIZE = 5
+const HISTORY_INITIAL_DELAY = 700
+const HISTORY_PAGE_DELAY = 360
+const LAST_TASK_STORAGE_KEY = 'gpt2api.ecommerce-v2.last-task-id'
+const TASK_COMPACT_TAG_SCORE = 27
 
-const loading = ref(false)
+const optionsLoading = ref(false)
+const detailLoading = ref(false)
 const submitting = ref(false)
 const canceling = ref(false)
 const exporting = ref(false)
@@ -39,6 +44,9 @@ const generatingVideo = ref(false)
 const libraryAssetsLoading = ref(false)
 const libraryAssetsLoaded = ref(false)
 const tasksLoading = ref(false)
+const historyDeferred = ref(true)
+const taskHistoryExpanded = ref(true)
+const taskMoreVisible = ref(false)
 const tasksTotal = ref(0)
 const retryingTaskID = ref('')
 const retryingAssetID = ref(0)
@@ -47,6 +55,7 @@ const taskKeyword = ref('')
 const polling = ref<number | null>(null)
 const pollingTaskID = ref('')
 const ticker = ref<number | null>(null)
+const historyDelayTimer = ref<number | null>(null)
 const nowTs = ref(Date.now())
 const previewVisible = ref(false)
 const detailVisible = ref(false)
@@ -333,6 +342,57 @@ function taskRequirementPreview(task: EcommerceTask) {
   return compactText(task.requirement, 92) || '暂无商品资料'
 }
 
+function taskTitle(task: EcommerceTask) {
+  return task.output_json?.product_title || task.requirement || '未命名任务'
+}
+
+function taskTagItems(task: EcommerceTask) {
+  return uniqueStrings([
+    task.platform_name || '未知平台',
+    task.language_name || ecommerceLanguageName(task.language),
+    task.prompt_name || '默认模板',
+    task.style_name || '默认风格',
+  ])
+}
+
+function taskTagScore(tag: string) {
+  return Array.from(tag).reduce((sum, char) => sum + (char.charCodeAt(0) <= 255 ? 0.55 : 1), 2)
+}
+
+function taskTagView(task: EcommerceTask, limit = TASK_COMPACT_TAG_SCORE) {
+  const visible: string[] = []
+  const hidden: string[] = []
+  let score = 0
+  for (const tag of taskTagItems(task)) {
+    const next = taskTagScore(tag) + (visible.length ? 1 : 0)
+    if (score + next <= limit) {
+      visible.push(tag)
+      score += next
+    } else {
+      hidden.push(tag)
+    }
+  }
+  return { visible, hidden }
+}
+
+function taskTagsTitle(task: EcommerceTask) {
+  return taskTagItems(task).join(' / ')
+}
+
+async function showTaskMorePopover() {
+  const deferred = historyDeferred.value
+  cancelScheduledHistoryLoad()
+  historyDeferred.value = false
+  if (deferred || (!tasks.value.length && tasksTotal.value !== 0)) {
+    await loadTasks(true)
+  }
+}
+
+async function openTaskFromHistory(task: EcommerceTask) {
+  taskMoreVisible.value = false
+  await openTask(task)
+}
+
 function toggleRetryPanel(assetID: number) {
   const next = new Set(retryPanelOpenIDs.value)
   if (next.has(assetID)) next.delete(assetID)
@@ -541,17 +601,22 @@ async function loadTasks(reset = true) {
 }
 
 async function searchTasks() {
+  cancelScheduledHistoryLoad()
+  historyDeferred.value = false
   await loadTasks(true)
 }
 
 function clearTaskSearch() {
   if (!taskKeyword.value) return
+  cancelScheduledHistoryLoad()
   taskKeyword.value = ''
+  historyDeferred.value = false
   loadTasks(true)
 }
 
 async function loadMoreTasks() {
   if (!hasMoreTasks.value || tasksLoading.value) return
+  await wait(HISTORY_PAGE_DELAY)
   await loadTasks(false)
 }
 
@@ -571,18 +636,83 @@ function onTaskListWheel(event: WheelEvent) {
 }
 
 async function initialize() {
-  loading.value = true
+  optionsLoading.value = true
   try {
     await loadOptions()
-    await loadTasks()
-    if (!activeTask.value && tasks.value[0]) {
-      await openTask(tasks.value[0])
-    }
+    optionsLoading.value = false
+    await loadInitialTaskDetail()
+    scheduleHistoryLoad()
   } catch (err) {
     console.error('ecommerce workbench initialize failed:', err)
     ElMessage.error('电商工作台初始化失败')
   } finally {
-    loading.value = false
+    optionsLoading.value = false
+  }
+}
+
+async function loadInitialTaskDetail() {
+  const cachedTaskID = readLastTaskID()
+  if (cachedTaskID) {
+    if (await openTaskByID(cachedTaskID)) {
+      return
+    }
+    clearLastTaskID()
+  }
+  detailLoading.value = true
+  try {
+    const data = await listEcommerceTasks({ limit: 1, offset: 0 })
+    const first = data.items?.[0]
+    if (!first) return
+    tasksTotal.value = data.total || 1
+    tasks.value = [first]
+    await openTaskByID(first.task_id)
+  } catch (err) {
+    console.warn('load initial ecommerce task detail failed:', err)
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+function scheduleHistoryLoad() {
+  cancelScheduledHistoryLoad()
+  historyDeferred.value = true
+  historyDelayTimer.value = window.setTimeout(async () => {
+    historyDeferred.value = false
+    await loadTasks(true)
+  }, HISTORY_INITIAL_DELAY)
+}
+
+function cancelScheduledHistoryLoad() {
+  if (historyDelayTimer.value) window.clearTimeout(historyDelayTimer.value)
+  historyDelayTimer.value = null
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
+function readLastTaskID() {
+  try {
+    return localStorage.getItem(LAST_TASK_STORAGE_KEY) || ''
+  } catch {
+    return ''
+  }
+}
+
+function rememberLastTaskID(taskID: string) {
+  if (!taskID) return
+  try {
+    localStorage.setItem(LAST_TASK_STORAGE_KEY, taskID)
+  } catch {
+    // ignore storage failures
+  }
+}
+
+function clearLastTaskID() {
+  try {
+    localStorage.removeItem(LAST_TASK_STORAGE_KEY)
+  } catch {
+    // ignore storage failures
   }
 }
 
@@ -639,8 +769,10 @@ async function submit() {
       model_asset_id: form.model_asset_id || undefined,
     })
     activeTask.value = task
+    rememberLastTaskID(task.task_id)
     brokenAssetIDs.value = new Set()
     ElMessage.success('任务已进入生成队列')
+    historyDeferred.value = false
     await loadTasks()
     startPolling(task.task_id)
   } catch (err) {
@@ -651,14 +783,24 @@ async function submit() {
 }
 
 async function openTask(task: EcommerceTask) {
+  await openTaskByID(task.task_id)
+}
+
+async function openTaskByID(taskID: string): Promise<boolean> {
   stopPolling()
+  detailLoading.value = true
   try {
-    const fresh = await getEcommerceTask(task.task_id)
+    const fresh = await getEcommerceTask(taskID)
     activeTask.value = fresh
+    rememberLastTaskID(fresh.task_id)
     brokenAssetIDs.value = new Set()
     if (isAssetWorking(fresh.status) || latestAssetsByType(fresh.assets || []).some((asset) => isAssetWorking(asset.status))) startPolling(fresh.task_id)
+    return true
   } catch (err) {
     console.error('open ecommerce task failed:', err)
+    return false
+  } finally {
+    detailLoading.value = false
   }
 }
 
@@ -764,6 +906,7 @@ async function deleteTask(task: EcommerceTask, ev?: Event) {
     if (wasActive) {
       stopPolling()
       activeTask.value = null
+      clearLastTaskID()
       if (tasks.value[0]) await openTask(tasks.value[0])
     }
     if (!tasks.value.length && tasksTotal.value > 0) await loadTasks(true)
@@ -1055,170 +1198,20 @@ watch(
 
 onBeforeUnmount(() => {
   stopPolling()
+  cancelScheduledHistoryLoad()
   if (ticker.value) window.clearInterval(ticker.value)
 })
 </script>
 
 <template>
-  <div class="commerce-workbench" v-loading="loading">
-    <aside class="composer-card surface">
-      <div class="section-head">
-        <div>
-          <span class="kicker">任务创建</span>
-          <h1>电商智能体</h1>
-        </div>
-        <span class="lang-chip">{{ selectedLanguage }}</span>
-      </div>
-
-      <el-form label-position="top" class="brief-form">
-        <el-form-item>
-          <template #label>
-            <span class="required-label">商品资料</span>
-            <button class="text-action" type="button" @click="clearBrief">清空</button>
-          </template>
-          <el-input
-            v-model="form.requirement"
-            type="textarea"
-            :rows="4"
-            maxlength="2000"
-            show-word-limit
-            resize="none"
-            placeholder="输入商品名、卖点、规格、价格、目标人群、平台要求等信息"
-          />
-        </el-form-item>
-
-        <el-form-item label="目标平台">
-          <el-select v-model="form.platform_id" placeholder="请选择平台" filterable>
-            <el-option
-              v-for="platform in platforms"
-              :key="platform.id"
-              :label="`${platform.name} · 默认：${ecommerceLanguageName(platform.language)}`"
-              :value="platform.id"
-            />
-          </el-select>
-        </el-form-item>
-
-        <el-form-item label="文案语言">
-          <el-select v-model="form.language" placeholder="请选择文案语言">
-            <el-option v-for="lang in ECOMMERCE_LANGUAGES" :key="lang.value" :label="lang.label" :value="lang.value" />
-          </el-select>
-        </el-form-item>
-
-        <el-form-item label="提示词模板">
-          <el-select v-model="form.prompt_template_id" placeholder="请选择提示词模板" filterable>
-            <el-option v-for="prompt in prompts" :key="prompt.id" :label="prompt.name" :value="prompt.id" />
-          </el-select>
-        </el-form-item>
-
-        <el-form-item label="风格模板">
-          <el-select v-model="form.style_template_id" placeholder="请选择风格模板" filterable>
-            <el-option v-for="style in styles" :key="style.id" :label="style.name" :value="style.id" />
-          </el-select>
-        </el-form-item>
-
-        <div class="library-picker-grid">
-          <el-form-item label="商品资产">
-            <el-select
-              v-model="form.product_asset_id"
-              placeholder="可选：从资产库选择商品"
-              filterable
-              clearable
-              :loading="libraryAssetsLoading"
-              @visible-change="onLibrarySelectVisible"
-            >
-              <el-option v-for="asset in productLibraryAssets" :key="asset.asset_id" :label="asset.name" :value="asset.asset_id">
-                <div class="asset-option">
-                  <img v-if="asset.cover_url" :src="asset.cover_url" :alt="asset.name" />
-                  <span>{{ asset.name }}</span>
-                  <small>{{ asset.code || asset.review_status }}</small>
-                </div>
-              </el-option>
-            </el-select>
-          </el-form-item>
-          <el-form-item label="模特资产">
-            <el-select
-              v-model="form.model_asset_id"
-              placeholder="可选：从资产库选择模特"
-              filterable
-              clearable
-              :loading="libraryAssetsLoading"
-              @visible-change="onLibrarySelectVisible"
-            >
-              <el-option v-for="asset in modelLibraryAssets" :key="asset.asset_id" :label="asset.name" :value="asset.asset_id">
-                <div class="asset-option">
-                  <img v-if="asset.cover_url" :src="asset.cover_url" :alt="asset.name" />
-                  <span>{{ asset.name }}</span>
-                  <small>{{ asset.code || asset.review_status }}</small>
-                </div>
-              </el-option>
-            </el-select>
-          </el-form-item>
-        </div>
-        <div v-if="selectedProductAsset || selectedModelAsset" class="selected-library-assets">
-          <div v-if="selectedProductAsset" class="selected-library-card">
-            <img v-if="selectedProductAsset.cover_url" :src="selectedProductAsset.cover_url" :alt="selectedProductAsset.name" />
-            <div>
-              <strong>{{ selectedProductAsset.name }}</strong>
-              <span>商品资产将注入资料与参考图</span>
-            </div>
-          </div>
-          <div v-if="selectedModelAsset" class="selected-library-card">
-            <img v-if="selectedModelAsset.cover_url" :src="selectedModelAsset.cover_url" :alt="selectedModelAsset.name" />
-            <div>
-              <strong>{{ selectedModelAsset.name }}</strong>
-              <span>模特资产将注入外观与授权约束</span>
-            </div>
-          </div>
-        </div>
-
-        <el-form-item>
-          <template #label>
-            <span>参考图片（最多 {{ MAX_IMAGES }} 张，{{ MAX_IMAGE_MB }}MB/张）</span>
-          </template>
-          <div class="reference-field">
-            <div class="reference-grid">
-              <button
-                v-for="(img, index) in form.reference_images"
-                :key="index"
-                class="reference-thumb"
-                type="button"
-                @click="removeImage(index)"
-              >
-                <img :src="img" alt="参考图" />
-                <span><el-icon><Close /></el-icon></span>
-              </button>
-              <el-upload
-                v-if="form.reference_images.length < MAX_IMAGES"
-                drag
-                multiple
-                accept="image/*"
-                :auto-upload="false"
-                :show-file-list="false"
-                :on-change="onImageChange"
-                class="reference-upload"
-              >
-                <el-icon><UploadFilled /></el-icon>
-                <strong>上传图片</strong>
-              </el-upload>
-            </div>
-          </div>
-        </el-form-item>
-
-        <el-button class="primary-submit" type="primary" size="large" :loading="submitting" @click="submit">
-          <el-icon v-if="!submitting"><MagicStick /></el-icon>
-          {{ submitting ? '提交中' : '开始生成' }}
-        </el-button>
-        <p class="cost-hint">预计消耗 30 积分</p>
-      </el-form>
-    </aside>
-
+  <div class="commerce-workbench">
     <main class="task-column">
-      <section class="current-task surface">
+      <section class="current-task surface" v-loading="detailLoading">
         <template v-if="!activeTask">
           <div class="empty-current">
             <span class="kicker">当前任务</span>
-            <h2>创建任务后在这里查看生成进度</h2>
-            <p>也可以从右侧近期任务打开历史记录。</p>
+            <h2>{{ detailLoading ? '正在打开最近任务' : '创建任务后在这里查看生成详情' }}</h2>
+            <p>{{ detailLoading ? '历史列表会稍后加载，先为你准备最近一次交付。' : '也可以从右侧近期任务打开历史记录。' }}</p>
           </div>
         </template>
 
@@ -1560,16 +1553,237 @@ onBeforeUnmount(() => {
       </section>
     </main>
 
+    <aside class="composer-card surface" v-loading="optionsLoading">
+      <div class="section-head">
+        <div>
+          <span class="kicker">任务创建</span>
+          <h1>电商智能体</h1>
+        </div>
+        <span class="lang-chip">{{ selectedLanguage }}</span>
+      </div>
+
+      <el-form label-position="top" class="brief-form">
+        <el-form-item>
+          <template #label>
+            <span class="required-label">商品资料</span>
+            <button class="text-action" type="button" @click="clearBrief">清空</button>
+          </template>
+          <el-input
+            v-model="form.requirement"
+            type="textarea"
+            :rows="4"
+            maxlength="2000"
+            show-word-limit
+            resize="none"
+            placeholder="输入商品名、卖点、规格、价格、目标人群、平台要求等信息"
+          />
+        </el-form-item>
+
+        <el-form-item label="目标平台">
+          <el-select v-model="form.platform_id" placeholder="请选择平台" filterable>
+            <el-option
+              v-for="platform in platforms"
+              :key="platform.id"
+              :label="`${platform.name} · 默认：${ecommerceLanguageName(platform.language)}`"
+              :value="platform.id"
+            />
+          </el-select>
+        </el-form-item>
+
+        <el-form-item label="文案语言">
+          <el-select v-model="form.language" placeholder="请选择文案语言">
+            <el-option v-for="lang in ECOMMERCE_LANGUAGES" :key="lang.value" :label="lang.label" :value="lang.value" />
+          </el-select>
+        </el-form-item>
+
+        <el-form-item label="提示词模板">
+          <el-select v-model="form.prompt_template_id" placeholder="请选择提示词模板" filterable>
+            <el-option v-for="prompt in prompts" :key="prompt.id" :label="prompt.name" :value="prompt.id" />
+          </el-select>
+        </el-form-item>
+
+        <el-form-item label="风格模板">
+          <el-select v-model="form.style_template_id" placeholder="请选择风格模板" filterable>
+            <el-option v-for="style in styles" :key="style.id" :label="style.name" :value="style.id" />
+          </el-select>
+        </el-form-item>
+
+        <div class="library-picker-grid">
+          <el-form-item label="商品资产">
+            <el-select
+              v-model="form.product_asset_id"
+              placeholder="可选：从资产库选择商品"
+              filterable
+              clearable
+              :loading="libraryAssetsLoading"
+              @visible-change="onLibrarySelectVisible"
+            >
+              <el-option v-for="asset in productLibraryAssets" :key="asset.asset_id" :label="asset.name" :value="asset.asset_id">
+                <div class="asset-option">
+                  <img v-if="asset.cover_url" :src="asset.cover_url" :alt="asset.name" />
+                  <span>{{ asset.name }}</span>
+                  <small>{{ asset.code || asset.review_status }}</small>
+                </div>
+              </el-option>
+            </el-select>
+          </el-form-item>
+          <el-form-item label="模特资产">
+            <el-select
+              v-model="form.model_asset_id"
+              placeholder="可选：从资产库选择模特"
+              filterable
+              clearable
+              :loading="libraryAssetsLoading"
+              @visible-change="onLibrarySelectVisible"
+            >
+              <el-option v-for="asset in modelLibraryAssets" :key="asset.asset_id" :label="asset.name" :value="asset.asset_id">
+                <div class="asset-option">
+                  <img v-if="asset.cover_url" :src="asset.cover_url" :alt="asset.name" />
+                  <span>{{ asset.name }}</span>
+                  <small>{{ asset.code || asset.review_status }}</small>
+                </div>
+              </el-option>
+            </el-select>
+          </el-form-item>
+        </div>
+        <div v-if="selectedProductAsset || selectedModelAsset" class="selected-library-assets">
+          <div v-if="selectedProductAsset" class="selected-library-card">
+            <img v-if="selectedProductAsset.cover_url" :src="selectedProductAsset.cover_url" :alt="selectedProductAsset.name" />
+            <div>
+              <strong>{{ selectedProductAsset.name }}</strong>
+              <span>商品资产将注入资料与参考图</span>
+            </div>
+          </div>
+          <div v-if="selectedModelAsset" class="selected-library-card">
+            <img v-if="selectedModelAsset.cover_url" :src="selectedModelAsset.cover_url" :alt="selectedModelAsset.name" />
+            <div>
+              <strong>{{ selectedModelAsset.name }}</strong>
+              <span>模特资产将注入外观与授权约束</span>
+            </div>
+          </div>
+        </div>
+
+        <el-form-item>
+          <template #label>
+            <span>参考图片（最多 {{ MAX_IMAGES }} 张，{{ MAX_IMAGE_MB }}MB/张）</span>
+          </template>
+          <div class="reference-field">
+            <div class="reference-grid">
+              <button
+                v-for="(img, index) in form.reference_images"
+                :key="index"
+                class="reference-thumb"
+                type="button"
+                @click="removeImage(index)"
+              >
+                <img :src="img" alt="参考图" />
+                <span><el-icon><Close /></el-icon></span>
+              </button>
+              <el-upload
+                v-if="form.reference_images.length < MAX_IMAGES"
+                drag
+                multiple
+                accept="image/*"
+                :auto-upload="false"
+                :show-file-list="false"
+                :on-change="onImageChange"
+                class="reference-upload"
+              >
+                <el-icon><UploadFilled /></el-icon>
+                <strong>上传图片</strong>
+              </el-upload>
+            </div>
+          </div>
+        </el-form-item>
+
+        <el-button class="primary-submit" type="primary" size="large" :loading="submitting" @click="submit">
+          <el-icon v-if="!submitting"><MagicStick /></el-icon>
+          {{ submitting ? '提交中' : '开始生成' }}
+        </el-button>
+        <p class="cost-hint">预计消耗 30 积分</p>
+      </el-form>
+    </aside>
+
     <aside class="delivery-card">
-      <section class="surface side-block">
+      <section :class="['surface side-block task-history-block', { collapsed: !taskHistoryExpanded }]">
         <div class="section-head compact">
           <div>
             <span class="kicker">近期任务</span>
             <h2>任务记录</h2>
           </div>
-          <span v-if="tasks.length" class="task-count">{{ tasks.length }}/{{ tasksTotal || tasks.length }}</span>
+          <div class="task-history-actions">
+            <span v-if="tasks.length" class="task-count">{{ tasks.length }}/{{ tasksTotal || tasks.length }}</span>
+            <el-tooltip :content="taskHistoryExpanded ? '收起任务记录' : '展开任务记录'" placement="top">
+              <el-button
+                class="task-icon-btn"
+                :class="{ open: taskHistoryExpanded }"
+                :icon="ArrowDown"
+                circle
+                :aria-label="taskHistoryExpanded ? '收起任务记录' : '展开任务记录'"
+                @click="taskHistoryExpanded = !taskHistoryExpanded"
+              />
+            </el-tooltip>
+            <el-popover
+              v-model:visible="taskMoreVisible"
+              placement="left-start"
+              trigger="click"
+              popper-class="task-more-popover"
+              :width="540"
+              @show="showTaskMorePopover"
+            >
+              <template #reference>
+                <el-button class="task-icon-btn" :icon="MoreFilled" circle aria-label="更多任务" />
+              </template>
+              <div class="task-more-panel">
+                <div class="task-more-head">
+                  <div>
+                    <span class="kicker">全部记录</span>
+                    <h3>任务卡片</h3>
+                  </div>
+                  <span v-if="tasks.length" class="task-count">{{ tasks.length }}/{{ tasksTotal || tasks.length }}</span>
+                </div>
+                <div v-if="tasks.length" class="task-more-list" @scroll="onTaskListScroll" @wheel.passive="onTaskListWheel">
+                  <button
+                    v-for="task in tasks"
+                    :key="`more-${task.task_id}`"
+                    :class="['task-more-card', { active: activeTask?.task_id === task.task_id }]"
+                    type="button"
+                    @click="openTaskFromHistory(task)"
+                  >
+                    <span class="task-more-thumb">
+                      <img
+                        v-if="taskThumbnailAsset(task)"
+                        :src="thumbURL(taskThumbnailAsset(task)!.url)"
+                        alt="任务缩略图"
+                        @error="markBrokenTaskThumb(taskThumbnailAsset(task)!)"
+                      />
+                      <el-icon v-else><Picture /></el-icon>
+                    </span>
+                    <span class="task-more-main">
+                      <span class="task-more-title">{{ taskTitle(task) }}</span>
+                      <span class="task-more-meta">
+                        <span>创建 {{ formatDateTime(task.created_at) }}</span>
+                        <span>任务 {{ shortTaskID(task.task_id) }}</span>
+                      </span>
+                      <span class="task-tags expanded" :title="taskTagsTitle(task)">
+                        <i v-for="tag in taskTagItems(task)" :key="`${task.task_id}-more-${tag}`">{{ tag }}</i>
+                      </span>
+                      <small class="task-brief">{{ taskRequirementPreview(task) }}</small>
+                    </span>
+                    <em :class="['text-state', statusTone[task.status] || 'muted']">
+                      {{ statusText[task.status] || task.status }}
+                    </em>
+                  </button>
+                  <div v-if="tasksLoading" class="task-list-more">加载中...</div>
+                  <div v-else-if="hasMoreTasks" class="task-list-more">继续下拉加载</div>
+                  <div v-else class="task-list-more">已加载全部</div>
+                </div>
+                <el-empty v-else :description="tasksLoading ? '任务加载中' : '暂无任务'" :image-size="58" />
+              </div>
+            </el-popover>
+          </div>
         </div>
-        <div class="task-search">
+        <div v-show="taskHistoryExpanded" class="task-search">
           <el-input
             v-model="taskKeyword"
             clearable
@@ -1581,7 +1795,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div
-          v-if="tasks.length"
+          v-if="tasks.length && taskHistoryExpanded"
           class="task-list"
           @scroll="onTaskListScroll"
           @wheel.passive="onTaskListWheel"
@@ -1603,12 +1817,12 @@ onBeforeUnmount(() => {
               <el-icon v-else><Picture /></el-icon>
             </span>
             <span>
-              <b>{{ task.output_json?.product_title || task.requirement || '未命名任务' }}</b>
-              <span class="task-tags">
-                <i>{{ task.platform_name || '未知平台' }}</i>
-                <i>{{ task.language_name || ecommerceLanguageName(task.language) }}</i>
-                <i>{{ task.prompt_name || '默认模板' }}</i>
-                <i>{{ task.style_name || '默认风格' }}</i>
+              <b>{{ taskTitle(task) }}</b>
+              <span class="task-tags" :title="taskTagsTitle(task)">
+                <i v-for="tag in taskTagView(task).visible" :key="`${task.task_id}-${tag}`">{{ tag }}</i>
+                <el-tooltip v-if="taskTagView(task).hidden.length" :content="taskTagView(task).hidden.join(' / ')" placement="top">
+                  <i class="more-tag">...</i>
+                </el-tooltip>
               </span>
               <small class="task-brief">{{ taskRequirementPreview(task) }}</small>
             </span>
@@ -1642,7 +1856,18 @@ onBeforeUnmount(() => {
           <div v-else-if="hasMoreTasks" class="task-list-more">继续下拉加载</div>
           <div v-else class="task-list-more">已加载全部</div>
         </div>
-        <el-empty v-else :description="taskKeyword.trim() ? '没有匹配任务' : '暂无任务'" :image-size="64" />
+        <div v-else-if="!taskHistoryExpanded && tasks.length" class="history-collapsed">
+          <b>任务记录已收起</b>
+          <span>{{ tasks.length }}/{{ tasksTotal || tasks.length }} 条，点击上方箭头展开。</span>
+        </div>
+        <div v-else-if="historyDeferred" class="history-deferred">
+          <span class="deferred-dot" />
+          <div>
+            <b>正在优先打开详情</b>
+            <p>历史记录稍后加载，不影响当前任务查看。</p>
+          </div>
+        </div>
+        <el-empty v-else-if="taskHistoryExpanded" :description="taskKeyword.trim() ? '没有匹配任务' : '暂无任务'" :image-size="64" />
       </section>
 
       <section class="surface side-block">
@@ -1840,6 +2065,8 @@ onBeforeUnmount(() => {
   align-self: start;
   position: sticky;
   top: 16px;
+  grid-column: 1;
+  grid-row: 1;
 }
 
 .task-column {
@@ -1847,6 +2074,8 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 12px;
   align-content: start;
+  grid-column: 2;
+  grid-row: 1;
 }
 
 .delivery-card {
@@ -1854,6 +2083,8 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 12px;
   align-content: start;
+  grid-column: 3;
+  grid-row: 1;
 }
 
 .section-head,
@@ -2905,6 +3136,61 @@ h3 {
   align-self: start;
 }
 
+.task-history-block {
+  transition: padding .18s ease, border-color .18s ease, box-shadow .18s ease;
+}
+
+.task-history-block.collapsed {
+  padding-bottom: 12px;
+}
+
+.task-history-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.task-icon-btn {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+}
+
+.task-icon-btn :deep(.el-icon) {
+  transition: transform .18s ease;
+}
+
+.task-icon-btn.open :deep(.el-icon) {
+  transform: rotate(180deg);
+}
+
+.history-collapsed {
+  min-height: 58px;
+  display: grid;
+  place-content: center;
+  gap: 3px;
+  border: 1px dashed rgba(37, 99, 235, 0.22);
+  border-radius: 12px;
+  margin-top: 10px;
+  padding: 10px;
+  color: var(--muted);
+  background: rgba(37, 99, 235, 0.035);
+  text-align: center;
+}
+
+.history-collapsed b {
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.history-collapsed span {
+  font-size: 12px;
+  line-height: 18px;
+}
+
 .task-count {
   min-height: 24px;
   border-radius: 6px;
@@ -2973,6 +3259,11 @@ h3 {
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
 }
 
+.task-list-item:hover {
+  border-color: rgba(37, 99, 235, 0.34);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
+}
+
 .task-list-more {
   min-height: 26px;
   display: grid;
@@ -2980,6 +3271,41 @@ h3 {
   color: var(--muted);
   font-size: 12px;
   line-height: 18px;
+}
+
+.history-deferred {
+  min-height: 112px;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  border: 1px dashed rgba(37, 99, 235, 0.26);
+  border-radius: 14px;
+  padding: 14px;
+  color: var(--muted);
+  background: rgba(37, 99, 235, 0.04);
+}
+
+.history-deferred b {
+  display: block;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.history-deferred p {
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.deferred-dot {
+  width: 18px;
+  height: 18px;
+  border: 3px solid rgba(37, 99, 235, 0.18);
+  border-top-color: var(--lc-primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
 }
 
 .task-thumb {
@@ -3036,8 +3362,8 @@ h3 {
 }
 
 .task-tags i {
-  max-width: 33%;
-  min-width: 0;
+  flex: 0 0 auto;
+  max-width: 100%;
   min-height: 15px;
   border: 1px solid rgba(20, 139, 127, 0.16);
   border-radius: 999px;
@@ -3047,9 +3373,134 @@ h3 {
   font-size: 10px;
   font-style: normal;
   font-weight: 800;
+  white-space: nowrap;
+}
+
+.task-tags.expanded {
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.task-tags .more-tag {
+  min-width: 20px;
+  display: inline-flex;
+  justify-content: center;
+  color: #2f6f69;
+  background: #eef8f6;
+}
+
+:global(.task-more-popover.el-popper) {
+  padding: 12px;
+  border-radius: 14px;
+  border-color: rgba(148, 163, 184, 0.28);
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.16);
+}
+
+:global(.task-more-panel) {
+  min-width: 0;
+}
+
+:global(.task-more-head) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+:global(.task-more-head h3) {
+  margin: 0;
+  color: #101828;
+  font-size: 16px;
+  line-height: 22px;
+}
+
+:global(.task-more-list) {
+  display: grid;
+  gap: 8px;
+  max-height: min(560px, calc(100vh - 180px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
+  scrollbar-width: thin;
+}
+
+:global(.task-more-card) {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  border-radius: 12px;
+  padding: 10px;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+
+:global(.task-more-card:hover) {
+  border-color: rgba(37, 99, 235, 0.42);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+  transform: translateY(-1px);
+}
+
+:global(.task-more-card.active) {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+:global(.task-more-thumb) {
+  width: 72px;
+  height: 72px;
+  display: grid;
+  place-items: center;
   overflow: hidden;
+  border-radius: 10px;
+  color: #667085;
+  background: #f2f4f7;
+}
+
+:global(.task-more-thumb img) {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+:global(.task-more-main) {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+:global(.task-more-title) {
+  min-width: 0;
+  display: block;
+  overflow: hidden;
+  color: #101828;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 20px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+:global(.task-more-meta) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  color: #667085;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+:global(.task-more-meta span) {
+  border-radius: 6px;
+  padding: 2px 6px;
+  background: #f6f7f9;
 }
 
 .task-brief {
@@ -3310,8 +3761,19 @@ h3 {
     grid-template-columns: minmax(310px, 360px) minmax(0, 1fr);
   }
 
+  .task-column {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .composer-card {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
   .delivery-card {
     grid-column: 1 / -1;
+    grid-row: 2;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     position: static;
   }
@@ -3328,15 +3790,21 @@ h3 {
   }
 
   .composer-card {
+    grid-column: 1;
+    grid-row: auto;
     order: 1;
     position: static;
   }
 
   .task-column {
+    grid-column: 1;
+    grid-row: auto;
     order: 2;
   }
 
   .delivery-card {
+    grid-column: 1;
+    grid-row: auto;
     order: 3;
     grid-template-columns: minmax(0, 1fr);
   }

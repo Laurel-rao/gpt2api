@@ -9,6 +9,7 @@ import {
   Download,
   FolderOpened,
   Loading,
+  MoreFilled,
   Picture,
   Plus,
   Refresh,
@@ -41,6 +42,7 @@ const MAX_IMAGES = 4
 const MAX_IMAGE_MB = 20
 const POLL_INTERVAL = 2500
 const TASK_PAGE_SIZE = 5
+const TASK_COMPACT_TAG_SCORE = 24
 
 const assetOrder = ['title_image', 'main_image', 'white_image', 'detail_image', 'price_image', 'product_video']
 const imageAssetOrder = ['title_image', 'main_image', 'white_image', 'detail_image', 'price_image']
@@ -75,6 +77,8 @@ const canceling = ref(false)
 const exporting = ref(false)
 const downloadingAll = ref(false)
 const tasksLoading = ref(false)
+const taskHistoryExpanded = ref(true)
+const taskMoreVisible = ref(false)
 const tasksTotal = ref(0)
 const retryingAssetID = ref(0)
 const polling = ref<number | null>(null)
@@ -295,6 +299,52 @@ function compactText(text?: string | null, limit = 84) {
 
 function taskRequirementPreview(task: EcommerceTask) {
   return compactText(task.requirement, 92) || '暂无商品资料'
+}
+
+function taskTitle(task: EcommerceTask) {
+  return task.output_json?.product_title || task.requirement || '未命名任务'
+}
+
+function taskTagItems(task: EcommerceTask) {
+  return uniqueStrings([
+    task.platform_name || '未知平台',
+    task.language_name || ecommerceLanguageName(task.language),
+    task.prompt_name || '默认模板',
+    task.style_name || '默认风格',
+  ])
+}
+
+function taskTagScore(tag: string) {
+  return Array.from(tag).reduce((sum, char) => sum + (char.charCodeAt(0) <= 255 ? 0.55 : 1), 2)
+}
+
+function taskTagView(task: EcommerceTask, limit = TASK_COMPACT_TAG_SCORE) {
+  const visible: string[] = []
+  const hidden: string[] = []
+  let score = 0
+  for (const tag of taskTagItems(task)) {
+    const next = taskTagScore(tag) + (visible.length ? 1 : 0)
+    if (score + next <= limit) {
+      visible.push(tag)
+      score += next
+    } else {
+      hidden.push(tag)
+    }
+  }
+  return { visible, hidden }
+}
+
+function taskTagsTitle(task: EcommerceTask) {
+  return taskTagItems(task).join(' / ')
+}
+
+async function showTaskMorePopover() {
+  if (!tasks.value.length && tasksTotal.value !== 0) await loadTasks(true)
+}
+
+async function openTaskFromHistory(task: EcommerceTask) {
+  taskMoreVisible.value = false
+  await openTask(task)
 }
 
 function imageSpecText(assetType: string) {
@@ -1081,16 +1131,84 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
-      <section class="history-card panel">
+      <section :class="['history-card panel', { collapsed: !taskHistoryExpanded }]">
         <div class="section-title">
           <div>
             <span class="eyebrow">近期任务</span>
             <h2>任务记录</h2>
           </div>
-          <span v-if="tasks.length">{{ tasks.length }}/{{ tasksTotal || tasks.length }}</span>
+          <div class="history-actions">
+            <span v-if="tasks.length" class="history-count">{{ tasks.length }}/{{ tasksTotal || tasks.length }}</span>
+            <el-button
+              class="history-icon-btn"
+              :class="{ open: taskHistoryExpanded }"
+              :icon="ArrowDown"
+              circle
+              :aria-label="taskHistoryExpanded ? '收起任务记录' : '展开任务记录'"
+              @click="taskHistoryExpanded = !taskHistoryExpanded"
+            />
+            <el-popover
+              v-model:visible="taskMoreVisible"
+              placement="top-end"
+              trigger="click"
+              popper-class="mobile-task-more-popover"
+              :width="360"
+              @show="showTaskMorePopover"
+            >
+              <template #reference>
+                <el-button class="history-icon-btn" :icon="MoreFilled" circle aria-label="更多任务" />
+              </template>
+              <div class="mobile-task-more-panel">
+                <div class="mobile-task-more-head">
+                  <div>
+                    <span class="eyebrow">全部记录</span>
+                    <h3>完整任务卡片</h3>
+                  </div>
+                  <span v-if="tasks.length" class="history-count">{{ tasks.length }}/{{ tasksTotal || tasks.length }}</span>
+                </div>
+                <div v-if="tasks.length" class="mobile-task-more-list" @scroll="onTaskListScroll" @wheel.passive="onTaskListWheel">
+                  <button
+                    v-for="task in tasks"
+                    :key="`mobile-more-${task.task_id}`"
+                    :class="['mobile-task-more-card', { active: activeTask?.task_id === task.task_id }]"
+                    type="button"
+                    @click="openTaskFromHistory(task)"
+                  >
+                    <span class="task-thumb large">
+                      <img
+                        v-if="taskThumbnailAsset(task)"
+                        :src="thumbURL(taskThumbnailAsset(task)!.url)"
+                        alt="任务缩略图"
+                        @error="markBrokenTaskThumb(taskThumbnailAsset(task)!)"
+                      />
+                      <el-icon v-else><Picture /></el-icon>
+                    </span>
+                    <span class="task-copy">
+                      <b>{{ taskTitle(task) }}</b>
+                      <span class="task-meta-line">
+                        <span>{{ formatDateTime(task.created_at) }}</span>
+                        <span>{{ shortTaskID(task.task_id) }}</span>
+                      </span>
+                      <span class="task-tags expanded" :title="taskTagsTitle(task)">
+                        <i v-for="tag in taskTagItems(task)" :key="`${task.task_id}-mobile-more-${tag}`">{{ tag }}</i>
+                      </span>
+                      <small class="task-brief">{{ taskRequirementPreview(task) }}</small>
+                    </span>
+                    <em :class="['text-state', statusTone[task.status] || 'muted']">
+                      {{ statusText[task.status] || task.status }}
+                    </em>
+                  </button>
+                  <div v-if="tasksLoading" class="task-list-more">加载中...</div>
+                  <div v-else-if="hasMoreTasks" class="task-list-more">继续下拉加载</div>
+                  <div v-else class="task-list-more">已加载全部</div>
+                </div>
+                <el-empty v-else :description="tasksLoading ? '任务加载中' : '暂无任务'" :image-size="58" />
+              </div>
+            </el-popover>
+          </div>
         </div>
 
-        <div v-if="tasks.length" class="task-list" @scroll="onTaskListScroll" @wheel.passive="onTaskListWheel">
+        <div v-if="tasks.length && taskHistoryExpanded" class="task-list" @scroll="onTaskListScroll" @wheel.passive="onTaskListWheel">
           <button
             v-for="task in tasks"
             :key="task.task_id"
@@ -1108,12 +1226,12 @@ onBeforeUnmount(() => {
               <el-icon v-else><Picture /></el-icon>
             </span>
             <span class="task-copy">
-              <b>{{ task.output_json?.product_title || task.requirement || '未命名任务' }}</b>
-              <span class="task-tags">
-                <i>{{ task.platform_name || '未知平台' }}</i>
-                <i>{{ task.language_name || ecommerceLanguageName(task.language) }}</i>
-                <i>{{ task.prompt_name || '默认模板' }}</i>
-                <i>{{ task.style_name || '默认风格' }}</i>
+              <b>{{ taskTitle(task) }}</b>
+              <span class="task-tags" :title="taskTagsTitle(task)">
+                <i v-for="tag in taskTagView(task).visible" :key="`${task.task_id}-${tag}`">{{ tag }}</i>
+                <el-tooltip v-if="taskTagView(task).hidden.length" :content="taskTagView(task).hidden.join(' / ')" placement="top">
+                  <i class="more-tag">...</i>
+                </el-tooltip>
               </span>
               <small class="task-brief">{{ taskRequirementPreview(task) }}</small>
             </span>
@@ -1124,6 +1242,10 @@ onBeforeUnmount(() => {
           <div v-if="tasksLoading" class="task-list-more">加载中...</div>
           <div v-else-if="hasMoreTasks" class="task-list-more">继续下拉加载</div>
           <div v-else class="task-list-more">已加载全部</div>
+        </div>
+        <div v-else-if="!taskHistoryExpanded && tasks.length" class="history-collapsed">
+          <b>任务记录已收起</b>
+          <span>点击箭头展开，或点更多查看完整卡片。</span>
         </div>
         <div v-else class="empty-state">
           <el-icon><Picture /></el-icon>
@@ -1748,6 +1870,67 @@ h2 {
   padding-right: 2px;
 }
 
+.history-card.collapsed .section-title {
+  margin-bottom: 0;
+}
+
+.history-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.history-count {
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 7px;
+  padding: 0 8px;
+  color: #64748b;
+  background: #f2f4f7;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.history-icon-btn {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+
+  :deep(.el-icon) {
+    transition: transform .18s ease;
+  }
+
+  &.open :deep(.el-icon) {
+    transform: rotate(180deg);
+  }
+}
+
+.history-collapsed {
+  min-height: 58px;
+  display: grid;
+  place-content: center;
+  gap: 4px;
+  border: 1px dashed rgba(15, 143, 128, 0.24);
+  border-radius: 12px;
+  padding: 10px;
+  color: #667085;
+  background: rgba(15, 143, 128, 0.04);
+  text-align: center;
+
+  b {
+    color: #101828;
+    font-size: 13px;
+  }
+
+  span {
+    font-size: 12px;
+  }
+}
+
 .task-row {
   width: 100%;
   min-width: 0;
@@ -1764,6 +1947,10 @@ h2 {
   &.active {
     border-color: #0f8f80;
     box-shadow: 0 0 0 1px rgba(15, 143, 128, 0.16);
+  }
+
+  &:hover {
+    border-color: rgba(15, 143, 128, 0.36);
   }
 }
 
@@ -1787,6 +1974,11 @@ h2 {
     width: 100%;
     height: 100%;
     object-fit: cover;
+  }
+
+  &.large {
+    width: 64px;
+    height: 64px;
   }
 }
 
@@ -1826,8 +2018,8 @@ h2 {
   overflow: hidden;
 
   i {
-    max-width: 33%;
-    min-width: 0;
+    flex: 0 0 auto;
+    max-width: 100%;
     min-height: 15px;
     border: 1px solid #d8eee9;
     border-radius: 999px;
@@ -1837,9 +2029,35 @@ h2 {
     font-size: 10px;
     font-style: normal;
     font-weight: 800;
-    overflow: hidden;
-    text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  &.expanded {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .more-tag {
+    min-width: 20px;
+    display: inline-flex;
+    justify-content: center;
+    color: #0f766e;
+    background: #ecfdf5;
+  }
+}
+
+.task-meta-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  color: #667085;
+  font-size: 11px;
+  line-height: 16px;
+
+  span {
+    border-radius: 6px;
+    padding: 2px 6px;
+    background: #f5f7f9;
   }
 }
 
@@ -1861,6 +2079,69 @@ h2 {
   font-size: 12px;
   text-align: center;
   padding: 8px 0 2px;
+}
+
+:global(.mobile-task-more-popover.el-popper) {
+  width: min(360px, 92vw) !important;
+  padding: 10px;
+  border-radius: 14px;
+  border-color: rgba(148, 163, 184, 0.28);
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.18);
+}
+
+:global(.mobile-task-more-head) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+:global(.mobile-task-more-head h3) {
+  margin: 0;
+  color: #101828;
+  font-size: 16px;
+  line-height: 22px;
+}
+
+:global(.mobile-task-more-list) {
+  display: grid;
+  gap: 8px;
+  max-height: min(520px, calc(100vh - 190px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
+  scrollbar-width: thin;
+}
+
+:global(.mobile-task-more-card) {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 9px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 9px;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .18s ease, box-shadow .18s ease;
+}
+
+:global(.mobile-task-more-card:hover) {
+  border-color: rgba(15, 143, 128, 0.4);
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
+}
+
+:global(.mobile-task-more-card.active) {
+  border-color: #0f8f80;
+  box-shadow: 0 0 0 2px rgba(15, 143, 128, 0.14);
+}
+
+:global(.mobile-task-more-card .text-state) {
+  margin-top: 1px;
 }
 
 .empty-state {
