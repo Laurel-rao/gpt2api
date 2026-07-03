@@ -172,11 +172,29 @@ func main() {
 		Model:      cfg.TextGen.Model,
 		TimeoutSec: cfg.TextGen.TimeoutSec,
 	})
+	videoGenBaseURL := cfg.VideoGen.BaseURL
+	videoGenAPIKey := cfg.VideoGen.APIKey
+	videoGenModel := cfg.VideoGen.Model
+	switch cfg.VideoGen.ChannelType {
+	case videogen.ChannelAPIYISeedance:
+		videoGenBaseURL = cfg.VideoGen.APIYI.BaseURL
+		videoGenAPIKey = cfg.VideoGen.APIYI.APIKey
+		videoGenModel = cfg.VideoGen.APIYI.Model
+	case videogen.ChannelAPIYIWan27:
+		videoGenBaseURL = cfg.VideoGen.APIYIWan27.BaseURL
+		videoGenAPIKey = cfg.VideoGen.APIYIWan27.APIKey
+		videoGenModel = cfg.VideoGen.APIYIWan27.Model
+	case videogen.ChannelAPIYIHappyHorse:
+		videoGenBaseURL = cfg.VideoGen.APIYIHappyHorse.BaseURL
+		videoGenAPIKey = cfg.VideoGen.APIYIHappyHorse.APIKey
+		videoGenModel = cfg.VideoGen.APIYIHappyHorse.Model
+	}
 	videoGenClient := videogen.NewClient(videogen.Config{
-		BaseURL:       cfg.VideoGen.BaseURL,
-		APIKey:        cfg.VideoGen.APIKey,
+		ChannelType:   cfg.VideoGen.ChannelType,
+		BaseURL:       videoGenBaseURL,
+		APIKey:        videoGenAPIKey,
 		APIKeyEnv:     cfg.VideoGen.APIKeyEnv,
-		Model:         cfg.VideoGen.Model,
+		Model:         videoGenModel,
 		TimeoutSec:    cfg.VideoGen.TimeoutSec,
 		DurationSec:   cfg.VideoGen.DurationSec,
 		AspectRatio:   cfg.VideoGen.AspectRatio,
@@ -267,9 +285,17 @@ func main() {
 	settingsH.SetVideoGenProbe(func(ctx context.Context) (int64, int, string, []videogen.ProbeModel, error) {
 		return videoGenClient.ProbeModels(ctx)
 	})
+	settingsH.SetVideoGenProbeForConfig(func(ctx context.Context, cfg videogen.Config) (int64, int, string, []videogen.ProbeModel, error) {
+		return videoGenClient.ProbeModelsForConfig(ctx, cfg)
+	})
 	settingsH.SetVideoGenBalance(func(ctx context.Context) (*videogen.Balance, error) {
 		return videoGenClient.Balance(ctx)
 	})
+	settingsH.SetVideoGenBalanceForConfig(func(ctx context.Context, cfg videogen.Config) (*videogen.Balance, error) {
+		return videoGenClient.BalanceForConfig(ctx, cfg)
+	})
+	settingsH.SetVideoGenClient(videoGenClient)
+	videoPlayH := gateway.NewVideoPlaygroundHandler(videoGenClient, billEngine, settingsSvc)
 
 	// 把 settings 注入到其它受控业务(可热更)
 	keySvc.SetSettings(settingsSvc)
@@ -340,8 +366,9 @@ func main() {
 
 		ChannelH: channelH,
 
-		GatewayH: gwH,
-		ImagesH:  imagesH,
+		GatewayH:   gwH,
+		ImagesH:    imagesH,
+		VideoPlayH: videoPlayH,
 
 		BackupH:     backupH,
 		AuditH:      auditH,

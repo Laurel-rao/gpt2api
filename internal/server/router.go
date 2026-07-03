@@ -41,8 +41,9 @@ type Deps struct {
 	AccountH *account.Handler
 	ChannelH *channel.Handler
 
-	GatewayH *gateway.Handler
-	ImagesH  *gateway.ImagesHandler
+	GatewayH   *gateway.Handler
+	ImagesH    *gateway.ImagesHandler
+	VideoPlayH *gateway.VideoPlaygroundHandler
 
 	BackupH     *backup.Handler
 	AuditH      *audit.Handler
@@ -176,6 +177,11 @@ func New(d *Deps) *gin.Engine {
 					if d.ImagesH != nil {
 						pg.POST("/image", gateway.PlaygroundImagePreflight(), d.ImagesH.ImageGenerations)
 						pg.POST("/image-edit", gateway.PlaygroundImagePreflight(), d.ImagesH.ImageEdits)
+					}
+					if d.VideoPlayH != nil {
+						pg.GET("/video/channels", d.VideoPlayH.Channels)
+						pg.POST("/video", d.VideoPlayH.Start)
+						pg.GET("/video/:id", d.VideoPlayH.Get)
 					}
 				}
 			}
@@ -412,6 +418,8 @@ func New(d *Deps) *gin.Engine {
 					sg.POST("/test-textgen", d.SettingsH.TestTextGen)
 					sg.POST("/test-videogen", d.SettingsH.TestVideoGen)
 					sg.GET("/videogen-balance", d.SettingsH.VideoGenBalance)
+					sg.POST("/videogen-generate-test", d.SettingsH.StartVideoGenGenerateTest)
+					sg.GET("/videogen-generate-test/:id", d.SettingsH.GetVideoGenGenerateTest)
 					sg.POST("/site-asset", d.SettingsH.UploadSiteAsset)
 				}
 			}
