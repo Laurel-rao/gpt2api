@@ -133,6 +133,7 @@ export interface ImageTask {
   prompt: string
   n: number
   size: string
+  upscale?: '' | '2k' | '4k' | string
   status: 'queued' | 'dispatched' | 'running' | 'success' | 'failed' | string
   conversation_id?: string
   error?: string
