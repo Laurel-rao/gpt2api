@@ -42,14 +42,14 @@ export interface VideoGenProbeModel {
   value: string
 }
 
-export function testVideoGen(): Promise<{
+export function testVideoGen(channelType?: string): Promise<{
   ok: boolean
   duration_ms: number
   model_count: number
   model_name: string
   models?: VideoGenProbeModel[]
 }> {
-  return http.post('/api/admin/settings/test-videogen', {})
+  return http.post('/api/admin/settings/test-videogen', channelType ? { channel_type: channelType } : {})
 }
 
 export interface VideoGenFreeQuota {
@@ -59,14 +59,62 @@ export interface VideoGenFreeQuota {
 }
 
 export interface VideoGenBalance {
+  supported?: boolean
+  message?: string
   credits: number
   recharge_balance: number
   free_quotas: VideoGenFreeQuota[]
   duration_ms: number
 }
 
-export function fetchVideoGenBalance(silent = false): Promise<VideoGenBalance> {
-  return http.get('/api/admin/settings/videogen-balance', { silent } as any)
+export function fetchVideoGenBalance(silent = false, channelType?: string): Promise<VideoGenBalance> {
+  return http.get('/api/admin/settings/videogen-balance', {
+    silent,
+    params: channelType ? { channel_type: channelType } : undefined,
+  } as any)
+}
+
+export interface VideoGenGenerateTestState {
+  id: string
+  channel_type: string
+  status: string
+  progress: number
+  task_id?: string
+  model_id?: string
+  image_url?: string
+  result_url?: string
+  error?: string
+  created_at: string
+  updated_at: string
+  duration_ms?: number
+  cost_detail?: {
+    model_name?: string
+    price?: number
+  }
+}
+
+export function startVideoGenGenerateTest(payload: {
+  channelType: string
+  prompt: string
+  model?: string
+  image?: File | null
+  video?: File | null
+}): Promise<VideoGenGenerateTestState> {
+  const form = new FormData()
+  form.append('channel_type', payload.channelType)
+  form.append('prompt', payload.prompt)
+  if (payload.model) form.append('model', payload.model)
+  if (payload.image) form.append('image', payload.image)
+  if (payload.video) form.append('video', payload.video)
+  return http.post('/api/admin/settings/videogen-generate-test', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+}
+
+export function getVideoGenGenerateTest(id: string): Promise<VideoGenGenerateTestState> {
+  return http.get(`/api/admin/settings/videogen-generate-test/${encodeURIComponent(id)}`, {
+    silent: true,
+  } as any)
 }
 
 export function uploadSiteAsset(key: string, file: File): Promise<{ key: string; url: string }> {

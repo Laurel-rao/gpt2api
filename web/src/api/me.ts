@@ -330,3 +330,80 @@ export async function playEditImage(
   }
   return (await resp.json()) as PlayImageResponse
 }
+
+// ---------- video playground ----------
+
+export interface PlayVideoChannel {
+  type: 'echoon' | 'apiyi_seedance2' | 'apiyi_wan27' | 'apiyi_happyhorse' | string
+  name: string
+  enabled?: boolean
+}
+
+export interface PlayVideoState {
+  id: string
+  channel_type: string
+  status: string
+  progress: number
+  task_id?: string
+  model_id?: string
+  image_url?: string
+  video_url?: string
+  result_url?: string
+  error?: string
+  created_at: string
+  updated_at: string
+  duration_ms?: number
+  credit_cost?: number
+  expected_cost?: number
+  cost_detail?: {
+    model_name?: string
+    price?: number
+  }
+}
+
+export function listPlayVideoChannels(): Promise<{ items: PlayVideoChannel[]; default_channel_type: string }> {
+  return http.get('/api/me/playground/video/channels')
+}
+
+export async function startPlayVideo(payload: {
+  channelType: string
+  prompt: string
+  model?: string
+  ratio?: string
+  resolution?: string
+  duration?: number
+  image?: File | null
+  video?: File | null
+}): Promise<PlayVideoState> {
+  const token = localStorage.getItem('gpt2api.access') || ''
+  const fd = new FormData()
+  fd.append('channel_type', payload.channelType)
+  fd.append('prompt', payload.prompt)
+  if (payload.model) fd.append('model', payload.model)
+  if (payload.ratio) fd.append('ratio', payload.ratio)
+  if (payload.resolution) fd.append('resolution', payload.resolution)
+  if (payload.duration) fd.append('duration', String(payload.duration))
+  if (payload.image) fd.append('image', payload.image, payload.image.name)
+  if (payload.video) fd.append('video', payload.video, payload.video.name)
+  const resp = await fetch('/api/me/playground/video', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: fd,
+  })
+  if (!resp.ok) {
+    let detail = ''
+    try {
+      const body = await resp.json()
+      detail = body?.message || body?.error?.message || ''
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail || `video ${resp.status}: ${resp.statusText}`)
+  }
+  const body = await resp.json()
+  return (body?.data || body) as PlayVideoState
+}
+
+export function getPlayVideo(id: string): Promise<PlayVideoState> {
+  return http.get(`/api/me/playground/video/${encodeURIComponent(id)}`, { silent: true } as any)
+}

@@ -8,33 +8,26 @@ import {
   listMyModels,
   streamPlayChat,
   playGenerateImage,
-  type SimpleModel,
+  listPlayVideoChannels,
+  startPlayVideo,
+  getPlayVideo,
   type PlayChatMessage,
   type PlayImageData,
+  type PlayVideoChannel,
+  type PlayVideoState,
 } from '@/api/me'
 import { ENABLE_CHAT_MODEL } from '@/config/feature'
 
 // ----------------------------------------------------
-// 用户 / 模型
+// 用户 / 默认生成能力
 // ----------------------------------------------------
 const userStore = useUserStore()
 const { user } = storeToRefs(userStore)
 
 const balance = computed(() => formatCredit(user.value?.credit_balance))
 
-const models = ref<SimpleModel[]>([])
-const chatModels = computed(() => models.value.filter((m) => m.type === 'chat'))
-const imageModels = computed(() => models.value.filter((m) => m.type === 'image'))
-
 const selectedChatModel = ref('')
 const selectedImageModel = ref('')
-
-const currentChatDesc = computed(
-  () => chatModels.value.find((m) => m.slug === selectedChatModel.value)?.description || '',
-)
-const currentImageDesc = computed(
-  () => imageModels.value.find((m) => m.slug === selectedImageModel.value)?.description || '',
-)
 
 onMounted(async () => {
   try {
@@ -43,26 +36,21 @@ onMounted(async () => {
     /* ignore */
   }
   try {
-    const m = await listMyModels()
-    // feature flag 关闭时,前端直接把 chat 类型的模型从列表过滤掉,
-    // 保证 chatModels / imageModels / selectedChatModel 等下游 state 都不会
-    // 拿到 chat 模型(即便模板里还有残留引用)。
-    models.value = ENABLE_CHAT_MODEL
-      ? m.items
-      : m.items.filter((x) => x.type !== 'chat')
-    const firstChat = m.items.find((x) => x.type === 'chat')
-    const firstImage = m.items.find((x) => x.type === 'image')
+    const { items } = await listMyModels()
+    const firstChat = items.find((x) => x.type === 'chat')
+    const firstImage = items.find((x) => x.type === 'image')
     if (firstChat) selectedChatModel.value = firstChat.slug
     if (firstImage) selectedImageModel.value = firstImage.slug
   } catch {
     // 静默;错误拦截器已提示
   }
+  loadVideoChannels()
 })
 
 // ----------------------------------------------------
 // Tabs
 // ----------------------------------------------------
-const activeTab = ref<'chat' | 'text2img' | 'img2img'>(
+const activeTab = ref<'chat' | 'text2img' | 'img2img' | 'video'>(
   ENABLE_CHAT_MODEL ? 'chat' : 'text2img',
 )
 
@@ -118,7 +106,7 @@ async function sendChat() {
   const text = chatInput.value.trim()
   if (!text) return
   if (!selectedChatModel.value) {
-    ElMessage.warning('请选择一个文字模型')
+    ElMessage.warning('服务暂不可用')
     return
   }
   const now = Date.now()
@@ -197,7 +185,12 @@ function copyText(s: string) {
   }
 }
 
-onBeforeUnmount(() => chatAbort.value?.abort())
+onBeforeUnmount(() => {
+  chatAbort.value?.abort()
+  if (videoPollTimer) window.clearTimeout(videoPollTimer)
+  clearVideoImage()
+  clearVideoReferenceVideo()
+})
 
 // ---------- 轻量 markdown 渲染(代码块 / 行内代码 / 粗体 / 链接) ----------
 function escapeHtml(s: string) {
@@ -342,7 +335,7 @@ async function sendText2Img() {
     return
   }
   if (!selectedImageModel.value) {
-    ElMessage.warning('请选择一个图片模型')
+    ElMessage.warning('服务暂不可用')
     return
   }
   t2iSending.value = true
@@ -456,7 +449,7 @@ async function sendImg2Img() {
     return
   }
   if (!selectedImageModel.value) {
-    ElMessage.warning('请选择一个图片模型')
+    ElMessage.warning('服务暂不可用')
     return
   }
   i2iSending.value = true
@@ -489,6 +482,188 @@ async function sendImg2Img() {
   }
 }
 
+// ====================================================
+// 视频生成(Video)
+// ====================================================
+type VideoMode = 'text' | 'image' | 'video'
+
+const videoChannels = ref<PlayVideoChannel[]>([])
+const selectedVideoChannel = ref('apiyi_wan27')
+const videoMode = ref<VideoMode>('text')
+const videoPrompt = ref('生成一段 5 秒商品展示短视频，镜头缓慢推进，主体清晰，光线自然。')
+const videoRatio = ref('16:9')
+const videoResolution = ref('720p')
+const videoDuration = ref(5)
+const videoImage = ref<File | null>(null)
+const videoImagePreview = ref('')
+const videoRefVideo = ref<File | null>(null)
+const videoRefVideoPreview = ref('')
+const videoSending = ref(false)
+const videoTask = ref<PlayVideoState | null>(null)
+const videoError = ref('')
+let videoPollTimer = 0
+
+const videoRatios = ['16:9', '9:16', '1:1', '4:3', '3:4']
+const videoResolutions = ['720p', '1080p']
+
+const selectedVideoChannelMeta = computed(() =>
+  videoChannels.value.find((item) => item.type === selectedVideoChannel.value),
+)
+
+const videoStatusText = computed(() => {
+  const state = videoTask.value
+  if (!state) return '等待生成'
+  if (state.status === 'completed') return '生成完成'
+  if (state.status === 'failed') return '生成失败'
+  if (state.status === 'queued') return '排队中'
+  return '生成中'
+})
+
+const videoProgressStatus = computed(() => {
+  const status = String(videoTask.value?.status || '').toLowerCase()
+  if (status === 'completed') return 'success'
+  if (status === 'failed') return 'exception'
+  return undefined
+})
+
+const videoCanUseReferenceVideo = computed(() =>
+  selectedVideoChannel.value === 'apiyi_wan27' || selectedVideoChannel.value === 'apiyi_happyhorse',
+)
+
+watch(videoMode, (mode) => {
+  if (mode !== 'image') clearVideoImage()
+  if (mode !== 'video') clearVideoReferenceVideo()
+})
+
+watch(selectedVideoChannel, () => {
+  if (!videoCanUseReferenceVideo.value && videoMode.value === 'video') {
+    videoMode.value = 'text'
+    clearVideoReferenceVideo()
+  }
+})
+
+async function loadVideoChannels() {
+  try {
+    const res = await listPlayVideoChannels()
+    videoChannels.value = res.items || []
+    selectedVideoChannel.value = res.default_channel_type || videoChannels.value[0]?.type || 'apiyi_wan27'
+  } catch {
+    // 错误由拦截器处理
+  }
+}
+
+function handleVideoImagePick(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  if (file.size > 10 * 1024 * 1024) {
+    ElMessage.warning('参考图最大 10MB')
+    return
+  }
+  clearVideoImage()
+  videoImage.value = file
+  videoImagePreview.value = URL.createObjectURL(file)
+}
+
+function handleVideoReferencePick(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  if (file.size > 200 * 1024 * 1024) {
+    ElMessage.warning('参考视频最大 200MB')
+    return
+  }
+  clearVideoReferenceVideo()
+  videoRefVideo.value = file
+  videoRefVideoPreview.value = URL.createObjectURL(file)
+}
+
+function clearVideoImage() {
+  videoImage.value = null
+  if (videoImagePreview.value) URL.revokeObjectURL(videoImagePreview.value)
+  videoImagePreview.value = ''
+}
+
+function clearVideoReferenceVideo() {
+  videoRefVideo.value = null
+  if (videoRefVideoPreview.value) URL.revokeObjectURL(videoRefVideoPreview.value)
+  videoRefVideoPreview.value = ''
+}
+
+async function sendVideo() {
+  const prompt = videoPrompt.value.trim()
+  if (!prompt) {
+    ElMessage.warning('请输入视频提示词')
+    return
+  }
+  if (videoMode.value === 'image' && !videoImage.value) {
+    ElMessage.warning('请先上传参考图')
+    return
+  }
+  if (videoMode.value === 'video' && !videoRefVideo.value) {
+    ElMessage.warning('请先上传参考视频')
+    return
+  }
+  videoSending.value = true
+  videoError.value = ''
+  videoTask.value = null
+  try {
+    const state = await startPlayVideo({
+      channelType: selectedVideoChannel.value,
+      prompt,
+      ratio: videoRatio.value,
+      resolution: videoResolution.value,
+      duration: videoDuration.value,
+      image: videoMode.value === 'image' ? videoImage.value : null,
+      video: videoMode.value === 'video' ? videoRefVideo.value : null,
+    })
+    videoTask.value = state
+    pollVideo(state.id)
+    ElMessage.success('视频任务已创建')
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    videoError.value = msg
+    videoSending.value = false
+    ElMessage.error(msg)
+  }
+}
+
+function pollVideo(id: string) {
+  if (videoPollTimer) window.clearTimeout(videoPollTimer)
+  const tick = async () => {
+    try {
+      const state = await getPlayVideo(id)
+      videoTask.value = state
+      const status = String(state.status || '').toLowerCase()
+      if (status === 'completed' || status === 'failed') {
+        videoSending.value = false
+        if (status === 'completed') {
+          ElMessage.success('视频生成完成')
+          userStore.fetchMe().catch(() => {})
+        } else {
+          videoError.value = state.error || '视频生成失败'
+        }
+        return
+      }
+      videoPollTimer = window.setTimeout(tick, 3000)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      videoError.value = msg
+      videoSending.value = false
+    }
+  }
+  videoPollTimer = window.setTimeout(tick, 1000)
+}
+
+function resetVideo() {
+  if (videoPollTimer) window.clearTimeout(videoPollTimer)
+  videoSending.value = false
+  videoTask.value = null
+  videoError.value = ''
+}
+
 // 代码块内的 "复制" 按钮(通过事件委托,避免每次重渲染都重新绑定)
 function onMsgClick(e: MouseEvent) {
   const t = e.target as HTMLElement | null
@@ -503,6 +678,7 @@ function onMsgClick(e: MouseEvent) {
 // input 自动聚焦(tab 切换后)
 watch(activeTab, (v) => {
   if (v === 'chat') nextTick(() => inputRef.value?.focus?.())
+  if (v === 'video' && videoChannels.value.length === 0) loadVideoChannels()
 })
 </script>
 
@@ -515,27 +691,15 @@ watch(activeTab, (v) => {
         <div class="hero-txt">
           <h2 class="hero-title">在线体验</h2>
           <span class="hero-sub">
-            浏览器中直接调用 GPT {{ ENABLE_CHAT_MODEL ? '文字 / ' : '' }}图像模型 · 文生图 & 图生图 · 同一账号池、同一套计费,记录同步到「使用记录」
+            浏览器中直接体验 {{ ENABLE_CHAT_MODEL ? '对话 / ' : '' }}图像生成 · 视频生成 · 同一账号池、同一套计费,记录同步到「使用记录」
           </span>
         </div>
       </div>
       <div class="hero-stats">
         <div class="mini-stat">
-          <span class="mini-num">{{ balance }}</span>
-          <span class="mini-lbl">积分</span>
-        </div>
-        <template v-if="ENABLE_CHAT_MODEL">
-          <span class="mini-dot" />
-          <div class="mini-stat">
-            <span class="mini-num">{{ chatModels.length }}</span>
-            <span class="mini-lbl">文字模型</span>
+            <span class="mini-num">{{ balance }}</span>
+            <span class="mini-lbl">积分</span>
           </div>
-        </template>
-        <span class="mini-dot" />
-        <div class="mini-stat">
-          <span class="mini-num">{{ imageModels.length }}</span>
-          <span class="mini-lbl">图片模型</span>
-        </div>
       </div>
     </div>
 
@@ -550,21 +714,8 @@ watch(activeTab, (v) => {
         </template>
 
         <div class="chat-grid">
-          <!-- 左侧:模型 + System + 温度 -->
+          <!-- 左侧:System + 温度 -->
           <aside class="card-block side">
-            <div class="side-row">
-              <label class="side-lbl">文字模型</label>
-              <el-select v-model="selectedChatModel" placeholder="选择文字模型" size="large" style="width:100%">
-                <el-option v-for="m in chatModels" :key="m.id" :label="m.slug" :value="m.slug">
-                  <div class="opt-row">
-                    <span class="opt-slug">{{ m.slug }}</span>
-                    <el-tag size="small" type="primary" effect="plain">chat</el-tag>
-                  </div>
-                </el-option>
-              </el-select>
-              <div v-if="currentChatDesc" class="side-hint">{{ currentChatDesc }}</div>
-            </div>
-
             <div class="side-row">
               <label class="side-lbl">
                 Temperature
@@ -598,7 +749,7 @@ watch(activeTab, (v) => {
                   <el-icon><Cpu /></el-icon>
                 </el-avatar>
                 <div>
-                  <div class="chat-model">{{ selectedChatModel || '未选择模型' }}</div>
+                  <div class="chat-title-text">智能对话</div>
                   <div class="chat-sub">
                     {{ chatSending ? '正在回复…' : (chatMsgs.length ? `${chatMsgs.length} 条消息` : '准备就绪') }}
                   </div>
@@ -716,19 +867,6 @@ watch(activeTab, (v) => {
 
         <div class="img-grid">
           <aside class="card-block side">
-            <div class="side-row">
-              <label class="side-lbl">图片模型</label>
-              <el-select v-model="selectedImageModel" placeholder="选择图片模型" size="large" style="width:100%">
-                <el-option v-for="m in imageModels" :key="m.id" :label="m.slug" :value="m.slug">
-                  <div class="opt-row">
-                    <span class="opt-slug">{{ m.slug }}</span>
-                    <el-tag size="small" type="warning" effect="plain">image</el-tag>
-                  </div>
-                </el-option>
-              </el-select>
-              <div v-if="currentImageDesc" class="side-hint">{{ currentImageDesc }}</div>
-            </div>
-
             <div class="side-row">
               <label class="side-lbl">
                 画面比例
@@ -867,13 +1005,6 @@ watch(activeTab, (v) => {
         <div class="img-grid">
           <aside class="card-block side">
             <div class="side-row">
-              <label class="side-lbl">图片模型</label>
-              <el-select v-model="selectedImageModel" placeholder="选择图片模型" size="large" style="width:100%">
-                <el-option v-for="m in imageModels" :key="m.id" :label="m.slug" :value="m.slug" />
-              </el-select>
-            </div>
-
-            <div class="side-row">
               <label class="side-lbl">参考图 <span class="side-val">{{ refImages.length }}/多</span></label>
               <label class="upload-zone">
                 <el-icon class="up-ic"><UploadFilled /></el-icon>
@@ -999,6 +1130,167 @@ watch(activeTab, (v) => {
           </section>
         </div>
       </el-tab-pane>
+
+      <!-- =================================================== -->
+      <!--                        视频生成                       -->
+      <!-- =================================================== -->
+      <el-tab-pane name="video">
+        <template #label>
+          <span class="tab-lbl"><el-icon><VideoPlay /></el-icon> 视频生成</span>
+        </template>
+
+        <div class="img-grid">
+          <aside class="card-block side">
+            <div class="side-row">
+              <label class="side-lbl">渠道 <span class="side-val">{{ selectedVideoChannelMeta?.name || selectedVideoChannel }}</span></label>
+              <el-select v-model="selectedVideoChannel" filterable style="width:100%">
+                <el-option
+                  v-for="ch in videoChannels"
+                  :key="ch.type"
+                  :label="ch.name"
+                  :value="ch.type"
+                />
+              </el-select>
+            </div>
+
+            <div class="side-row">
+              <label class="side-lbl">生成方式</label>
+              <el-radio-group v-model="videoMode" size="small" class="upscale-group">
+                <el-radio-button label="text">文生视频</el-radio-button>
+                <el-radio-button label="image">图生视频</el-radio-button>
+                <el-radio-button label="video" :disabled="!videoCanUseReferenceVideo">参考视频</el-radio-button>
+              </el-radio-group>
+              <div v-if="!videoCanUseReferenceVideo" class="side-hint">
+                参考视频目前仅支持 API易 Wan2.7 / HappyHorse 渠道。
+              </div>
+            </div>
+
+            <div class="side-row">
+              <label class="side-lbl">画幅 <span class="side-val">{{ videoRatio }}</span></label>
+              <div class="video-ratio-row">
+                <button
+                  v-for="ratio in videoRatios"
+                  :key="ratio"
+                  :class="['video-ratio-btn', { active: videoRatio === ratio }]"
+                  @click="videoRatio = ratio"
+                >{{ ratio }}</button>
+              </div>
+            </div>
+
+            <div class="side-row video-param-row">
+              <div>
+                <label class="side-lbl">分辨率</label>
+                <el-select v-model="videoResolution" size="small" style="width:100%">
+                  <el-option v-for="item in videoResolutions" :key="item" :label="item" :value="item" />
+                </el-select>
+              </div>
+              <div>
+                <label class="side-lbl">时长</label>
+                <el-input-number v-model="videoDuration" :min="3" :max="10" size="small" controls-position="right" style="width:100%" />
+              </div>
+            </div>
+
+            <div v-if="videoMode === 'image'" class="side-row">
+              <label class="side-lbl">参考图</label>
+              <label class="upload-zone video-upload-zone">
+                <el-icon class="up-ic"><UploadFilled /></el-icon>
+                <div class="up-t">{{ videoImage ? videoImage.name : '上传一张参考图' }}</div>
+                <div class="up-s">PNG / JPG / WebP, ≤ 10MB</div>
+                <input type="file" accept="image/*" @change="handleVideoImagePick" />
+              </label>
+              <div v-if="videoImagePreview" class="video-ref-preview">
+                <img :src="videoImagePreview" alt="参考图" />
+                <button @click="clearVideoImage"><el-icon><Close /></el-icon></button>
+              </div>
+            </div>
+
+            <div v-if="videoMode === 'video'" class="side-row">
+              <label class="side-lbl">参考视频</label>
+              <label class="upload-zone video-upload-zone">
+                <el-icon class="up-ic"><UploadFilled /></el-icon>
+                <div class="up-t">{{ videoRefVideo ? videoRefVideo.name : '上传一段参考视频' }}</div>
+                <div class="up-s">MP4 / MOV / WebM, ≤ 200MB</div>
+                <input type="file" accept="video/mp4,video/quicktime,video/webm,video/*" @change="handleVideoReferencePick" />
+              </label>
+              <div v-if="videoRefVideoPreview" class="video-ref-preview">
+                <video :src="videoRefVideoPreview" muted playsinline controls />
+                <button @click="clearVideoReferenceVideo"><el-icon><Close /></el-icon></button>
+              </div>
+            </div>
+
+            <div class="side-row">
+              <label class="side-lbl">Prompt</label>
+              <el-input
+                v-model="videoPrompt"
+                type="textarea"
+                :rows="5"
+                resize="none"
+                placeholder="描述镜头、主体、动作、风格、光线和节奏"
+              />
+            </div>
+
+            <div class="video-actions">
+              <el-button :disabled="!videoTask && !videoError" @click="resetVideo">清空</el-button>
+              <el-button
+                type="primary"
+                round
+                size="large"
+                :loading="videoSending"
+                :disabled="!videoPrompt.trim() || !selectedVideoChannel"
+                @click="sendVideo"
+                class="gen-btn"
+              >
+                <el-icon><MagicStick /></el-icon> 生成视频
+              </el-button>
+            </div>
+          </aside>
+
+          <section class="card-block img-main video-main">
+            <div v-if="videoTask?.result_url" class="video-result">
+              <video :src="videoTask.result_url" controls playsinline preload="metadata" />
+              <div class="video-result-bar">
+                <div>
+                  <strong>{{ videoStatusText }}</strong>
+                  <span v-if="videoTask.credit_cost">扣费 {{ formatCredit(videoTask.credit_cost) }}</span>
+                </div>
+                <div class="img-btns video-result-actions">
+                  <button class="img-btn" @click="openInNewWindow(videoTask.result_url!)">
+                    <el-icon><ZoomIn /></el-icon> 预览
+                  </button>
+                  <button class="img-btn" @click="downloadUrl(videoTask.result_url!)">
+                    <el-icon><Download /></el-icon> 下载
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div v-else-if="videoTask" class="stage loading video-stage">
+              <div class="orb"><el-icon class="spin"><Loading /></el-icon></div>
+              <div class="stage-title">{{ videoStatusText }}</div>
+              <div class="stage-sub">
+                {{ videoTask.task_id ? `上游任务 ${videoTask.task_id}` : '任务已提交，正在等待上游返回进度' }}
+              </div>
+              <el-progress
+                class="video-progress"
+                :percentage="videoTask.status === 'completed' ? 100 : (videoTask.progress || 0)"
+                :status="videoProgressStatus"
+              />
+              <div v-if="videoTask.error" class="err-block video-error">
+                <el-icon><WarningFilled /></el-icon>
+                {{ videoTask.error }}
+              </div>
+            </div>
+            <div v-else-if="videoError" class="err-block">
+              <el-icon><WarningFilled /></el-icon>
+              {{ videoError }}
+            </div>
+            <div v-else class="stage">
+              <div class="stage-art video-empty-art"><el-icon><VideoPlay /></el-icon></div>
+              <div class="stage-title">还没有视频</div>
+              <div class="stage-sub">选择渠道和生成方式，在左侧输入 prompt 后开始生成。</div>
+            </div>
+          </section>
+        </div>
+      </el-tab-pane>
     </el-tabs>
 
   </div>
@@ -1074,11 +1366,6 @@ watch(activeTab, (v) => {
     color: var(--el-text-color-secondary);
   }
 }
-.mini-dot {
-  width: 3px; height: 3px; border-radius: 50%;
-  background: var(--el-border-color);
-}
-
 /* ====================== Tabs ====================== */
 .pg-tabs {
   :deep(.el-tabs__header) { margin-bottom: 16px; }
@@ -1107,7 +1394,6 @@ watch(activeTab, (v) => {
 .side-hint { font-size: 12px; color: var(--el-text-color-placeholder); line-height: 1.5; }
 .side-btn { margin-top: 4px; }
 .gen-btn { box-shadow: 0 6px 18px -6px rgba(64, 158, 255, 0.55); }
-.opt-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 
 /* ---- 输出尺寸(本地高清放大)单选组 ---- */
 .upscale-group { display: flex; width: 100%; }
@@ -1118,8 +1404,6 @@ watch(activeTab, (v) => {
   padding-right: 0;
   letter-spacing: 0.2px;
 }
-.opt-slug { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
-
 /* ====================== Chat ====================== */
 .chat-grid {
   display: grid;
@@ -1140,7 +1424,7 @@ watch(activeTab, (v) => {
   background: linear-gradient(180deg, var(--el-bg-color) 0%, var(--el-fill-color-lighter) 100%);
 }
 .chat-title { display: flex; align-items: center; gap: 10px; }
-.chat-model { font-size: 14px; font-weight: 600; color: var(--el-text-color-primary); }
+.chat-title-text { font-size: 14px; font-weight: 600; color: var(--el-text-color-primary); }
 .chat-sub { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 2px; }
 .chat-tools { display: flex; gap: 6px; }
 
@@ -1399,6 +1683,138 @@ watch(activeTab, (v) => {
   .up-t { font-size: 13px; margin-top: 6px; color: var(--el-text-color-primary); }
   .up-s { font-size: 11px; color: var(--el-text-color-placeholder); margin-top: 2px; }
   input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+}
+
+.video-ratio-row {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+}
+.video-ratio-btn {
+  border: 1px solid var(--el-border-color-lighter);
+  background: var(--el-bg-color);
+  color: var(--el-text-color-secondary);
+  border-radius: 8px;
+  min-height: 34px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  &:hover {
+    border-color: var(--el-color-primary);
+    color: var(--el-color-primary);
+  }
+  &.active {
+    border-color: var(--el-color-primary);
+    background: var(--el-color-primary-light-9);
+    color: var(--el-color-primary);
+    font-weight: 700;
+  }
+}
+.video-param-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.video-upload-zone {
+  min-height: 112px;
+  text-align: center;
+}
+.video-ref-preview {
+  position: relative;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--el-border-color-lighter);
+  background: var(--el-fill-color-light);
+  img,
+  video {
+    width: 100%;
+    max-height: 190px;
+    object-fit: contain;
+    display: block;
+    background: #000;
+  }
+  img { background: var(--el-fill-color-light); }
+  button {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 26px;
+    height: 26px;
+    border: 0;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.58);
+    color: #fff;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+}
+.video-actions {
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  gap: 10px;
+  align-items: center;
+}
+.video-main {
+  min-height: 540px;
+}
+.video-stage {
+  gap: 14px;
+}
+.video-progress {
+  width: min(420px, 100%);
+}
+.video-error {
+  width: min(560px, 100%);
+}
+.video-result {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.video-result video {
+  width: 100%;
+  max-height: 640px;
+  border-radius: 12px;
+  background: #000;
+  display: block;
+}
+.video-result-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  strong {
+    display: block;
+    font-size: 14px;
+    color: var(--el-text-color-primary);
+  }
+  span {
+    display: block;
+    margin-top: 3px;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+  }
+}
+.video-result-actions {
+  min-width: 190px;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.video-empty-art {
+  width: 64px;
+  height: 64px;
+  border-radius: 18px;
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  margin-bottom: 16px;
 }
 
 .ref-grid {
