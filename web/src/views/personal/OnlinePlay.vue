@@ -1,16 +1,19 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Clock } from '@element-plus/icons-vue'
 import { storeToRefs } from 'pinia'
 import { useUserStore } from '@/stores/user'
-import { formatCredit } from '@/utils/format'
+import { formatCredit, formatDateShort } from '@/utils/format'
 import {
   listMyModels,
+  listMyImageTasks,
   streamPlayChat,
   playGenerateImage,
   listPlayVideoChannels,
   startPlayVideo,
   getPlayVideo,
+  type ImageTask,
   type PlayChatMessage,
   type PlayImageData,
   type PlayVideoChannel,
@@ -30,6 +33,7 @@ const selectedChatModel = ref('')
 const selectedImageModel = ref('')
 
 onMounted(async () => {
+  loadVideoHistory()
   try {
     await userStore.fetchMe()
   } catch {
@@ -45,6 +49,7 @@ onMounted(async () => {
     // 静默;错误拦截器已提示
   }
   loadVideoChannels()
+  loadImageHistory()
 })
 
 // ----------------------------------------------------
@@ -316,6 +321,102 @@ const t2iResult = ref<PlayImageData[]>([])
 const t2iError = ref('')
 const t2iAbort = ref<AbortController | null>(null)
 
+type ImageHistoryMode = 'text2img' | 'img2img'
+interface ImageHistoryItem {
+  id: string
+  mode: ImageHistoryMode
+  prompt: string
+  size: string
+  upscale?: UpscaleLevel
+  createdAt: string
+  status: string
+  creditCost?: number
+  data: PlayImageData[]
+}
+
+const imageHistory = ref<ImageHistoryItem[]>([])
+const imageHistoryLoading = ref(false)
+const t2iHistoryVisible = ref(false)
+const i2iHistoryVisible = ref(false)
+const IMAGE_HISTORY_LIMIT = 20
+
+function imageDataFromTask(task: ImageTask): PlayImageData[] {
+  return (task.image_urls || []).map((url, idx) => ({
+    url,
+    file_id: task.file_ids?.[idx],
+  }))
+}
+
+function imageHistoryModeFromPrompt(prompt: string): ImageHistoryMode {
+  return /参考图|reference|保持|改动|换成|基于|根据/i.test(prompt) ? 'img2img' : 'text2img'
+}
+
+function imageHistoryFromTask(task: ImageTask): ImageHistoryItem {
+  return {
+    id: task.task_id,
+    mode: imageHistoryModeFromPrompt(task.prompt || ''),
+    prompt: task.prompt || '',
+    size: task.size || '1024x1024',
+    upscale: (task.upscale || '') as UpscaleLevel,
+    createdAt: task.created_at,
+    status: task.status,
+    creditCost: task.credit_cost,
+    data: imageDataFromTask(task),
+  }
+}
+
+function upsertImageHistory(item: ImageHistoryItem) {
+  const next = [item, ...imageHistory.value.filter((old) => old.id !== item.id)]
+  imageHistory.value = next.slice(0, IMAGE_HISTORY_LIMIT)
+}
+
+async function loadImageHistory(force = false) {
+  if (imageHistoryLoading.value) return
+  if (!force && imageHistory.value.length > 0) return
+  imageHistoryLoading.value = true
+  try {
+    const res = await listMyImageTasks({ limit: IMAGE_HISTORY_LIMIT, offset: 0 })
+    imageHistory.value = (res.items || []).map(imageHistoryFromTask)
+  } catch {
+    // 静默;列表只是辅助入口
+  } finally {
+    imageHistoryLoading.value = false
+  }
+}
+
+function pushPlayImageHistory(mode: ImageHistoryMode, prompt: string, resp: { task_id?: string; data?: PlayImageData[] }, extra: { size: string; upscale?: UpscaleLevel }) {
+  const data = resp.data || []
+  if (!resp.task_id || data.length === 0) return
+  upsertImageHistory({
+    id: resp.task_id,
+    mode,
+    prompt,
+    size: extra.size,
+    upscale: extra.upscale || '',
+    createdAt: new Date().toISOString(),
+    status: 'success',
+    data,
+  })
+}
+
+function openImageHistoryItem(item: ImageHistoryItem) {
+  t2iHistoryVisible.value = false
+  i2iHistoryVisible.value = false
+  if (item.mode === 'img2img') {
+    activeTab.value = 'img2img'
+    i2iPrompt.value = item.prompt
+    i2iResult.value = item.data
+    i2iError.value = ''
+    i2iSending.value = false
+  } else {
+    activeTab.value = 'text2img'
+    t2iPrompt.value = item.prompt
+    t2iResult.value = item.data
+    t2iError.value = ''
+    t2iSending.value = false
+  }
+}
+
 const imgExamples = [
   '赛博朋克城市夜景,霓虹雨夜,电影感光影,8k',
   '一只金色胖柴犬穿西装坐在办公桌前,油画质感',
@@ -357,6 +458,10 @@ async function sendText2Img() {
     if (t2iResult.value.length === 0) {
       t2iError.value = '未产出图片,请重试或更换描述'
     } else {
+      pushPlayImageHistory('text2img', prompt, resp, {
+        size: t2iSize.value,
+        upscale: t2iUpscale.value,
+      })
       ElMessage.success(`生成成功,共 ${t2iResult.value.length} 张`)
     }
   } catch (err: unknown) {
@@ -470,6 +575,10 @@ async function sendImg2Img() {
     )
     i2iResult.value = resp.data || []
     if (i2iResult.value.length > 0) {
+      pushPlayImageHistory('img2img', i2iPrompt.value.trim(), resp, {
+        size: i2iSize.value,
+        upscale: i2iUpscale.value,
+      })
       ElMessage.success(`生成成功,共 ${i2iResult.value.length} 张`)
     }
   } catch (err: unknown) {
@@ -502,6 +611,19 @@ const videoSending = ref(false)
 const videoTask = ref<PlayVideoState | null>(null)
 const videoError = ref('')
 let videoPollTimer = 0
+interface VideoHistoryItem extends PlayVideoState {
+  prompt: string
+  mode: VideoMode
+  ratio: string
+  resolution: string
+  duration: number
+  channel_name?: string
+}
+
+const VIDEO_HISTORY_STORAGE_KEY = 'gpt2api.online-play.video-history.v1'
+const VIDEO_HISTORY_LIMIT = 20
+const videoHistory = ref<VideoHistoryItem[]>([])
+const videoHistoryVisible = ref(false)
 
 const videoRatios = ['16:9', '9:16', '1:1', '4:3', '3:4']
 const videoResolutions = ['720p', '1080p']
@@ -550,6 +672,68 @@ async function loadVideoChannels() {
   } catch {
     // 错误由拦截器处理
   }
+}
+
+function loadVideoHistory() {
+  try {
+    const raw = localStorage.getItem(VIDEO_HISTORY_STORAGE_KEY)
+    if (!raw) return
+    const parsed = JSON.parse(raw)
+    if (Array.isArray(parsed)) {
+      videoHistory.value = parsed.slice(0, VIDEO_HISTORY_LIMIT)
+    }
+  } catch {
+    videoHistory.value = []
+  }
+}
+
+function persistVideoHistory() {
+  try {
+    localStorage.setItem(VIDEO_HISTORY_STORAGE_KEY, JSON.stringify(videoHistory.value.slice(0, VIDEO_HISTORY_LIMIT)))
+  } catch {
+    // ignore quota errors
+  }
+}
+
+function videoHistoryItemFromState(state: PlayVideoState, prompt = videoPrompt.value.trim()): VideoHistoryItem {
+  const channelName = videoChannels.value.find((item) => item.type === state.channel_type)?.name
+  return {
+    ...state,
+    prompt,
+    mode: videoMode.value,
+    ratio: videoRatio.value,
+    resolution: videoResolution.value,
+    duration: videoDuration.value,
+    channel_name: channelName,
+  }
+}
+
+function upsertVideoHistory(item: VideoHistoryItem) {
+  const next = [item, ...videoHistory.value.filter((old) => old.id !== item.id)]
+  videoHistory.value = next.slice(0, VIDEO_HISTORY_LIMIT)
+  persistVideoHistory()
+}
+
+function syncVideoHistoryState(state: PlayVideoState) {
+  const old = videoHistory.value.find((item) => item.id === state.id)
+  if (!old) return
+  upsertVideoHistory({ ...old, ...state })
+}
+
+function openVideoHistoryItem(item: VideoHistoryItem) {
+  videoHistoryVisible.value = false
+  activeTab.value = 'video'
+  selectedVideoChannel.value = item.channel_type || selectedVideoChannel.value
+  videoMode.value = item.mode || 'text'
+  videoPrompt.value = item.prompt || videoPrompt.value
+  videoRatio.value = item.ratio || videoRatio.value
+  videoResolution.value = item.resolution || videoResolution.value
+  videoDuration.value = item.duration || videoDuration.value
+  videoTask.value = item
+  videoError.value = item.error || ''
+  const status = String(item.status || '').toLowerCase()
+  videoSending.value = status !== 'completed' && status !== 'failed'
+  if (videoSending.value) pollVideo(item.id)
 }
 
 function handleVideoImagePick(e: Event) {
@@ -620,6 +804,7 @@ async function sendVideo() {
       video: videoMode.value === 'video' ? videoRefVideo.value : null,
     })
     videoTask.value = state
+    upsertVideoHistory(videoHistoryItemFromState(state, prompt))
     pollVideo(state.id)
     ElMessage.success('视频任务已创建')
   } catch (err: unknown) {
@@ -636,6 +821,7 @@ function pollVideo(id: string) {
     try {
       const state = await getPlayVideo(id)
       videoTask.value = state
+      syncVideoHistoryState(state)
       const status = String(state.status || '').toLowerCase()
       if (status === 'completed' || status === 'failed') {
         videoSending.value = false
@@ -955,6 +1141,55 @@ watch(activeTab, (v) => {
           </aside>
 
           <section class="card-block img-main">
+            <div class="result-toolbar">
+              <div>
+                <strong>图片结果</strong>
+                <span>{{ t2iResult.length ? `${t2iResult.length} 张` : '文生图' }}</span>
+              </div>
+              <el-popover
+                v-model:visible="t2iHistoryVisible"
+                placement="bottom-end"
+                trigger="click"
+                popper-class="play-history-popover"
+                :width="380"
+                @show="loadImageHistory(true)"
+              >
+                <template #reference>
+                  <el-button :icon="Clock" :loading="imageHistoryLoading" aria-label="图片生成历史">生成历史</el-button>
+                </template>
+                <div class="play-history-panel">
+                  <div class="play-history-head">
+                    <div>
+                      <span>图片历史</span>
+                      <b>{{ imageHistory.length }} 条</b>
+                    </div>
+                    <el-button text size="small" :loading="imageHistoryLoading" @click="loadImageHistory(true)">刷新</el-button>
+                  </div>
+                  <div v-if="imageHistory.length" class="play-history-list">
+                    <button
+                      v-for="item in imageHistory"
+                      :key="item.id"
+                      type="button"
+                      class="play-history-item"
+                      @click="openImageHistoryItem(item)"
+                    >
+                      <span class="play-history-thumb">
+                        <img v-if="item.data[0]?.url" :src="item.data[0].url" alt="历史图片" loading="lazy" />
+                        <el-icon v-else><Picture /></el-icon>
+                      </span>
+                      <span class="play-history-copy">
+                        <b>{{ item.prompt || '未命名图片任务' }}</b>
+                        <small>{{ item.mode === 'img2img' ? '图生图' : '文生图' }} · {{ item.size }} · {{ formatDateShort(item.createdAt) }}</small>
+                      </span>
+                      <em :class="['play-history-status', item.status === 'success' ? 'success' : item.status === 'failed' ? 'danger' : 'muted']">
+                        {{ item.status === 'success' ? '完成' : item.status === 'failed' ? '失败' : item.status }}
+                      </em>
+                    </button>
+                  </div>
+                  <el-empty v-else :description="imageHistoryLoading ? '加载中' : '暂无图片历史'" :image-size="54" />
+                </div>
+              </el-popover>
+            </div>
             <div v-if="t2iSending" class="stage loading">
               <div class="orb"><el-icon class="spin"><Loading /></el-icon></div>
               <div class="stage-title">正在为你绘制…</div>
@@ -1094,6 +1329,55 @@ watch(activeTab, (v) => {
           </aside>
 
           <section class="card-block img-main">
+            <div class="result-toolbar">
+              <div>
+                <strong>图片结果</strong>
+                <span>{{ i2iResult.length ? `${i2iResult.length} 张` : '图生图' }}</span>
+              </div>
+              <el-popover
+                v-model:visible="i2iHistoryVisible"
+                placement="bottom-end"
+                trigger="click"
+                popper-class="play-history-popover"
+                :width="380"
+                @show="loadImageHistory(true)"
+              >
+                <template #reference>
+                  <el-button :icon="Clock" :loading="imageHistoryLoading" aria-label="图片生成历史">生成历史</el-button>
+                </template>
+                <div class="play-history-panel">
+                  <div class="play-history-head">
+                    <div>
+                      <span>图片历史</span>
+                      <b>{{ imageHistory.length }} 条</b>
+                    </div>
+                    <el-button text size="small" :loading="imageHistoryLoading" @click="loadImageHistory(true)">刷新</el-button>
+                  </div>
+                  <div v-if="imageHistory.length" class="play-history-list">
+                    <button
+                      v-for="item in imageHistory"
+                      :key="item.id"
+                      type="button"
+                      class="play-history-item"
+                      @click="openImageHistoryItem(item)"
+                    >
+                      <span class="play-history-thumb">
+                        <img v-if="item.data[0]?.url" :src="item.data[0].url" alt="历史图片" loading="lazy" />
+                        <el-icon v-else><Picture /></el-icon>
+                      </span>
+                      <span class="play-history-copy">
+                        <b>{{ item.prompt || '未命名图片任务' }}</b>
+                        <small>{{ item.mode === 'img2img' ? '图生图' : '文生图' }} · {{ item.size }} · {{ formatDateShort(item.createdAt) }}</small>
+                      </span>
+                      <em :class="['play-history-status', item.status === 'success' ? 'success' : item.status === 'failed' ? 'danger' : 'muted']">
+                        {{ item.status === 'success' ? '完成' : item.status === 'failed' ? '失败' : item.status }}
+                      </em>
+                    </button>
+                  </div>
+                  <el-empty v-else :description="imageHistoryLoading ? '加载中' : '暂无图片历史'" :image-size="54" />
+                </div>
+              </el-popover>
+            </div>
             <div v-if="i2iError" class="err-block">
               <el-icon><WarningFilled /></el-icon>
               {{ i2iError }}
@@ -1246,6 +1530,54 @@ watch(activeTab, (v) => {
           </aside>
 
           <section class="card-block img-main video-main">
+            <div class="result-toolbar">
+              <div>
+                <strong>视频结果</strong>
+                <span>{{ videoTask ? videoStatusText : '视频生成' }}</span>
+              </div>
+              <el-popover
+                v-model:visible="videoHistoryVisible"
+                placement="bottom-end"
+                trigger="click"
+                popper-class="play-history-popover"
+                :width="420"
+              >
+                <template #reference>
+                  <el-button :icon="Clock" aria-label="视频生成历史">生成历史</el-button>
+                </template>
+                <div class="play-history-panel">
+                  <div class="play-history-head">
+                    <div>
+                      <span>视频历史</span>
+                      <b>{{ videoHistory.length }} 条</b>
+                    </div>
+                  </div>
+                  <div v-if="videoHistory.length" class="play-history-list">
+                    <button
+                      v-for="item in videoHistory"
+                      :key="item.id"
+                      type="button"
+                      class="play-history-item video"
+                      @click="openVideoHistoryItem(item)"
+                    >
+                      <span class="play-history-thumb video">
+                        <video v-if="item.result_url" :src="item.result_url" muted playsinline preload="metadata" />
+                        <img v-else-if="item.image_url" :src="item.image_url" alt="视频参考图" loading="lazy" />
+                        <el-icon v-else><VideoPlay /></el-icon>
+                      </span>
+                      <span class="play-history-copy">
+                        <b>{{ item.prompt || '未命名视频任务' }}</b>
+                        <small>{{ item.channel_name || item.channel_type }} · {{ item.mode === 'image' ? '图生视频' : item.mode === 'video' ? '参考视频' : '文生视频' }} · {{ formatDateShort(item.created_at) }}</small>
+                      </span>
+                      <em :class="['play-history-status', item.status === 'completed' ? 'success' : item.status === 'failed' ? 'danger' : 'muted']">
+                        {{ item.status === 'completed' ? '完成' : item.status === 'failed' ? '失败' : `${item.progress || 0}%` }}
+                      </em>
+                    </button>
+                  </div>
+                  <el-empty v-else description="暂无视频历史" :image-size="54" />
+                </div>
+              </el-popover>
+            </div>
             <div v-if="videoTask?.result_url" class="video-result">
               <video :src="videoTask.result_url" controls playsinline preload="metadata" />
               <div class="video-result-bar">
@@ -1598,6 +1930,155 @@ watch(activeTab, (v) => {
 }
 /* img-main 高度随内容自适应，stage（空态/loading）保留最小高度 */
 .img-main { min-height: 0; }
+.result-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 0 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  > div {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  strong {
+    font-size: 14px;
+    color: var(--el-text-color-primary);
+    font-weight: 700;
+  }
+  span {
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+  }
+  :deep(.el-button) {
+    flex: 0 0 auto;
+  }
+}
+:global(.play-history-popover.el-popper) {
+  width: min(420px, 92vw) !important;
+  padding: 10px;
+  border-radius: 12px;
+  border-color: var(--el-border-color-lighter);
+}
+.play-history-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.play-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  div {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  span {
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+  }
+  b {
+    font-size: 14px;
+    color: var(--el-text-color-primary);
+  }
+}
+.play-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 390px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.play-history-item {
+  width: 100%;
+  min-height: 72px;
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 10px;
+  padding: 8px;
+  background: var(--el-bg-color);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  &:hover {
+    border-color: var(--el-color-primary);
+    background: var(--el-color-primary-light-9);
+  }
+}
+.play-history-thumb {
+  width: 58px;
+  height: 58px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--el-fill-color-light);
+  color: var(--el-text-color-placeholder);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  img,
+  video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  &.video {
+    background: #0f172a;
+    color: #fff;
+  }
+}
+.play-history-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  b,
+  small {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  b {
+    font-size: 13px;
+    color: var(--el-text-color-primary);
+    font-weight: 700;
+  }
+  small {
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+  }
+}
+.play-history-status {
+  min-width: 44px;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 700;
+  text-align: center;
+  color: var(--el-text-color-secondary);
+  background: var(--el-fill-color);
+  &.success {
+    color: var(--el-color-success);
+    background: var(--el-color-success-light-9);
+  }
+  &.danger {
+    color: var(--el-color-danger);
+    background: var(--el-color-danger-light-9);
+  }
+}
 
 /* 比例按钮 —— 10 档预设,5 列 × 2 行 grid */
 .ratio-row {
