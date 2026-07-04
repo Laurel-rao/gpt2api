@@ -107,7 +107,7 @@ const MAX_IMAGES = 4
 const MAX_IMAGE_MB = 20
 const POLL_INTERVAL = 2500
 const TASK_PAGE_SIZE = 12
-const canvasMinZoom = 0.12
+const canvasMinZoom = 0.04
 const canvasMaxZoom = 1.5
 
 const optionsLoading = ref(false)
@@ -135,6 +135,7 @@ const brokenAssetIDs = ref<Set<number>>(new Set())
 const retryPrompts = ref<Record<number, string>>({})
 const backgroundMode = ref<'grid' | 'dots' | 'blank'>('grid')
 const showMiniMap = ref(true)
+const showNodeMedia = ref(true)
 const initialViewport = { x: 26, y: 72, zoom: 0.86 }
 const { getViewport, setViewport } = useVueFlow({ id: 'ecommerce-canvas-flow' })
 const customNodes = ref<CanvasNode[]>([])
@@ -799,6 +800,16 @@ function canvasBounds(layoutNodes = canvasLayoutNodes()): CanvasBounds | null {
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
 }
 
+function paddedCanvasBounds(bounds: CanvasBounds): CanvasBounds {
+  const padding = 80
+  return {
+    x: bounds.x - padding,
+    y: bounds.y - padding,
+    width: bounds.width + padding * 2,
+    height: bounds.height + padding * 2,
+  }
+}
+
 function canvasFitInsets(): CanvasFitInsets {
   const viewport = document.querySelector<HTMLElement>('.canvas-viewport')
   if (!viewport) return { top: 24, right: 24, bottom: 24, left: 24 }
@@ -814,39 +825,48 @@ function canvasFitInsets(): CanvasFitInsets {
   const inspectorRect = inspector && window.getComputedStyle(inspector).position !== 'static' ? visibleRect(inspector) : null
   const controlsBottom = controlsRect ? Math.max(0, controlsRect.bottom - viewportRect.top + 24) : 24
   const hintTop = hintRect ? Math.max(0, viewportRect.bottom - hintRect.top + 18) : 24
-  const inspectorLeft = inspectorRect
+  const inspectorOverlap = inspectorRect
     && inspectorRect.right > viewportRect.left
     && inspectorRect.left < viewportRect.right
     && inspectorRect.bottom > viewportRect.top
     && inspectorRect.top < viewportRect.bottom
     ? Math.max(24, viewportRect.right - inspectorRect.left + 20)
     : 24
+  const horizontal = Math.min(Math.max(32, inspectorOverlap), Math.max(32, viewportRect.width * 0.28))
+  const vertical = Math.min(Math.max(32, controlsBottom, hintTop), Math.max(32, viewportRect.height * 0.28))
   return {
-    top: Math.max(24, controlsBottom),
-    right: Math.min(Math.max(24, inspectorLeft), Math.max(24, viewportRect.width * 0.42)),
-    bottom: Math.max(24, hintTop),
-    left: 24,
+    top: vertical,
+    right: horizontal,
+    bottom: vertical,
+    left: horizontal,
   }
 }
 
 function fitCanvasToView(duration = 260, sourceNodes = flowNodeState.value) {
   nextTick(() => {
-    const viewport = document.querySelector<HTMLElement>('.canvas-viewport')
-    const bounds = canvasBounds(canvasLayoutNodes(sourceNodes))
-    if (!viewport || !bounds) return
-    const viewportRect = viewport.getBoundingClientRect()
-    const insets = canvasFitInsets()
-    const usableWidth = Math.max(240, viewportRect.width - insets.left - insets.right)
-    const usableHeight = Math.max(220, viewportRect.height - insets.top - insets.bottom)
-    const zoom = Math.max(
-      canvasMinZoom,
-      Math.min(canvasMaxZoom, Math.min(usableWidth / Math.max(bounds.width, 1), usableHeight / Math.max(bounds.height, 1))),
-    )
-    setViewport({
-      x: insets.left + (usableWidth - bounds.width * zoom) / 2 - bounds.x * zoom,
-      y: insets.top + (usableHeight - bounds.height * zoom) / 2 - bounds.y * zoom,
-      zoom,
-    }, { duration })
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const viewport = document.querySelector<HTMLElement>('.canvas-viewport')
+        const bounds = canvasBounds(canvasLayoutNodes(sourceNodes))
+        if (!viewport || !bounds) return
+        const fitBounds = paddedCanvasBounds(bounds)
+        const viewportRect = viewport.getBoundingClientRect()
+        const insets = canvasFitInsets()
+        const usableWidth = Math.max(160, viewportRect.width - insets.left - insets.right)
+        const usableHeight = Math.max(160, viewportRect.height - insets.top - insets.bottom)
+        const zoom = Math.max(
+          canvasMinZoom,
+          Math.min(canvasMaxZoom, Math.min(usableWidth / Math.max(fitBounds.width, 1), usableHeight / Math.max(fitBounds.height, 1))),
+        )
+        const centerX = fitBounds.x + fitBounds.width / 2
+        const centerY = fitBounds.y + fitBounds.height / 2
+        setViewport({
+          x: viewportRect.width / 2 - centerX * zoom,
+          y: viewportRect.height / 2 - centerY * zoom,
+          zoom,
+        }, { duration })
+      })
+    })
   })
 }
 
@@ -896,12 +916,16 @@ function autoArrangeCanvas() {
   const columnWidths = new Map<number, number>()
   const columnX = new Map<number, number>()
   const columnGap = 220
-  const rowGap = 96
+  const laneGap = 72
+  const rowGap = 116
+  const maxRowsPerLane = 4
   const originX = 44
   const originY = 54
   const sortedGroups = Array.from(grouped.entries()).sort(([a], [b]) => a - b)
   for (const [depth, layerNodes] of sortedGroups) {
-    columnWidths.set(depth, Math.max(...layerNodes.map((node) => nodeWidth.get(node.id) || node.w)))
+    const maxWidth = Math.max(...layerNodes.map((node) => nodeWidth.get(node.id) || node.w))
+    const laneCount = Math.max(1, Math.ceil(layerNodes.length / maxRowsPerLane))
+    columnWidths.set(depth, laneCount * maxWidth + (laneCount - 1) * laneGap)
   }
   let nextX = originX
   for (const [depth] of sortedGroups) {
@@ -909,17 +933,20 @@ function autoArrangeCanvas() {
     nextX += (columnWidths.get(depth) || 240) + columnGap
   }
   sortedGroups.forEach(([depth, layerNodes]) => {
-    let nextY = originY
+    const maxWidth = Math.max(...layerNodes.map((node) => nodeWidth.get(node.id) || node.w))
+    const laneCount = Math.max(1, Math.ceil(layerNodes.length / maxRowsPerLane))
+    const laneY = Array.from({ length: laneCount }, () => originY)
     layerNodes
       .slice()
       .sort((a, b) => (a.y - b.y) || a.id.localeCompare(b.id))
       .forEach((node) => {
+        const laneIndex = laneY.indexOf(Math.min(...laneY))
         const height = nodeHeight.get(node.id) || node.h
         arrangedPositions.set(node.id, {
-          x: columnX.get(depth) || originX,
-          y: nextY,
+          x: (columnX.get(depth) || originX) + laneIndex * (maxWidth + laneGap),
+          y: laneY[laneIndex],
         })
-        nextY += height + rowGap
+        laneY[laneIndex] += height + rowGap
       })
   })
   const nextNodes: any[] = []
@@ -943,7 +970,7 @@ function zoom(delta: number) {
   const current = getViewport()
   setViewport({
     ...current,
-    zoom: Math.max(0.35, Math.min(1.5, Number((current.zoom + delta).toFixed(2)))),
+    zoom: Math.max(canvasMinZoom, Math.min(canvasMaxZoom, Number((current.zoom + delta).toFixed(2)))),
   }, { duration: 160 })
 }
 
@@ -1585,7 +1612,8 @@ onBeforeUnmount(() => {
           <el-button @click="resetViewport">回到起点</el-button>
           <el-button @click="centerCanvas">全览</el-button>
           <el-button :icon="Operation" @click="autoArrangeCanvas">自动排列</el-button>
-          <el-button :icon="Operation" @click="showMiniMap = !showMiniMap">{{ showMiniMap ? '隐藏小图' : '显示小图' }}</el-button>
+          <el-button :icon="View" @click="showNodeMedia = !showNodeMedia">{{ showNodeMedia ? '隐藏图片' : '显示图片' }}</el-button>
+          <el-button :icon="Operation" @click="showMiniMap = !showMiniMap">{{ showMiniMap ? '隐藏地图' : '显示地图' }}</el-button>
         </div>
 
         <div class="canvas-hint">
@@ -1649,11 +1677,11 @@ onBeforeUnmount(() => {
               <span v-if="data.node.kind === 'asset' && data.node.asset">排队 {{ assetQueueElapsed(data.node.asset) }}</span>
               <span v-else>{{ data.node.kind === 'brief' ? '输入节点' : data.node.kind === 'export' ? '交付节点' : '编排节点' }}</span>
             </div>
-            <div v-if="data.node.kind === 'asset'" class="node-preview">
+            <div v-if="showNodeMedia && data.node.kind === 'asset'" class="node-preview">
               <img v-if="assetHasImage(data.node.asset)" :src="thumbURL(data.node.asset!.url)" :alt="data.node.title" @error="markBrokenAsset(data.node.asset!)" />
               <span v-else>{{ data.node.asset?.error || '等待素材' }}</span>
             </div>
-            <div v-else-if="data.node.kind === 'video' && data.node.asset" class="node-preview node-video-preview">
+            <div v-else-if="showNodeMedia && data.node.kind === 'video' && data.node.asset" class="node-preview node-video-preview">
               <button v-if="assetCanPreview(data.node.asset)" type="button" @click="openAssetPreview(data.node.asset)">
                 <el-icon><VideoPlay /></el-icon>
                 <span>预览视频</span>
