@@ -69,8 +69,24 @@ export interface EcommerceAsset {
 }
 
 export const ECOMMERCE_EXTRA_ASSET_OPTIONS = [
-  { label: '代言人代言图', value: 'spokesperson_image' },
-  { label: '模特产品展示图', value: 'model_product_image' },
+  { label: '首屏主视觉', value: 'hero_visual_image', description: '传递核心价值' },
+  { label: '核心卖点图', value: 'core_selling_point_image', description: '突出差异优势' },
+  { label: '使用场景图', value: 'usage_scene_image', description: '呈现真实使用场景' },
+  { label: '多角度图', value: 'multi_angle_image', description: '多角度呈现外观' },
+  { label: '场景氛围图', value: 'scene_atmosphere_image', description: '展示使用场景' },
+  { label: '商品细节图', value: 'product_detail_image', description: '放大材质与工艺' },
+  { label: '品牌故事图', value: 'brand_story_image', description: '传达品牌理念' },
+  { label: '尺寸/容量/尺码图', value: 'size_capacity_image', description: '展示规格信息' },
+  { label: '效果对比图', value: 'effect_compare_image', description: '使用前后效果对比' },
+  { label: '详细规格/参数表', value: 'spec_sheet_image', description: '展示详细商品数据' },
+  { label: '工艺制作图', value: 'craft_process_image', description: '展示工艺制作过程' },
+  { label: '配件/赠品图', value: 'accessories_image', description: '明确收货的所有物品' },
+  { label: '系列展示图', value: 'series_show_image', description: '多色或多 SKU 展示' },
+  { label: '商品成分图', value: 'ingredients_image', description: '展示配方/材质/成分' },
+  { label: '售后保障图', value: 'after_sales_image', description: '说明质保退换政策' },
+  { label: '使用建议图', value: 'usage_tips_image', description: '商品使用的注意事项' },
+  { label: '代言图', value: 'spokesperson_image', description: '代言背书与信任感' },
+  { label: '模特展示图', value: 'model_product_image', description: '模特穿戴或使用展示' },
 ] as const
 
 export interface EcommerceTask {

@@ -366,6 +366,22 @@ func defaultImageSpecs() map[string]ImageSpec {
 		AssetPrice:            {Size: "1024x1792", AspectRatio: "4:7", Clarity: "high"},
 		AssetSpokesperson:     {Size: "1024x1792", AspectRatio: "4:7", Clarity: "high"},
 		AssetModelProductShow: {Size: "1024x1792", AspectRatio: "4:7", Clarity: "high"},
+		AssetHeroVisual:       {Size: "1792x1024", AspectRatio: "7:4", Clarity: "high"},
+		AssetCoreSellingPoint: {Size: "1024x1024", AspectRatio: "1:1", Clarity: "high"},
+		AssetUsageScene:       {Size: "1024x1792", AspectRatio: "4:7", Clarity: "high"},
+		AssetMultiAngle:       {Size: "1024x1024", AspectRatio: "1:1", Clarity: "high"},
+		AssetSceneAtmosphere:  {Size: "1024x1792", AspectRatio: "4:7", Clarity: "high"},
+		AssetProductDetail:    {Size: "1024x1792", AspectRatio: "4:7", Clarity: "high"},
+		AssetBrandStory:       {Size: "1024x1792", AspectRatio: "4:7", Clarity: "high"},
+		AssetSizeCapacity:     {Size: "1024x1792", AspectRatio: "4:7", Clarity: "high"},
+		AssetEffectCompare:    {Size: "1024x1792", AspectRatio: "4:7", Clarity: "high"},
+		AssetSpecSheet:        {Size: "1024x1792", AspectRatio: "4:7", Clarity: "high"},
+		AssetCraftProcess:     {Size: "1024x1792", AspectRatio: "4:7", Clarity: "high"},
+		AssetAccessories:      {Size: "1024x1792", AspectRatio: "4:7", Clarity: "high"},
+		AssetSeriesShow:       {Size: "1024x1024", AspectRatio: "1:1", Clarity: "high"},
+		AssetIngredients:      {Size: "1024x1792", AspectRatio: "4:7", Clarity: "high"},
+		AssetAfterSales:       {Size: "1024x1792", AspectRatio: "4:7", Clarity: "high"},
+		AssetUsageTips:        {Size: "1024x1792", AspectRatio: "4:7", Clarity: "high"},
 	}
 }
 
@@ -517,9 +533,13 @@ func formatCompactUnifiedInfoForAssetLanguage(out Output, assetType, languageCod
 				"Promotion text: "+out.PriceInfo.PromotionText,
 				"CTA: "+out.PriceInfo.CTA,
 			)
-		case AssetDetail:
+		case AssetDetail, AssetProductDetail, AssetSpecSheet, AssetSizeCapacity:
 			lines = append(lines,
 				"Key specs: "+strings.Join(limitStrings(out.ProductInfo.KeySpecs, 3), "; "),
+				"Selling points: "+strings.Join(limitStrings(out.ProductInfo.SellingPoints, 3), "; "),
+			)
+		case AssetCoreSellingPoint, AssetEffectCompare, AssetUsageTips:
+			lines = append(lines,
 				"Selling points: "+strings.Join(limitStrings(out.ProductInfo.SellingPoints, 3), "; "),
 			)
 		case AssetSpokesperson:
@@ -532,7 +552,20 @@ func formatCompactUnifiedInfoForAssetLanguage(out Output, assetType, languageCod
 				"Model scene: model wearing, holding or using the product",
 				"Key specs: "+strings.Join(limitStrings(out.ProductInfo.KeySpecs, 2), "; "),
 			)
-		case AssetMain, AssetTitle:
+		case AssetUsageScene, AssetSceneAtmosphere:
+			lines = append(lines,
+				"Usage scene: realistic scenario around the buyer need",
+				"Selling point: "+firstString(out.ProductInfo.SellingPoints),
+			)
+		case AssetMultiAngle, AssetSeriesShow, AssetAccessories, AssetIngredients, AssetCraftProcess:
+			lines = append(lines,
+				"Key specs: "+strings.Join(limitStrings(out.ProductInfo.KeySpecs, 3), "; "),
+			)
+		case AssetBrandStory, AssetAfterSales:
+			lines = append(lines,
+				"Brand/service message: "+firstNonEmpty(out.PriceInfo.PromotionText, out.Description),
+			)
+		case AssetMain, AssetTitle, AssetHeroVisual:
 			lines = append(lines,
 				"Key specs: "+strings.Join(limitStrings(out.ProductInfo.KeySpecs, 2), "; "),
 			)
@@ -551,9 +584,13 @@ func formatCompactUnifiedInfoForAssetLanguage(out Output, assetType, languageCod
 			"促销文字："+out.PriceInfo.PromotionText,
 			"行动号召："+out.PriceInfo.CTA,
 		)
-	case AssetDetail:
+	case AssetDetail, AssetProductDetail, AssetSpecSheet, AssetSizeCapacity:
 		lines = append(lines,
 			"关键规格："+strings.Join(limitStrings(out.ProductInfo.KeySpecs, 3), "；"),
+			"卖点："+strings.Join(limitStrings(out.ProductInfo.SellingPoints, 3), "；"),
+		)
+	case AssetCoreSellingPoint, AssetEffectCompare, AssetUsageTips:
+		lines = append(lines,
 			"卖点："+strings.Join(limitStrings(out.ProductInfo.SellingPoints, 3), "；"),
 		)
 	case AssetSpokesperson:
@@ -566,7 +603,20 @@ func formatCompactUnifiedInfoForAssetLanguage(out Output, assetType, languageCod
 			"模特场景：模特穿戴、手持或使用商品",
 			"关键规格："+strings.Join(limitStrings(out.ProductInfo.KeySpecs, 2), "；"),
 		)
-	case AssetMain, AssetTitle:
+	case AssetUsageScene, AssetSceneAtmosphere:
+		lines = append(lines,
+			"使用场景：围绕买家需求的真实使用场景",
+			"卖点："+firstString(out.ProductInfo.SellingPoints),
+		)
+	case AssetMultiAngle, AssetSeriesShow, AssetAccessories, AssetIngredients, AssetCraftProcess:
+		lines = append(lines,
+			"关键规格："+strings.Join(limitStrings(out.ProductInfo.KeySpecs, 3), "；"),
+		)
+	case AssetBrandStory, AssetAfterSales:
+		lines = append(lines,
+			"品牌/服务信息："+firstNonEmpty(out.PriceInfo.PromotionText, out.Description),
+		)
+	case AssetMain, AssetTitle, AssetHeroVisual:
 		lines = append(lines,
 			"关键规格："+strings.Join(limitStrings(out.ProductInfo.KeySpecs, 2), "；"),
 		)
@@ -612,7 +662,7 @@ func formatCompactImageTextPlanForLanguage(plan ImageTextPlan, assetType, langua
 	switch {
 	case normalizeLanguageCode(languageCode) != "zh-CN":
 		switch assetType {
-		case AssetTitle, AssetMain, AssetSpokesperson, AssetModelProductShow:
+		case AssetTitle, AssetMain, AssetHeroVisual, AssetCoreSellingPoint, AssetSpokesperson, AssetModelProductShow:
 			lines = []string{
 				"Title: " + plan.Title,
 				"Badge: " + firstString(plan.Badges),
@@ -634,7 +684,7 @@ func formatCompactImageTextPlanForLanguage(plan ImageTextPlan, assetType, langua
 		}
 	default:
 		switch assetType {
-		case AssetTitle, AssetMain, AssetSpokesperson, AssetModelProductShow:
+		case AssetTitle, AssetMain, AssetHeroVisual, AssetCoreSellingPoint, AssetSpokesperson, AssetModelProductShow:
 			lines = []string{
 				"标题：" + plan.Title,
 				"标签：" + firstString(plan.Badges),
@@ -701,6 +751,11 @@ func buildHTML(out Output, assets []Asset) string {
 			assetMap[a.AssetType] = a.URL
 		}
 	}
+	writeImage := func(b *strings.Builder, assetType, alt string) {
+		if u := assetMap[assetType]; u != "" {
+			b.WriteString(`<img class="wide-image" src="` + html.EscapeString(u) + `" alt="` + html.EscapeString(alt) + `">`)
+		}
+	}
 	var b strings.Builder
 	b.WriteString(`<article class="ecommerce-detail-preview">`)
 	if u := assetMap[AssetMain]; u != "" {
@@ -713,12 +768,10 @@ func buildHTML(out Output, assets []Asset) string {
 	b.WriteString(`</p><strong>`)
 	b.WriteString(html.EscapeString(out.PriceCopy))
 	b.WriteString(`</strong></section>`)
-	if u := assetMap[AssetPrice]; u != "" {
-		b.WriteString(`<img class="wide-image" src="` + html.EscapeString(u) + `" alt="价格图">`)
-	}
-	if u := assetMap[AssetSpokesperson]; u != "" {
-		b.WriteString(`<img class="wide-image" src="` + html.EscapeString(u) + `" alt="代言图">`)
-	}
+	writeImage(&b, AssetHeroVisual, "首屏主视觉")
+	writeImage(&b, AssetCoreSellingPoint, "核心卖点图")
+	writeImage(&b, AssetPrice, "价格图")
+	writeImage(&b, AssetSpokesperson, "代言图")
 	b.WriteString(`<section class="copy-grid">`)
 	for _, s := range out.MarketingCopy {
 		b.WriteString(`<span>`)
@@ -726,12 +779,22 @@ func buildHTML(out Output, assets []Asset) string {
 		b.WriteString(`</span>`)
 	}
 	b.WriteString(`</section>`)
-	if u := assetMap[AssetDetail]; u != "" {
-		b.WriteString(`<img class="wide-image" src="` + html.EscapeString(u) + `" alt="详情图">`)
-	}
-	if u := assetMap[AssetModelProductShow]; u != "" {
-		b.WriteString(`<img class="wide-image" src="` + html.EscapeString(u) + `" alt="模特产品展示图">`)
-	}
+	writeImage(&b, AssetUsageScene, "使用场景图")
+	writeImage(&b, AssetSceneAtmosphere, "场景氛围图")
+	writeImage(&b, AssetDetail, "详情图")
+	writeImage(&b, AssetProductDetail, "商品细节图")
+	writeImage(&b, AssetMultiAngle, "多角度图")
+	writeImage(&b, AssetSizeCapacity, "尺寸容量尺码图")
+	writeImage(&b, AssetSpecSheet, "详细规格参数表")
+	writeImage(&b, AssetEffectCompare, "效果对比图")
+	writeImage(&b, AssetCraftProcess, "工艺制作图")
+	writeImage(&b, AssetAccessories, "配件赠品图")
+	writeImage(&b, AssetSeriesShow, "系列展示图")
+	writeImage(&b, AssetIngredients, "商品成分图")
+	writeImage(&b, AssetBrandStory, "品牌故事图")
+	writeImage(&b, AssetAfterSales, "售后保障图")
+	writeImage(&b, AssetUsageTips, "使用建议图")
+	writeImage(&b, AssetModelProductShow, "模特产品展示图")
 	for _, sec := range out.DetailSections {
 		b.WriteString(`<section class="detail-section"><h2>`)
 		b.WriteString(html.EscapeString(sec.Title))

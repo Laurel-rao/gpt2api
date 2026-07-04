@@ -95,18 +95,18 @@ func TestLatestAssetsByTypeUsesNewestAsset(t *testing.T) {
 }
 
 func TestExtraAssetTypesValidation(t *testing.T) {
-	got, err := validateExtraAssetTypes([]string{AssetSpokesperson, AssetSpokesperson, AssetModelProductShow})
+	got, err := validateExtraAssetTypes([]string{AssetHeroVisual, AssetSpokesperson, AssetHeroVisual, AssetSpecSheet})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(got, ",") != AssetSpokesperson+","+AssetModelProductShow {
+	if strings.Join(got, ",") != AssetHeroVisual+","+AssetSpokesperson+","+AssetSpecSheet {
 		t.Fatalf("extra asset types = %+v", got)
 	}
 	if _, err := validateExtraAssetTypes([]string{"bad_image"}); err == nil {
 		t.Fatal("expected invalid asset type error")
 	}
 	all := allAssetTypes(got)
-	if strings.Join(all[len(assetTypes):], ",") != AssetSpokesperson+","+AssetModelProductShow {
+	if strings.Join(all[len(assetTypes):], ",") != AssetHeroVisual+","+AssetSpokesperson+","+AssetSpecSheet {
 		t.Fatalf("all asset types = %+v", all)
 	}
 }
@@ -146,6 +146,9 @@ func TestNormalizeOutputBuildsConsistentImagePlans(t *testing.T) {
 	if out.ImageTextPlans[AssetSpokesperson].Title != "800可收纳钢琴" || out.ImageSpecs[AssetModelProductShow].Size != "1024x1792" {
 		t.Fatalf("optional image defaults missing: plan=%+v spec=%+v", out.ImageTextPlans[AssetSpokesperson], out.ImageSpecs[AssetModelProductShow])
 	}
+	if out.ImageSpecs[AssetHeroVisual].Size != "1792x1024" || out.ImageSpecs[AssetCoreSellingPoint].Size != "1024x1024" || out.ImageSpecs[AssetSpecSheet].Size != "1024x1792" {
+		t.Fatalf("new optional specs missing: hero=%+v core=%+v spec=%+v", out.ImageSpecs[AssetHeroVisual], out.ImageSpecs[AssetCoreSellingPoint], out.ImageSpecs[AssetSpecSheet])
+	}
 }
 
 func TestNormalizeOutputResetsUniformImageSpecs(t *testing.T) {
@@ -172,6 +175,9 @@ func TestNormalizeOutputResetsUniformImageSpecs(t *testing.T) {
 	}
 	if out.ImageSpecs[AssetSpokesperson].Size != "1024x1792" || out.ImageSpecs[AssetModelProductShow].Size != "1024x1792" {
 		t.Fatalf("optional specs = spokesperson:%+v model:%+v", out.ImageSpecs[AssetSpokesperson], out.ImageSpecs[AssetModelProductShow])
+	}
+	if out.ImageSpecs[AssetHeroVisual].Size != "1792x1024" || out.ImageSpecs[AssetMultiAngle].Size != "1024x1024" || out.ImageSpecs[AssetAfterSales].Size != "1024x1792" {
+		t.Fatalf("new optional specs = hero:%+v angle:%+v aftersales:%+v", out.ImageSpecs[AssetHeroVisual], out.ImageSpecs[AssetMultiAngle], out.ImageSpecs[AssetAfterSales])
 	}
 }
 
@@ -675,11 +681,19 @@ func TestOptionalAssetPromptsHaveDistinctGoals(t *testing.T) {
 	r := NewRunner(nil, nil, nil, nil, nil, nil, nil, 1)
 	spokesperson := r.buildImagePrompt(Platform{Name: "通用电商"}, PromptTemplate{}, StyleTemplate{}, out, "美肤袜，增加代言人和模特展示", AssetSpokesperson)
 	modelShow := r.buildImagePrompt(Platform{Name: "通用电商"}, PromptTemplate{}, StyleTemplate{}, out, "美肤袜，增加代言人和模特展示", AssetModelProductShow)
+	specSheet := r.buildImagePrompt(Platform{Name: "通用电商"}, PromptTemplate{}, StyleTemplate{}, out, "美肤袜，展示规格和使用建议", AssetSpecSheet)
+	usageTips := r.buildImagePrompt(Platform{Name: "通用电商"}, PromptTemplate{}, StyleTemplate{}, out, "美肤袜，展示规格和使用建议", AssetUsageTips)
 	if !strings.Contains(spokesperson, "代言人") || !strings.Contains(spokesperson, "同框") {
 		t.Fatalf("spokesperson prompt missing endorsement requirement: %s", spokesperson)
 	}
 	if !strings.Contains(modelShow, "模特") || !strings.Contains(modelShow, "穿戴") {
 		t.Fatalf("model prompt missing product showcase requirement: %s", modelShow)
+	}
+	if !strings.Contains(specSheet, "参数表") || !strings.Contains(specSheet, "参数") {
+		t.Fatalf("spec sheet prompt missing parameter requirement: %s", specSheet)
+	}
+	if !strings.Contains(usageTips, "使用建议") || !strings.Contains(usageTips, "注意事项") {
+		t.Fatalf("usage tips prompt missing tips requirement: %s", usageTips)
 	}
 }
 

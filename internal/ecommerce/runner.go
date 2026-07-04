@@ -1285,7 +1285,23 @@ func (r *Runner) buildContentPrompt(platform Platform, prompt PromptTemplate, st
     "detail_image": {"size": "1024x1792", "aspect_ratio": "4:7", "clarity": "high"},
     "price_image": {"size": "1024x1792", "aspect_ratio": "4:7", "clarity": "high"},
     "spokesperson_image": {"size": "1024x1792", "aspect_ratio": "4:7", "clarity": "high"},
-    "model_product_image": {"size": "1024x1792", "aspect_ratio": "4:7", "clarity": "high"}
+    "model_product_image": {"size": "1024x1792", "aspect_ratio": "4:7", "clarity": "high"},
+    "hero_visual_image": {"size": "1792x1024", "aspect_ratio": "7:4", "clarity": "high"},
+    "core_selling_point_image": {"size": "1024x1024", "aspect_ratio": "1:1", "clarity": "high"},
+    "usage_scene_image": {"size": "1024x1792", "aspect_ratio": "4:7", "clarity": "high"},
+    "multi_angle_image": {"size": "1024x1024", "aspect_ratio": "1:1", "clarity": "high"},
+    "scene_atmosphere_image": {"size": "1024x1792", "aspect_ratio": "4:7", "clarity": "high"},
+    "product_detail_image": {"size": "1024x1792", "aspect_ratio": "4:7", "clarity": "high"},
+    "brand_story_image": {"size": "1024x1792", "aspect_ratio": "4:7", "clarity": "high"},
+    "size_capacity_image": {"size": "1024x1792", "aspect_ratio": "4:7", "clarity": "high"},
+    "effect_compare_image": {"size": "1024x1792", "aspect_ratio": "4:7", "clarity": "high"},
+    "spec_sheet_image": {"size": "1024x1792", "aspect_ratio": "4:7", "clarity": "high"},
+    "craft_process_image": {"size": "1024x1792", "aspect_ratio": "4:7", "clarity": "high"},
+    "accessories_image": {"size": "1024x1792", "aspect_ratio": "4:7", "clarity": "high"},
+    "series_show_image": {"size": "1024x1024", "aspect_ratio": "1:1", "clarity": "high"},
+    "ingredients_image": {"size": "1024x1792", "aspect_ratio": "4:7", "clarity": "high"},
+    "after_sales_image": {"size": "1024x1792", "aspect_ratio": "4:7", "clarity": "high"},
+    "usage_tips_image": {"size": "1024x1792", "aspect_ratio": "4:7", "clarity": "high"}
   },
   "image_text_plans": {
     "title_image": {"title": "只使用统一标题", "subtitle": "只使用统一核心价值", "price_text": "只使用统一价格文字", "promotion_text": "只使用统一促销文字", "cta": "只使用统一行动号召", "badges": ["标签"], "selling_points": ["卖点"], "specs": ["规格"], "notes": ["图片文字约束"]},
@@ -1294,7 +1310,23 @@ func (r *Runner) buildContentPrompt(platform Platform, prompt PromptTemplate, st
     "detail_image": {"title": "只使用统一标题", "subtitle": "只使用统一核心价值", "price_text": "只使用统一价格文字", "promotion_text": "只使用统一促销文字", "cta": "只使用统一行动号召", "badges": ["标签"], "selling_points": ["卖点"], "specs": ["规格"], "notes": ["图片文字约束"]},
     "price_image": {"title": "只使用统一标题", "subtitle": "只使用统一核心价值", "price_text": "只使用统一价格文字", "promotion_text": "只使用统一促销文字", "cta": "只使用统一行动号召", "badges": ["标签"], "selling_points": ["卖点"], "specs": ["规格"], "notes": ["图片文字约束"]},
     "spokesperson_image": {"title": "只使用统一标题", "subtitle": "只使用统一核心价值", "price_text": "", "promotion_text": "只使用统一促销文字", "cta": "", "badges": ["背书标签"], "selling_points": ["卖点"], "specs": [], "notes": ["代言人与商品同框"]},
-    "model_product_image": {"title": "只使用统一标题", "subtitle": "只使用统一核心价值", "price_text": "", "promotion_text": "", "cta": "", "badges": ["展示标签"], "selling_points": ["卖点"], "specs": ["规格"], "notes": ["模特穿戴、手持或使用商品"]}
+    "model_product_image": {"title": "只使用统一标题", "subtitle": "只使用统一核心价值", "price_text": "", "promotion_text": "", "cta": "", "badges": ["展示标签"], "selling_points": ["卖点"], "specs": ["规格"], "notes": ["模特穿戴、手持或使用商品"]},
+    "hero_visual_image": {"title": "只使用统一标题", "subtitle": "只使用统一核心价值", "price_text": "只使用统一价格文字", "promotion_text": "只使用统一促销文字", "cta": "只使用统一行动号召", "badges": ["首屏标签"], "selling_points": ["核心卖点"], "specs": ["规格"], "notes": ["首屏主视觉"]},
+    "core_selling_point_image": {"title": "只使用统一标题", "subtitle": "只使用统一核心价值", "price_text": "", "promotion_text": "", "cta": "", "badges": ["卖点标签"], "selling_points": ["核心卖点"], "specs": ["规格"], "notes": ["突出差异优势"]},
+    "usage_scene_image": {"title": "只使用统一标题", "subtitle": "只使用统一核心价值", "price_text": "", "promotion_text": "", "cta": "", "badges": ["场景标签"], "selling_points": ["场景卖点"], "specs": [], "notes": ["真实使用场景"]},
+    "multi_angle_image": {"title": "只使用统一标题", "subtitle": "", "price_text": "", "promotion_text": "", "cta": "", "badges": ["多角度"], "selling_points": [], "specs": ["规格"], "notes": ["多视角展示"]},
+    "scene_atmosphere_image": {"title": "只使用统一标题", "subtitle": "只使用统一核心价值", "price_text": "", "promotion_text": "", "cta": "", "badges": ["场景氛围"], "selling_points": ["场景卖点"], "specs": [], "notes": ["展示使用氛围"]},
+    "product_detail_image": {"title": "只使用统一标题", "subtitle": "", "price_text": "", "promotion_text": "", "cta": "", "badges": ["细节标签"], "selling_points": ["细节卖点"], "specs": ["规格"], "notes": ["材质与工艺特写"]},
+    "brand_story_image": {"title": "只使用统一标题", "subtitle": "只使用统一核心价值", "price_text": "", "promotion_text": "", "cta": "", "badges": ["品牌理念"], "selling_points": ["品牌卖点"], "specs": [], "notes": ["品牌故事"]},
+    "size_capacity_image": {"title": "只使用统一标题", "subtitle": "", "price_text": "", "promotion_text": "", "cta": "", "badges": ["规格信息"], "selling_points": [], "specs": ["规格"], "notes": ["尺寸/容量/尺码"]},
+    "effect_compare_image": {"title": "只使用统一标题", "subtitle": "只使用统一核心价值", "price_text": "", "promotion_text": "", "cta": "", "badges": ["对比标签"], "selling_points": ["对比卖点"], "specs": [], "notes": ["使用前后效果对比"]},
+    "spec_sheet_image": {"title": "只使用统一标题", "subtitle": "", "price_text": "", "promotion_text": "", "cta": "", "badges": ["参数"], "selling_points": [], "specs": ["规格"], "notes": ["详细商品数据"]},
+    "craft_process_image": {"title": "只使用统一标题", "subtitle": "", "price_text": "", "promotion_text": "", "cta": "", "badges": ["工艺"], "selling_points": ["工艺卖点"], "specs": [], "notes": ["制作过程"]},
+    "accessories_image": {"title": "只使用统一标题", "subtitle": "", "price_text": "", "promotion_text": "", "cta": "", "badges": ["配件"], "selling_points": [], "specs": ["清单"], "notes": ["所有收货物品"]},
+    "series_show_image": {"title": "只使用统一标题", "subtitle": "", "price_text": "", "promotion_text": "", "cta": "", "badges": ["系列"], "selling_points": [], "specs": ["SKU"], "notes": ["多色或多 SKU 展示"]},
+    "ingredients_image": {"title": "只使用统一标题", "subtitle": "", "price_text": "", "promotion_text": "", "cta": "", "badges": ["成分"], "selling_points": ["成分卖点"], "specs": ["材质/成分"], "notes": ["配方/材质/成分"]},
+    "after_sales_image": {"title": "只使用统一标题", "subtitle": "只使用统一服务承诺", "price_text": "", "promotion_text": "", "cta": "", "badges": ["售后"], "selling_points": ["服务保障"], "specs": [], "notes": ["质保退换政策"]},
+    "usage_tips_image": {"title": "只使用统一标题", "subtitle": "", "price_text": "", "promotion_text": "", "cta": "", "badges": ["使用建议"], "selling_points": ["注意事项"], "specs": [], "notes": ["正确使用方法"]}
   }
 }
 
@@ -1304,7 +1336,7 @@ func (r *Runner) buildContentPrompt(platform Platform, prompt PromptTemplate, st
 3. 所有图片的 image_text_plans 必须复用同一份 product_info 和 price_info，不得为不同图片编造不同价格、标题、型号或规格。
 4. 白底图 image_text_plans 必须为空文字，只保留无文字备注。
 5. 商品标题和价格在 JSON 内只允许出现一个统一版本。
-6. image_specs 只能使用 1024x1024、1792x1024、1024x1792 三种尺寸；店标题图优先横版 1792x1024，电商大图和白底图优先方图 1024x1024，详情图、价格图、代言图、模特产品展示图优先竖版 1024x1792；不得把所有图片都设置成同一尺寸。`
+6. image_specs 只能使用 1024x1024、1792x1024、1024x1792 三种尺寸；首屏主视觉/店标题图优先横版 1792x1024，电商大图、白底图、核心卖点图、多角度图、系列展示图优先方图 1024x1024，其余模块优先竖版 1024x1792；不得把所有图片都设置成同一尺寸。`
 	return renderTemplate(tpl, newRenderData(requirement, platform, prompt, style, Output{}))
 }
 
@@ -1664,6 +1696,38 @@ func assetGoalCN(assetType string) string {
 		return "代言人代言图，商品与代言人同框，突出信任感和品牌背书"
 	case AssetModelProductShow:
 		return "模特产品展示图，模特穿戴、手持或使用商品，突出真实展示效果"
+	case AssetHeroVisual:
+		return "首屏主视觉，传递核心价值并承接首屏点击"
+	case AssetCoreSellingPoint:
+		return "核心卖点图，突出商品最重要的差异化优势"
+	case AssetUsageScene:
+		return "使用场景图，呈现真实使用场景和用户代入感"
+	case AssetMultiAngle:
+		return "多角度图，多角度呈现商品外观和结构"
+	case AssetSceneAtmosphere:
+		return "场景氛围图，展示使用场景和品牌氛围"
+	case AssetProductDetail:
+		return "商品细节图，放大材质、工艺和关键局部"
+	case AssetBrandStory:
+		return "品牌故事图，传达品牌理念和信任感"
+	case AssetSizeCapacity:
+		return "尺寸容量尺码图，展示规格、容量、尺码或尺寸信息"
+	case AssetEffectCompare:
+		return "效果对比图，展示使用前后或方案对比"
+	case AssetSpecSheet:
+		return "详细规格参数表，清晰呈现商品数据和参数"
+	case AssetCraftProcess:
+		return "工艺制作图，展示制作过程、工艺流程或品质细节"
+	case AssetAccessories:
+		return "配件赠品图，明确展示包装内含物、配件或赠品"
+	case AssetSeriesShow:
+		return "系列展示图，展示多色、多规格或多 SKU 组合"
+	case AssetIngredients:
+		return "商品成分图，展示配方、材质或成分构成"
+	case AssetAfterSales:
+		return "售后保障图，说明质保、退换或服务政策"
+	case AssetUsageTips:
+		return "使用建议图，说明使用注意事项和正确使用方法"
 	default:
 		return "按当前图片类型生成电商素材"
 	}
@@ -1685,6 +1749,38 @@ func assetGoalEN(assetType string) string {
 		return "spokesperson endorsement image with the product and endorser in one frame, emphasizing trust and brand endorsement"
 	case AssetModelProductShow:
 		return "model product showcase image with a model wearing, holding or using the product, emphasizing realistic presentation"
+	case AssetHeroVisual:
+		return "above-the-fold hero visual that communicates the core value and drives first-screen clicks"
+	case AssetCoreSellingPoint:
+		return "core selling point image highlighting the most important product differentiation"
+	case AssetUsageScene:
+		return "usage scene image showing realistic context and buyer immersion"
+	case AssetMultiAngle:
+		return "multi-angle image showing product appearance and structure from several views"
+	case AssetSceneAtmosphere:
+		return "scene atmosphere image showing usage context and brand mood"
+	case AssetProductDetail:
+		return "product detail image magnifying material, craft and key close-ups"
+	case AssetBrandStory:
+		return "brand story image communicating brand concept and trust"
+	case AssetSizeCapacity:
+		return "size/capacity/fit image showing dimensions, volume, sizing or specification info"
+	case AssetEffectCompare:
+		return "effect comparison image showing before/after or solution comparison"
+	case AssetSpecSheet:
+		return "detailed specification sheet image presenting product data clearly"
+	case AssetCraftProcess:
+		return "craft process image showing production process, workflow or quality details"
+	case AssetAccessories:
+		return "accessories/gifts image clearly showing included items, accessories or gifts"
+	case AssetSeriesShow:
+		return "series showcase image showing multiple colors, specs or SKUs"
+	case AssetIngredients:
+		return "ingredients/materials image showing formula, material or component composition"
+	case AssetAfterSales:
+		return "after-sales guarantee image explaining warranty, returns or service policy"
+	case AssetUsageTips:
+		return "usage tips image explaining precautions and correct usage"
 	default:
 		return "ecommerce asset for the current image type"
 	}
@@ -1706,6 +1802,38 @@ func assetCompositionCN(assetType string) string {
 		return "竖版代言海报，代言人占画面 35%-50%，商品占画面 25%-40%，两者必须同框；使用发布会、品牌海报或轻奢商业背景，保留标题区和简短背书文案。"
 	case AssetModelProductShow:
 		return "竖版模特展示图，模特自然穿戴、手持或使用商品，商品清晰可辨并占画面 25%-45%；使用真实生活/棚拍场景，重点展示上身、上手或使用比例。"
+	case AssetHeroVisual:
+		return "横版首屏主视觉，商品与核心价值形成第一视觉焦点，保留大标题、短卖点和 CTA 区，背景要有品牌氛围和空间层次。"
+	case AssetCoreSellingPoint:
+		return "方形核心卖点图，画面只聚焦 1-2 个差异化优势，用商品主体、局部标注和简短卖点形成强层级。"
+	case AssetUsageScene:
+		return "竖版真实使用场景图，商品处在自然生活/工作/户外使用情境中，人物手部或环境可以辅助说明用途，但不能遮挡商品主体。"
+	case AssetMultiAngle:
+		return "方形多角度展示图，同一画面排列正面、侧面、背面或关键角度，使用整洁分区或轻透视组合，保持比例一致。"
+	case AssetSceneAtmosphere:
+		return "竖版场景氛围图，使用完整空间、道具和光影营造真实使用氛围，商品是明确主角并与环境自然融合。"
+	case AssetProductDetail:
+		return "竖版商品细节图，使用 2-4 个局部特写模块放大材质、接口、边缘、纹理、工艺或关键结构，配少量标注。"
+	case AssetBrandStory:
+		return "竖版品牌故事图，使用品牌理念、创始/工艺/品质场景和商品组合，形成信任叙事，避免空泛口号堆叠。"
+	case AssetSizeCapacity:
+		return "竖版尺寸/容量/尺码信息图，使用尺寸线、比例参照、容量图标或尺码表，展示用户明确提供的规格信息。"
+	case AssetEffectCompare:
+		return "竖版效果对比图，使用左右或上下对比结构展示使用前后、普通方案和本商品方案差异，不编造未提供功效。"
+	case AssetSpecSheet:
+		return "竖版详细规格/参数表，使用清晰表格、图标和商品局部组合展示材质、尺寸、型号、容量等已知数据。"
+	case AssetCraftProcess:
+		return "竖版工艺制作图，使用流程分镜、工艺步骤或材料处理细节展示制作过程和品质控制。"
+	case AssetAccessories:
+		return "竖版配件/赠品图，将商品、包装、配件、赠品完整铺开展示，使用编号标注每个收货物品。"
+	case AssetSeriesShow:
+		return "方形系列展示图，展示多色、多规格或多 SKU 阵列，使用统一角度和整齐排列，突出系列完整性。"
+	case AssetIngredients:
+		return "竖版商品成分图，使用成分/材质拆解、配方元素或结构分层展示商品构成，避免医疗化功效表达。"
+	case AssetAfterSales:
+		return "竖版售后保障图，使用服务图标、保障条目和商品信任场景说明质保、退换、客服等政策。"
+	case AssetUsageTips:
+		return "竖版使用建议图，使用步骤、注意事项、禁忌或保养方式的清晰排版，帮助用户正确使用商品。"
 	default:
 		return "按当前图片类型设计独立构图，避免与其他资产重复。"
 	}
@@ -1727,6 +1855,38 @@ func assetCompositionEN(assetType string) string {
 		return "vertical endorsement poster; the endorser should occupy 35%-50% of the frame and the product 25%-40%, both in the same frame; use a launch-event, brand-poster or premium commercial background with a headline zone and concise endorsement copy."
 	case AssetModelProductShow:
 		return "vertical model showcase image; a model naturally wears, holds or uses the product, with the product clearly visible and occupying 25%-45% of the frame; use a realistic lifestyle or studio scene to show fit, scale or usage."
+	case AssetHeroVisual:
+		return "horizontal above-the-fold hero visual; make product and core value the first focus, reserve space for headline, short benefit and CTA, with brand atmosphere and spatial depth."
+	case AssetCoreSellingPoint:
+		return "square core selling-point visual focused on 1-2 differentiators, using product hero, close-up callouts and concise benefit hierarchy."
+	case AssetUsageScene:
+		return "vertical real usage scene; place the product in a natural living, work or outdoor context, with hands or environment only as support and never blocking the product."
+	case AssetMultiAngle:
+		return "square multi-angle showcase; arrange front, side, back or key views in a clean split layout or light perspective group, keeping proportions consistent."
+	case AssetSceneAtmosphere:
+		return "vertical atmosphere scene with complete space, props and lighting; the product remains the clear hero and blends naturally with the environment."
+	case AssetProductDetail:
+		return "vertical product detail layout with 2-4 close-up modules magnifying material, ports, edges, texture, craft or key structure, with concise callouts."
+	case AssetBrandStory:
+		return "vertical brand story visual combining brand concept, craft or quality scene with the product into a trust narrative."
+	case AssetSizeCapacity:
+		return "vertical size/capacity/fit infographic with dimension lines, scale reference, capacity icons or size table using provided spec facts."
+	case AssetEffectCompare:
+		return "vertical comparison layout using left-right or top-bottom structure to compare before/after or ordinary solution versus this product, without inventing unsupported effects."
+	case AssetSpecSheet:
+		return "vertical detailed spec sheet with clear table, icons and product close-up showing known material, dimensions, model or capacity data."
+	case AssetCraftProcess:
+		return "vertical craft process visual using step panels, process flow or material handling details to show production and quality control."
+	case AssetAccessories:
+		return "vertical accessories/gifts layout showing product, package, accessories and gifts fully spread out with numbered labels."
+	case AssetSeriesShow:
+		return "square series showcase showing multiple colors, specs or SKUs in unified angles and neat arrangement."
+	case AssetIngredients:
+		return "vertical ingredients/materials visual showing component breakdown, formula elements or layered structure, avoiding medicalized claims."
+	case AssetAfterSales:
+		return "vertical after-sales guarantee visual using service icons, guarantee items and trust scene to explain warranty, returns or support."
+	case AssetUsageTips:
+		return "vertical usage tips visual with steps, precautions, care methods or correct-use layout."
 	default:
 		return "design an independent composition for this asset type and avoid repeating other assets."
 	}
@@ -1748,6 +1908,36 @@ func assetBackgroundRuleCN(assetType string) string {
 		return "使用发布会、品牌海报或高级商业广告背景，人物和商品必须同框。"
 	case AssetModelProductShow:
 		return "使用真实生活、棚拍或外景展示背景，模特与商品互动必须自然。"
+	case AssetHeroVisual:
+		return "使用品牌首屏海报背景，背景要有明确空间层次、品牌色或场景化光影。"
+	case AssetCoreSellingPoint:
+		return "使用干净强对比背景或功能示意底板，突出核心卖点区。"
+	case AssetUsageScene:
+		return "使用真实使用场景背景，让商品处于可信的生活、工作或户外环境中。"
+	case AssetMultiAngle:
+		return "使用中性展示背景或分区底板，保证多角度商品外观清晰一致。"
+	case AssetSceneAtmosphere:
+		return "使用完整场景氛围背景，突出环境、道具、光影与商品关系。"
+	case AssetProductDetail:
+		return "使用微距质感背景、局部特写底板或信息分区背景。"
+	case AssetBrandStory:
+		return "使用品牌故事、工艺现场或品质背书背景。"
+	case AssetSizeCapacity, AssetSpecSheet:
+		return "使用清晰信息图背景，表格、尺寸线和数据区域必须易读。"
+	case AssetEffectCompare:
+		return "使用对比信息图背景，左右或上下分区必须明确。"
+	case AssetCraftProcess:
+		return "使用工艺流程、制作现场或材料处理背景。"
+	case AssetAccessories:
+		return "使用整洁平铺或开箱背景，所有配件与赠品必须可识别。"
+	case AssetSeriesShow:
+		return "使用统一展示台或分组背景，多色多 SKU 排列要整齐。"
+	case AssetIngredients:
+		return "使用成分拆解、材质纹理或配方元素背景。"
+	case AssetAfterSales:
+		return "使用服务保障、客服、质保或售后信任背景。"
+	case AssetUsageTips:
+		return "使用步骤说明或注意事项信息图背景。"
 	default:
 		return "按当前资产类型使用独立背景。"
 	}
@@ -1769,6 +1959,36 @@ func assetBackgroundRuleEN(assetType string) string {
 		return "Use a launch-event, brand-poster or premium commercial advertising background; person and product must appear in the same frame."
 	case AssetModelProductShow:
 		return "Use a realistic lifestyle, studio or outdoor showcase background; the model-product interaction must look natural."
+	case AssetHeroVisual:
+		return "Use a branded hero-poster background with depth, brand colors or scene lighting."
+	case AssetCoreSellingPoint:
+		return "Use a clean high-contrast background or feature-explanation board that highlights the core selling point."
+	case AssetUsageScene:
+		return "Use a realistic usage-scene background in living, work or outdoor context."
+	case AssetMultiAngle:
+		return "Use a neutral display background or split board so multiple product views stay clear and consistent."
+	case AssetSceneAtmosphere:
+		return "Use a complete atmosphere scene with environment, props, lighting and product relationship."
+	case AssetProductDetail:
+		return "Use a macro texture background, close-up board or information sections."
+	case AssetBrandStory:
+		return "Use a brand story, craft site or quality-trust background."
+	case AssetSizeCapacity, AssetSpecSheet:
+		return "Use a clear infographic background with readable tables, dimension lines and data zones."
+	case AssetEffectCompare:
+		return "Use a comparison infographic background with clear left-right or top-bottom sections."
+	case AssetCraftProcess:
+		return "Use a craft process, production site or material-handling background."
+	case AssetAccessories:
+		return "Use a clean flat-lay or unboxing background where every accessory and gift is identifiable."
+	case AssetSeriesShow:
+		return "Use a unified display stage or grouped background with neat multi-color/SKU arrangement."
+	case AssetIngredients:
+		return "Use an ingredient breakdown, material texture or formula-element background."
+	case AssetAfterSales:
+		return "Use a service guarantee, customer support, warranty or trust background."
+	case AssetUsageTips:
+		return "Use a step-by-step or precaution infographic background."
 	default:
 		return "Use an independent background for the current asset type."
 	}
@@ -1788,6 +2008,38 @@ func assetNonWhiteHardRuleCN(assetType string) string {
 		return "代言图必须出现代言人与商品同框，代言人不得遮挡商品关键结构；不得只生成单人写真或只生成商品海报。"
 	case AssetModelProductShow:
 		return "模特产品展示图必须出现模特与商品的真实互动，商品不得被遮挡或变形；不得只生成单人写真或纯场景图。"
+	case AssetHeroVisual:
+		return "首屏主视觉必须有首屏海报层级，商品、核心价值和行动区清晰；不得生成普通单品图或无标题氛围图。"
+	case AssetCoreSellingPoint:
+		return "核心卖点图必须聚焦 1-2 个明确卖点，卖点视觉优先；不得变成普通详情图或参数表。"
+	case AssetUsageScene:
+		return "使用场景图必须出现真实使用动作或场景关系；不得只摆放商品或生成空场景。"
+	case AssetMultiAngle:
+		return "多角度图必须出现至少 3 个不同角度或结构视图；不得只复制同一角度。"
+	case AssetSceneAtmosphere:
+		return "场景氛围图必须有完整环境和氛围光影；不得只生成商品特写。"
+	case AssetProductDetail:
+		return "商品细节图必须包含局部特写和细节标注；不得生成整品主图。"
+	case AssetBrandStory:
+		return "品牌故事图必须有品牌理念或品质叙事；不得只放商品和空泛口号。"
+	case AssetSizeCapacity:
+		return "尺寸/容量/尺码图必须有尺寸线、容量或尺码信息；不得编造用户未提供的数字。"
+	case AssetEffectCompare:
+		return "效果对比图必须有明确对比分区；不得编造未提供的功效、认证或夸大结论。"
+	case AssetSpecSheet:
+		return "规格参数表必须是清晰表格/参数信息图；不得编造未提供的参数数字。"
+	case AssetCraftProcess:
+		return "工艺制作图必须体现流程或工艺步骤；不得生成普通商品海报。"
+	case AssetAccessories:
+		return "配件/赠品图必须展示所有收货物品；不得遗漏主商品或把赠品当主商品。"
+	case AssetSeriesShow:
+		return "系列展示图必须展示多款、多色或多规格组合；不得只生成单个商品。"
+	case AssetIngredients:
+		return "商品成分图必须展示成分、材质或结构构成；不得生成医疗化功效承诺。"
+	case AssetAfterSales:
+		return "售后保障图必须围绕质保、退换、客服或服务政策；不得编造平台未承诺的政策。"
+	case AssetUsageTips:
+		return "使用建议图必须提供步骤或注意事项；不得生成普通卖点海报。"
 	default:
 		return "当前资产必须保持独立版式，背景必须有明确视觉层次。"
 	}
@@ -1807,6 +2059,38 @@ func assetNonWhiteHardRuleEN(assetType string) string {
 		return "The endorsement image must show the spokesperson and product together; the spokesperson must not block defining product structure; do not generate a solo portrait or product-only poster."
 	case AssetModelProductShow:
 		return "The model showcase image must show realistic interaction between model and product; the product must not be hidden or deformed; do not generate a solo portrait or pure scene image."
+	case AssetHeroVisual:
+		return "The hero visual must have above-the-fold poster hierarchy with clear product, core value and CTA zone; do not make it a generic product shot or empty mood scene."
+	case AssetCoreSellingPoint:
+		return "The core selling point image must focus on 1-2 explicit benefits; do not turn it into a generic detail image or spec sheet."
+	case AssetUsageScene:
+		return "The usage scene must show real usage action or scene relationship; do not only place the product in an empty scene."
+	case AssetMultiAngle:
+		return "The multi-angle image must show at least 3 different views or structure angles; do not duplicate the same angle."
+	case AssetSceneAtmosphere:
+		return "The atmosphere image must contain complete environment and lighting mood; do not make only a product close-up."
+	case AssetProductDetail:
+		return "The product detail image must contain close-ups and detail callouts; do not generate a full-product main image."
+	case AssetBrandStory:
+		return "The brand story image must include brand concept or quality narrative; do not only place product plus vague slogans."
+	case AssetSizeCapacity:
+		return "The size/capacity/fit image must include dimension lines, capacity or sizing information; do not invent numbers not provided by the user."
+	case AssetEffectCompare:
+		return "The comparison image must have clear comparison sections; do not invent unsupported effects, certifications or exaggerated conclusions."
+	case AssetSpecSheet:
+		return "The spec sheet must be a clear table/parameter infographic; do not invent parameter numbers not provided."
+	case AssetCraftProcess:
+		return "The craft process image must show workflow or craft steps; do not generate a generic product poster."
+	case AssetAccessories:
+		return "The accessories/gifts image must show all received items; do not omit the main product or make gifts the main product."
+	case AssetSeriesShow:
+		return "The series showcase must show multiple variants, colors or specs; do not generate only one product."
+	case AssetIngredients:
+		return "The ingredients/materials image must show components, materials or structure; do not make medicalized efficacy promises."
+	case AssetAfterSales:
+		return "The after-sales image must focus on warranty, returns, support or service policy; do not invent platform promises."
+	case AssetUsageTips:
+		return "The usage tips image must provide steps or precautions; do not generate a generic selling-point poster."
 	default:
 		return "This asset must keep an independent composition and must not collapse into a catalog cutout."
 	}
@@ -1826,6 +2110,38 @@ func assetSeriesRuleCN(assetType string) string {
 		return "竖版代言图，重点是代言人、商品和品牌背书关系，可信氛围必须强于普通主图。"
 	case AssetModelProductShow:
 		return "竖版模特展示图，重点是模特演示商品的真实比例、穿戴或使用效果。"
+	case AssetHeroVisual:
+		return "横版首屏主视觉，重点是第一屏点击、核心价值和品牌记忆。"
+	case AssetCoreSellingPoint:
+		return "方形核心卖点图，重点是单一差异优势和强信息层级。"
+	case AssetUsageScene:
+		return "竖版使用场景图，重点是真实使用关系和买家代入。"
+	case AssetMultiAngle:
+		return "方形多角度图，重点是商品外观、结构和多个视角的一致展示。"
+	case AssetSceneAtmosphere:
+		return "竖版场景氛围图，重点是使用空间、道具、光影和品牌调性。"
+	case AssetProductDetail:
+		return "竖版商品细节图，重点是材质、工艺和关键局部特写。"
+	case AssetBrandStory:
+		return "竖版品牌故事图，重点是品牌理念、品质来源和信任建立。"
+	case AssetSizeCapacity:
+		return "竖版尺寸/容量/尺码图，重点是规格信息和比例参照。"
+	case AssetEffectCompare:
+		return "竖版效果对比图，重点是对比分区和已知效果差异。"
+	case AssetSpecSheet:
+		return "竖版详细规格/参数表，重点是商品数据结构化呈现。"
+	case AssetCraftProcess:
+		return "竖版工艺制作图，重点是制作流程、工艺步骤和品质细节。"
+	case AssetAccessories:
+		return "竖版配件/赠品图，重点是收货清单完整展示。"
+	case AssetSeriesShow:
+		return "方形系列展示图，重点是多色、多规格或多 SKU 的统一陈列。"
+	case AssetIngredients:
+		return "竖版商品成分图，重点是配方、材质或成分构成。"
+	case AssetAfterSales:
+		return "竖版售后保障图，重点是质保、退换、客服和服务承诺。"
+	case AssetUsageTips:
+		return "竖版使用建议图，重点是步骤、注意事项和正确使用方法。"
 	default:
 		return "按当前资产类型做独立版式。"
 	}
@@ -1845,6 +2161,38 @@ func assetSeriesRuleEN(assetType string) string {
 		return "Vertical endorsement image focused on the relationship between spokesperson, product and brand trust; the credibility mood must be stronger than a normal main image."
 	case AssetModelProductShow:
 		return "Vertical model showcase image focused on realistic scale, fit or usage effect demonstrated by the model."
+	case AssetHeroVisual:
+		return "Horizontal hero visual focused on first-screen clicks, core value and brand memory."
+	case AssetCoreSellingPoint:
+		return "Square core selling point image focused on one differentiator and strong information hierarchy."
+	case AssetUsageScene:
+		return "Vertical usage scene focused on realistic usage relationship and buyer immersion."
+	case AssetMultiAngle:
+		return "Square multi-angle image focused on consistent product views and structure."
+	case AssetSceneAtmosphere:
+		return "Vertical scene atmosphere image focused on space, props, lighting and brand tone."
+	case AssetProductDetail:
+		return "Vertical product detail image focused on material, craft and key close-ups."
+	case AssetBrandStory:
+		return "Vertical brand story image focused on brand concept, quality source and trust."
+	case AssetSizeCapacity:
+		return "Vertical size/capacity/fit image focused on specs and scale reference."
+	case AssetEffectCompare:
+		return "Vertical comparison image focused on comparison sections and supported effect differences."
+	case AssetSpecSheet:
+		return "Vertical detailed spec sheet focused on structured product data."
+	case AssetCraftProcess:
+		return "Vertical craft process image focused on workflow, craft steps and quality detail."
+	case AssetAccessories:
+		return "Vertical accessories/gifts image focused on complete received-item display."
+	case AssetSeriesShow:
+		return "Square series showcase focused on unified display of multiple colors, specs or SKUs."
+	case AssetIngredients:
+		return "Vertical ingredients/materials image focused on formula, material or component composition."
+	case AssetAfterSales:
+		return "Vertical after-sales guarantee image focused on warranty, returns, support and service promise."
+	case AssetUsageTips:
+		return "Vertical usage tips image focused on steps, precautions and correct use."
 	default:
 		return "Use an independent layout for the current asset type."
 	}

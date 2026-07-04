@@ -26,12 +26,47 @@ const (
 	AssetPrice            = "price_image"
 	AssetSpokesperson     = "spokesperson_image"
 	AssetModelProductShow = "model_product_image"
+	AssetHeroVisual       = "hero_visual_image"
+	AssetCoreSellingPoint = "core_selling_point_image"
+	AssetUsageScene       = "usage_scene_image"
+	AssetMultiAngle       = "multi_angle_image"
+	AssetSceneAtmosphere  = "scene_atmosphere_image"
+	AssetProductDetail    = "product_detail_image"
+	AssetBrandStory       = "brand_story_image"
+	AssetSizeCapacity     = "size_capacity_image"
+	AssetEffectCompare    = "effect_compare_image"
+	AssetSpecSheet        = "spec_sheet_image"
+	AssetCraftProcess     = "craft_process_image"
+	AssetAccessories      = "accessories_image"
+	AssetSeriesShow       = "series_show_image"
+	AssetIngredients      = "ingredients_image"
+	AssetAfterSales       = "after_sales_image"
+	AssetUsageTips        = "usage_tips_image"
 	AssetVideo            = "product_video"
 )
 
 var assetTypes = []string{AssetTitle, AssetMain, AssetWhite, AssetDetail, AssetPrice}
 
-var optionalAssetTypes = []string{AssetSpokesperson, AssetModelProductShow}
+var optionalAssetTypes = []string{
+	AssetHeroVisual,
+	AssetCoreSellingPoint,
+	AssetUsageScene,
+	AssetMultiAngle,
+	AssetSceneAtmosphere,
+	AssetProductDetail,
+	AssetBrandStory,
+	AssetSizeCapacity,
+	AssetEffectCompare,
+	AssetSpecSheet,
+	AssetCraftProcess,
+	AssetAccessories,
+	AssetSeriesShow,
+	AssetIngredients,
+	AssetAfterSales,
+	AssetUsageTips,
+	AssetSpokesperson,
+	AssetModelProductShow,
+}
 
 func allAssetTypes(extraTypes []string) []string {
 	out := append([]string{}, assetTypes...)

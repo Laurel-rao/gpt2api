@@ -48,14 +48,38 @@ const POLL_INTERVAL = 2500
 const TASK_PAGE_SIZE = 5
 const TASK_COMPACT_TAG_SCORE = 24
 
-const assetOrder = ['title_image', 'main_image', 'white_image', 'detail_image', 'price_image', 'spokesperson_image', 'model_product_image', 'product_video']
+const assetOrder = [
+  'title_image',
+  'main_image',
+  'white_image',
+  'detail_image',
+  'price_image',
+  ...ECOMMERCE_EXTRA_ASSET_OPTIONS.map((item) => item.value),
+  'product_video',
+]
 const baseImageAssetCount = 5
 const assetText: Record<string, string> = {
-  title_image: '主图',
-  main_image: '场景图',
+  title_image: '首屏主视觉',
+  main_image: '核心卖点图',
   white_image: '白底图',
-  detail_image: '详情图',
+  detail_image: '商品细节图',
   price_image: '价格图',
+  hero_visual_image: '首屏主视觉',
+  core_selling_point_image: '核心卖点图',
+  usage_scene_image: '使用场景图',
+  multi_angle_image: '多角度图',
+  scene_atmosphere_image: '场景氛围图',
+  product_detail_image: '商品细节图',
+  brand_story_image: '品牌故事图',
+  size_capacity_image: '尺寸/容量/尺码图',
+  effect_compare_image: '效果对比图',
+  spec_sheet_image: '详细规格/参数表',
+  craft_process_image: '工艺制作图',
+  accessories_image: '配件/赠品图',
+  series_show_image: '系列展示图',
+  ingredients_image: '商品成分图',
+  after_sales_image: '售后保障图',
+  usage_tips_image: '使用建议图',
   spokesperson_image: '代言图',
   model_product_image: '模特展示图',
   product_video: '商品视频',
@@ -972,7 +996,8 @@ onBeforeUnmount(() => {
               :key="item.value"
               :label="item.value"
             >
-              {{ item.label }}
+              <span>{{ item.label }}</span>
+              <small>{{ item.description }}</small>
             </el-checkbox-button>
           </el-checkbox-group>
           <el-input
@@ -1615,14 +1640,39 @@ h2 {
 }
 
 .mobile-extra-asset-options {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
+.mobile-extra-asset-options :deep(.el-checkbox-button) {
+  width: 100%;
+}
+
 .mobile-extra-asset-options :deep(.el-checkbox-button__inner) {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  min-height: 62px;
+  padding: 9px 10px;
   border-radius: 8px;
   border-left: 1px solid var(--el-border-color);
+  text-align: left;
+  white-space: normal;
+}
+
+.mobile-extra-asset-options :deep(.el-checkbox-button__inner span) {
+  color: var(--mobile-ink);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.mobile-extra-asset-options :deep(.el-checkbox-button__inner small) {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
 }
 
 .upload-grid {

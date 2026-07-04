@@ -161,11 +161,27 @@ const statusTone: Record<string, string> = {
 }
 
 const assetText: Record<string, string> = {
-  title_image: '店铺首图',
-  main_image: '电商大图',
+  title_image: '首屏主视觉',
+  main_image: '核心卖点图',
   white_image: '白底图',
-  detail_image: '详情图',
+  detail_image: '商品细节图',
   price_image: '价格图',
+  hero_visual_image: '首屏主视觉',
+  core_selling_point_image: '核心卖点图',
+  usage_scene_image: '使用场景图',
+  multi_angle_image: '多角度图',
+  scene_atmosphere_image: '场景氛围图',
+  product_detail_image: '商品细节图',
+  brand_story_image: '品牌故事图',
+  size_capacity_image: '尺寸/容量/尺码图',
+  effect_compare_image: '效果对比图',
+  spec_sheet_image: '详细规格/参数表',
+  craft_process_image: '工艺制作图',
+  accessories_image: '配件/赠品图',
+  series_show_image: '系列展示图',
+  ingredients_image: '商品成分图',
+  after_sales_image: '售后保障图',
+  usage_tips_image: '使用建议图',
   spokesperson_image: '代言图',
   model_product_image: '模特展示图',
   product_video: '商品视频',
@@ -173,15 +189,31 @@ const assetText: Record<string, string> = {
 
 const assetRole: Record<string, string> = {
   title_image: '承担首屏点击与品牌记忆',
-  main_image: '承担场景种草与利益点解释',
+  main_image: '承担核心差异和利益点解释',
   white_image: '承担商品可信识别与平台基础素材',
-  detail_image: '承担卖点、规格、场景的深度说服',
+  detail_image: '承担材质、工艺和局部细节说明',
   price_image: '承担促销行动与下单推动',
+  hero_visual_image: '传递核心价值',
+  core_selling_point_image: '突出差异优势',
+  usage_scene_image: '呈现真实使用场景',
+  multi_angle_image: '多角度呈现外观',
+  scene_atmosphere_image: '展示使用场景',
+  product_detail_image: '放大材质与工艺',
+  brand_story_image: '传达品牌理念',
+  size_capacity_image: '展示规格信息',
+  effect_compare_image: '使用前后效果对比',
+  spec_sheet_image: '展示详细商品数据',
+  craft_process_image: '展示工艺制作过程',
+  accessories_image: '明确收货的所有物品',
+  series_show_image: '多色或多 SKU 展示',
+  ingredients_image: '展示配方/材质/成分',
+  after_sales_image: '说明质保退换政策',
+  usage_tips_image: '商品使用的注意事项',
   spokesperson_image: '承担代言背书与品牌信任建立',
   model_product_image: '承担模特上身/上手/使用效果展示',
 }
 
-const assetOrder = ['white_image', 'title_image', 'main_image', 'detail_image', 'price_image', 'spokesperson_image', 'model_product_image']
+const assetOrder = ['white_image', 'title_image', 'main_image', 'detail_image', 'price_image', ...ECOMMERCE_EXTRA_ASSET_OPTIONS.map((item) => item.value)]
 const productVideoType = 'product_video'
 const customNodeSize: Record<string, { w: number; h: number }> = {
   custom_text: { w: 240, h: 150 },
@@ -1309,7 +1341,8 @@ onBeforeUnmount(() => {
               :key="item.value"
               :label="item.value"
             >
-              {{ item.label }}
+              <span>{{ item.label }}</span>
+              <small>{{ item.description }}</small>
             </el-checkbox-button>
           </el-checkbox-group>
         </el-form-item>
@@ -2063,14 +2096,39 @@ onBeforeUnmount(() => {
 }
 
 .canvas-extra-asset-options {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
+.canvas-extra-asset-options :deep(.el-checkbox-button) {
+  width: 100%;
+}
+
 .canvas-extra-asset-options :deep(.el-checkbox-button__inner) {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  min-height: 64px;
+  padding: 9px 10px;
   border-radius: 8px;
   border-left: 1px solid var(--el-border-color);
+  text-align: left;
+  white-space: normal;
+}
+
+.canvas-extra-asset-options :deep(.el-checkbox-button__inner span) {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.canvas-extra-asset-options :deep(.el-checkbox-button__inner small) {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
 }
 
 :deep(.el-select .el-select__caret),
