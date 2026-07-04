@@ -3,6 +3,10 @@ package ecommerce
 import (
 	"bytes"
 	"encoding/base64"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -84,6 +88,43 @@ func TestSaveLibraryImageStoresPNG(t *testing.T) {
 	if saved.URL == "" || saved.SHA256 == "" || saved.MIME != "image/png" || saved.Width != 1 || saved.Height != 1 {
 		t.Fatalf("unexpected saved file: %+v", saved)
 	}
+}
+
+func TestSaveVideoFromURLStoresMP4(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("GPT2API_ECOMMERCE_ASSET_DIR", root)
+	oldClient := libraryVideoHTTPClient
+	libraryVideoHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			Header:        http.Header{"Content-Type": []string{"video/mp4"}},
+			Body:          io.NopCloser(strings.NewReader("mp4-video-data")),
+			ContentLength: int64(len("mp4-video-data")),
+			Request:       req,
+		}, nil
+	})}
+	t.Cleanup(func() { libraryVideoHTTPClient = oldClient })
+
+	saved, err := SaveVideoFromURL(t.Context(), "video/123", "https://cdn.example.com/result.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(saved.URL, "/ecommerce-assets/videos/video_123/") || !strings.HasSuffix(saved.URL, ".mp4") {
+		t.Fatalf("unexpected video url: %s", saved.URL)
+	}
+	if saved.SHA256 == "" || saved.MIME != "video/mp4" || saved.SizeBytes != int64(len("mp4-video-data")) {
+		t.Fatalf("unexpected saved video: %+v", saved)
+	}
+	rel := strings.TrimPrefix(saved.URL, "/ecommerce-assets/")
+	if _, err := os.Stat(filepath.Join(root, rel)); err != nil {
+		t.Fatalf("saved video missing: %v", err)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }
 
 func TestMergeLibraryGalleryPreservesURLItems(t *testing.T) {

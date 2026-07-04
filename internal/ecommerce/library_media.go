@@ -2,6 +2,7 @@ package ecommerce
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -10,7 +11,9 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +22,9 @@ import (
 )
 
 const maxLibraryAssetFileBytes = 20 * 1024 * 1024
+const maxLibraryVideoFileBytes = 300 * 1024 * 1024
+
+var libraryVideoHTTPClient = http.DefaultClient
 
 func LibraryAssetDir() string {
 	if d := strings.TrimSpace(os.Getenv("GPT2API_ECOMMERCE_ASSET_DIR")); d != "" {
@@ -87,6 +93,76 @@ func saveLibraryImage(assetID, originName string, r io.Reader) (*savedLibraryFil
 	}, nil
 }
 
+func SaveVideoFromURL(ctx context.Context, assetID, sourceURL string) (*savedLibraryFile, error) {
+	assetID = sanitizeLibraryPathSegment(assetID)
+	if assetID == "" {
+		return nil, fmt.Errorf("asset id required")
+	}
+	sourceURL = strings.TrimSpace(sourceURL)
+	if sourceURL == "" {
+		return nil, fmt.Errorf("video url required")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := libraryVideoHTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("download video: http %d", resp.StatusCode)
+	}
+	if resp.ContentLength > maxLibraryVideoFileBytes {
+		return nil, fmt.Errorf("video too large: max 300MB")
+	}
+	limited := io.LimitReader(resp.Body, maxLibraryVideoFileBytes+1)
+	data, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("empty video")
+	}
+	if len(data) > maxLibraryVideoFileBytes {
+		return nil, fmt.Errorf("video too large: max 300MB")
+	}
+	ext := libraryVideoExt(resp.Header.Get("Content-Type"), sourceURL)
+	if ext == "" {
+		return nil, fmt.Errorf("unsupported video type")
+	}
+	sum := sha256.Sum256(data)
+	hash := hex.EncodeToString(sum[:])
+	dir := filepath.Join(LibraryAssetDir(), "videos", assetID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	filename := hash + ext
+	dst := filepath.Join(dir, filename)
+	if _, err := os.Stat(dst); os.IsNotExist(err) {
+		if err := os.WriteFile(dst, data, 0o644); err != nil {
+			return nil, err
+		}
+	} else if err != nil {
+		return nil, err
+	}
+	mimeType := strings.TrimSpace(resp.Header.Get("Content-Type"))
+	if parsed, _, err := mime.ParseMediaType(mimeType); err == nil {
+		mimeType = parsed
+	}
+	if mimeType == "" {
+		mimeType = "video/mp4"
+	}
+	return &savedLibraryFile{
+		URL:        "/ecommerce-assets/videos/" + assetID + "/" + filename,
+		SHA256:     hash,
+		MIME:       mimeType,
+		SizeBytes:  int64(len(data)),
+		OriginName: filename,
+	}, nil
+}
+
 func libraryImageExt(mime, filename string) string {
 	switch strings.ToLower(strings.TrimSpace(mime)) {
 	case "image/jpeg":
@@ -105,6 +181,49 @@ func libraryImageExt(mime, filename string) string {
 	default:
 		return ""
 	}
+}
+
+func libraryVideoExt(contentType, sourceURL string) string {
+	if mt, _, err := mime.ParseMediaType(strings.TrimSpace(contentType)); err == nil {
+		switch strings.ToLower(mt) {
+		case "video/mp4":
+			return ".mp4"
+		case "video/webm":
+			return ".webm"
+		case "video/quicktime":
+			return ".mov"
+		case "", "application/octet-stream", "binary/octet-stream":
+		default:
+			return ""
+		}
+	}
+	if u, err := url.Parse(sourceURL); err == nil {
+		switch strings.ToLower(filepath.Ext(u.Path)) {
+		case ".mp4", ".webm", ".mov":
+			return strings.ToLower(filepath.Ext(u.Path))
+		}
+	}
+	return ".mp4"
+}
+
+func sanitizeLibraryPathSegment(s string) string {
+	s = strings.TrimSpace(s)
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '-', r == '_', r == '.':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return strings.Trim(b.String(), "._-")
 }
 
 func decodeImageSize(data []byte) (int, int) {

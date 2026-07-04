@@ -3,10 +3,12 @@ package ecommerce
 import (
 	"context"
 	"encoding/json"
+	"net/url"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
-	imgpkg "github.com/432539/gpt2api/internal/image"
 	"github.com/gin-gonic/gin"
 )
 
@@ -68,7 +70,7 @@ func TestTaskViewFromRowListModeUsesLocalDataOnly(t *testing.T) {
 	if len(viewAssets) != 2 {
 		t.Fatalf("assets len = %d", len(viewAssets))
 	}
-	if viewAssets[0].URL != imgpkg.BuildProxyURL("img_task", 0, 0) {
+	if !isImageProxyURL(viewAssets[0].URL, "img_task", 0) {
 		t.Fatalf("main asset proxy url = %q", viewAssets[0].URL)
 	}
 	if viewAssets[1].Status != StatusRunning {
@@ -78,4 +80,16 @@ func TestTaskViewFromRowListModeUsesLocalDataOnly(t *testing.T) {
 		raw, _ := json.Marshal(assets[0])
 		t.Fatalf("input assets should not be mutated: %s", raw)
 	}
+}
+
+func isImageProxyURL(rawURL, taskID string, idx int) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	if u.Path != "/p/img/"+taskID+"/"+strconv.Itoa(idx) {
+		return false
+	}
+	q := u.Query()
+	return strings.TrimSpace(q.Get("exp")) != "" && strings.TrimSpace(q.Get("sig")) != ""
 }

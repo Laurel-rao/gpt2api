@@ -140,8 +140,8 @@ func (r *Runner) SyncVideoAsset(ctx context.Context, asset Asset) error {
 			r.refundVideoCost(task.UserID, asset.ID, upstreamTaskID, expectedCost, "videogen sync billing error")
 			return r.dao.UpdateAssetResult(ctx, asset.ID, StatusFailed, firstNonEmpty(result.TaskID, asset.ImageTaskID), "", "", err.Error())
 		}
-		fileID := "videogen:" + upstreamTaskID
-		return r.dao.UpdateAssetResult(ctx, asset.ID, StatusSuccess, upstreamTaskID, strings.TrimSpace(result.ResultURL), fileID, "")
+		localURL, fileID := r.localizeVideoResult(ctx, asset.ID, upstreamTaskID, result.ResultURL)
+		return r.dao.UpdateAssetResult(ctx, asset.ID, StatusSuccess, upstreamTaskID, localURL, fileID, "")
 	case "failed":
 		msg := strings.TrimSpace(result.ErrorMessage)
 		if msg == "" {
@@ -736,12 +736,26 @@ func (r *Runner) runVideoAsset(ctx context.Context, taskID string, assetID uint6
 		refund("videogen billing error")
 		return err
 	}
-	fileID := "videogen:" + upstreamTaskID
-	if err := r.dao.UpdateAssetResult(context.Background(), assetID, StatusSuccess, upstreamTaskID, strings.TrimSpace(res.ResultURL), fileID, ""); err != nil {
+	localURL, fileID := r.localizeVideoResult(context.Background(), assetID, upstreamTaskID, res.ResultURL)
+	if err := r.dao.UpdateAssetResult(context.Background(), assetID, StatusSuccess, upstreamTaskID, localURL, fileID, ""); err != nil {
 		return err
 	}
 	_ = r.dao.UpdateTaskProgress(context.Background(), taskID, 95)
 	return nil
+}
+
+func (r *Runner) localizeVideoResult(ctx context.Context, assetID uint64, upstreamTaskID, resultURL string) (string, string) {
+	resultURL = strings.TrimSpace(resultURL)
+	fileID := "videogen:" + upstreamTaskID
+	if resultURL == "" || strings.HasPrefix(resultURL, "/ecommerce-assets/") {
+		return resultURL, fileID
+	}
+	saved, err := SaveVideoFromURL(ctx, fmt.Sprintf("video_%d", assetID), resultURL)
+	if err != nil {
+		logger.L().Warn("ecommerce video localize failed", zap.Uint64("asset_id", assetID), zap.String("upstream_task_id", upstreamTaskID), zap.Error(err))
+		return resultURL, fileID
+	}
+	return saved.URL, "local_video:" + saved.SHA256
 }
 
 func (r *Runner) estimateVideoCost() (int64, float64) {

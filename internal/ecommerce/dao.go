@@ -335,6 +335,14 @@ UPDATE ecommerce_assets
 	return checkRows(res, err)
 }
 
+func (d *DAO) UpdateAssetFile(ctx context.Context, id uint64, url, fileID string) error {
+	res, err := d.db.ExecContext(ctx, `
+UPDATE ecommerce_assets
+   SET url=?, file_id=?
+ WHERE id=? AND status='success'`, url, fileID, id)
+	return checkRows(res, err)
+}
+
 func (d *DAO) UpdateAssetProgress(ctx context.Context, id uint64, progress int) error {
 	_, err := d.db.ExecContext(ctx, `
 UPDATE ecommerce_assets
