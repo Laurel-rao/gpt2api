@@ -59,8 +59,10 @@ async function onSubmit() {
     ElMessage.success('登录成功')
     const redirect = (route.query.redirect as string) || '/personal/dashboard'
     router.replace(redirect)
-  } catch {
-    inlineError.value = '邮箱或密码错误，请重新输入'
+  } catch (err: any) {
+    inlineError.value = err?.response
+      ? '邮箱或密码错误，请重新输入'
+      : '网络连接失败，请检查后端服务或刷新页面'
   } finally {
     loading.value = false
   }
@@ -206,15 +208,45 @@ async function onSubmit() {
     linear-gradient(135deg, #f5f8ff, #eef7fb);
 }
 
-:global(html.dark) .login-page {
+:global(html.dark .login-page) {
   background:
-    radial-gradient(1000px 400px at 10% 20%, #1b3a6a99, transparent),
-    radial-gradient(800px 400px at 90% 80%, #1c4c2688, transparent),
-    linear-gradient(135deg, #0d1117, #0b1f17);
+    radial-gradient(1000px 400px at 10% 20%, rgba(37, 99, 235, 0.22), transparent),
+    radial-gradient(800px 400px at 90% 80%, rgba(20, 184, 166, 0.16), transparent),
+    var(--lc-bg);
 }
 
-:global(html.dark) .hero-preview .tagline { color: #cfd3dc; }
-:global(html.dark) .hero-preview h1 { color: #f2f3f5; }
+:global(html.dark .hero-preview .tagline) { color: #cfd3dc; }
+:global(html.dark .hero-preview h1) { color: #f2f3f5; }
+:global(html.dark .hero-preview) {
+  border-color: var(--lc-border);
+  background:
+    linear-gradient(135deg, rgba(17, 24, 39, .92), rgba(22, 32, 51, .72)),
+    radial-gradient(600px 340px at 72% 18%, rgba(20,184,166,.16), transparent 65%),
+    radial-gradient(440px 280px at 18% 86%, rgba(37,99,235,.18), transparent 62%);
+}
+:global(html.dark .hero-copy .eyebrow),
+:global(html.dark .generation-board),
+:global(html.dark .form-card),
+:global(html.dark .scene-chip),
+:global(html.dark .canvas-toolbar span) {
+  border-color: var(--lc-border);
+  background: rgba(17, 24, 39, .86);
+}
+:global(html.dark .prompt-strip),
+:global(html.dark .status-card),
+:global(html.dark .asset-card.text) {
+  border-color: var(--lc-border);
+  background: var(--lc-surface-soft);
+  color: var(--lc-muted);
+}
+:global(html.dark .form-card .el-form-item__label),
+:global(html.dark .form-card .el-checkbox),
+:global(html.dark .form-card .el-checkbox__input.is-checked + .el-checkbox__label),
+:global(html.dark .prompt-strip),
+:global(html.dark .scene-chip),
+:global(html.dark .canvas-toolbar span) {
+  color: var(--lc-muted);
+}
 
 .hero-preview {
   position: relative;
