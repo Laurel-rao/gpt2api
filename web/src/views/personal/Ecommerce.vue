@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus/es/components/message/index.mjs'
 import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
 import type { UploadFile } from 'element-plus/es/components/upload/index.mjs'
 import {
+  ECOMMERCE_EXTRA_ASSET_OPTIONS,
   ECOMMERCE_LANGUAGES,
   cancelEcommerceTask,
   createEcommerceTask,
@@ -55,6 +56,7 @@ const form = reactive({
   language: 'zh-CN',
   requirement: '',
   reference_images: [] as string[],
+  extra_asset_types: [] as string[],
 })
 
 const statusText: Record<string, string> = {
@@ -84,8 +86,11 @@ const assetText: Record<string, string> = {
   white_image: '白底图',
   detail_image: '详情图',
   price_image: '价格图',
+  spokesperson_image: '代言图',
+  model_product_image: '模特展示图',
 }
-const assetOrder = ['title_image', 'main_image', 'white_image', 'detail_image', 'price_image']
+const assetOrder = ['title_image', 'main_image', 'white_image', 'detail_image', 'price_image', 'spokesperson_image', 'model_product_image']
+const baseImageAssetCount = 5
 
 const output = computed<any>(() => activeTask.value?.output_json || {})
 const assets = computed(() => activeTask.value?.assets || [])
@@ -94,9 +99,10 @@ const currentPlatform = computed(() => platforms.value.find((p) => p.id === form
 const activePlatform = computed(() => platforms.value.find((p) => p.id === activeTask.value?.platform_id))
 const selectedLanguage = computed(() => ecommerceLanguageName(form.language || currentPlatform.value?.language))
 const activeLanguage = computed(() => activeTask.value?.language_name || ecommerceLanguageName(activeTask.value?.language || activePlatform.value?.language || form.language))
+const activeExtraAssetTypes = computed(() => activeTask.value ? activeTask.value.extra_asset_types || [] : form.extra_asset_types)
 const visibleAssets = computed(() => [...assets.value].sort((a, b) => assetRank(a.asset_type) - assetRank(b.asset_type)))
 const doneAssetCount = computed(() => assets.value.filter((asset) => asset.status === 'success' && asset.url && !brokenAssetIDs.value.has(asset.id)).length)
-const totalAssetCount = computed(() => Math.max(assets.value.length, 5))
+const totalAssetCount = computed(() => Math.max(assets.value.length, baseImageAssetCount + activeExtraAssetTypes.value.length))
 const assetMetricText = computed(() => activeTask.value ? `${doneAssetCount.value}/${totalAssetCount.value}` : '--')
 const activePercent = computed(() => activeTask.value?.progress || 0)
 const taskElapsed = computed(() => activeTask.value ? generationElapsed(activeTask.value.started_at, activeTask.value.finished_at, running.value) : '0秒')
@@ -284,6 +290,7 @@ async function submit() {
       language: form.language,
       requirement: form.requirement.trim(),
       reference_images: form.reference_images,
+      extra_asset_types: form.extra_asset_types,
     })
     activeTask.value = task
     brokenAssetIDs.value = new Set()
@@ -638,6 +645,18 @@ onBeforeUnmount(() => {
               </el-form-item>
             </div>
 
+            <el-form-item label="可选图片">
+              <el-checkbox-group v-model="form.extra_asset_types" class="extra-asset-options">
+                <el-checkbox-button
+                  v-for="item in ECOMMERCE_EXTRA_ASSET_OPTIONS"
+                  :key="item.value"
+                  :label="item.value"
+                >
+                  {{ item.label }}
+                </el-checkbox-button>
+              </el-checkbox-group>
+            </el-form-item>
+
             <el-form-item label="商品图片">
               <el-upload drag multiple accept="image/*" :auto-upload="false" :show-file-list="false" :on-change="onImageChange" class="drop-zone">
                 <el-icon><UploadFilled /></el-icon>
@@ -961,6 +980,15 @@ h2 { font-size: 25px; }
 .brief-form :deep(.el-form-item__label) {
   color: rgba(255,255,255,.82);
   font-weight: 900;
+}
+.extra-asset-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.extra-asset-options :deep(.el-checkbox-button__inner) {
+  border-radius: 10px;
+  border-left: 1px solid var(--el-border-color);
 }
 .brief-form :deep(.el-textarea__inner),
 .brief-form :deep(.el-input__wrapper),

@@ -65,6 +65,7 @@ type createTaskReq struct {
 	ReferenceImages  []string `json:"reference_images"`
 	ProductAssetID   string   `json:"product_asset_id"`
 	ModelAssetID     string   `json:"model_asset_id"`
+	ExtraAssetTypes  []string `json:"extra_asset_types"`
 }
 
 type retryAssetReq struct {
@@ -124,6 +125,11 @@ func (h *Handler) CreateTask(c *gin.Context) {
 		resp.BadRequest(c, "最多上传 4 张参考图")
 		return
 	}
+	extraAssetTypes, err := validateExtraAssetTypes(req.ExtraAssetTypes)
+	if err != nil {
+		resp.BadRequest(c, err.Error())
+		return
+	}
 	productAsset, modelAsset, err := h.resolveTaskLibraryAssets(c.Request.Context(), uid, req.ProductAssetID, req.ModelAssetID)
 	if err != nil {
 		resp.BadRequest(c, err.Error())
@@ -151,6 +157,7 @@ func (h *Handler) CreateTask(c *gin.Context) {
 		mergedRefs = mergedRefs[:maxReferenceImages]
 	}
 	refBytes, _ := json.Marshal(mergedRefs)
+	extraAssetBytes, _ := json.Marshal(extraAssetTypes)
 	requirement := buildRequirementWithLibraryAssets(req.Requirement, productAsset, modelAsset)
 	t := &Task{
 		TaskID:           NewTaskID(),
@@ -163,6 +170,7 @@ func (h *Handler) CreateTask(c *gin.Context) {
 		ReferenceImages:  RawJSON(refBytes),
 		ProductAssetID:   assetIDOrEmpty(productAsset),
 		ModelAssetID:     assetIDOrEmpty(modelAsset),
+		ExtraAssetTypes:  RawJSON(extraAssetBytes),
 		Status:           StatusQueued,
 		Progress:         0,
 	}
@@ -509,6 +517,7 @@ func (h *Handler) taskViewFromRow(ctx context.Context, row *TaskRow, assets []As
 		"requirement":           row.Requirement,
 		"product_asset_id":      row.ProductAssetID,
 		"model_asset_id":        row.ModelAssetID,
+		"extra_asset_types":     extraAssetTypesFromRaw(row.ExtraAssetTypes),
 		"reference_image_count": refCount,
 		"status":                row.Status,
 		"progress":              row.Progress,

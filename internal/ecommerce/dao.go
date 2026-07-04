@@ -167,10 +167,10 @@ func (d *DAO) DeleteStyleTemplate(ctx context.Context, id uint64) error {
 func (d *DAO) CreateTask(ctx context.Context, t *Task) error {
 	res, err := d.db.ExecContext(ctx, `
 INSERT INTO ecommerce_tasks
-  (task_id, user_id, platform_id, prompt_template_id, style_template_id, language, requirement, reference_images, product_asset_id, model_asset_id, status, progress)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  (task_id, user_id, platform_id, prompt_template_id, style_template_id, language, requirement, reference_images, product_asset_id, model_asset_id, extra_asset_types, status, progress)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.TaskID, t.UserID, t.PlatformID, t.PromptTemplateID, t.StyleTemplateID,
-		nullEmpty(t.Language, "zh-CN"), t.Requirement, nullJSON(t.ReferenceImages.RawMessage()), t.ProductAssetID, t.ModelAssetID, nullEmpty(t.Status, StatusQueued), t.Progress)
+		nullEmpty(t.Language, "zh-CN"), t.Requirement, nullJSON(t.ReferenceImages.RawMessage()), t.ProductAssetID, t.ModelAssetID, nullJSON(t.ExtraAssetTypes.RawMessage()), nullEmpty(t.Status, StatusQueued), t.Progress)
 	if err != nil {
 		return err
 	}
@@ -498,7 +498,7 @@ func buildConfigWhere(f ListFilter) (string, []interface{}) {
 func taskSelectSQL() string {
 	return `
 SELECT t.id, t.task_id, t.user_id, t.platform_id, t.prompt_template_id, t.style_template_id,
-       t.language, t.requirement, t.reference_images, COALESCE(t.product_asset_id, '') AS product_asset_id, COALESCE(t.model_asset_id, '') AS model_asset_id, t.status, t.progress, t.output_json,
+       t.language, t.requirement, t.reference_images, COALESCE(t.product_asset_id, '') AS product_asset_id, COALESCE(t.model_asset_id, '') AS model_asset_id, t.extra_asset_types, t.status, t.progress, t.output_json,
        COALESCE(t.output_html, '') AS output_html, t.error,
        t.created_at, t.started_at, t.finished_at, t.deleted_at, COALESCE(t.deleted_by, 0) AS deleted_by,
        p.name AS platform_name, pt.name AS prompt_name, st.name AS style_name

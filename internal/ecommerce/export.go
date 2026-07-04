@@ -71,8 +71,9 @@ func buildPosterPNG(ctx context.Context, req *http.Request, assets []Asset) ([]b
 		typ string
 		img stdimage.Image
 	}
-	loaded := make([]loadedImage, 0, len(assetTypes))
-	for _, typ := range assetTypes {
+	exportAssetTypes := append(append([]string{}, assetTypes...), optionalAssetTypes...)
+	loaded := make([]loadedImage, 0, len(exportAssetTypes))
+	for _, typ := range exportAssetTypes {
 		for _, asset := range assets {
 			if asset.AssetType != typ || asset.Status != StatusSuccess || strings.TrimSpace(asset.URL) == "" {
 				continue

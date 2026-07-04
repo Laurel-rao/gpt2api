@@ -274,10 +274,11 @@ func normalizeOutput(out *Output, requirement string) {
 		out.ImageSpecs = map[string]ImageSpec{}
 	}
 	defaults := defaultImageSpecs()
+	resetUniformSpecs := allImageSpecsSame(out.ImageSpecs)
 	for k, spec := range defaults {
 		out.ImageSpecs[k] = normalizeImageSpec(out.ImageSpecs[k], spec)
 	}
-	if allImageSpecsSame(out.ImageSpecs) {
+	if resetUniformSpecs {
 		for k, spec := range defaults {
 			out.ImageSpecs[k] = spec
 		}
@@ -328,7 +329,7 @@ func normalizeImageTextPlans(out *Output) {
 	if len(defaultPlan.SellingPoints) == 0 {
 		defaultPlan.SellingPoints = append([]string(nil), out.MarketingCopy...)
 	}
-	for _, assetType := range assetTypes {
+	for _, assetType := range append(append([]string{}, assetTypes...), optionalAssetTypes...) {
 		plan := out.ImageTextPlans[assetType]
 		plan.Title = defaultPlan.Title
 		if plan.Subtitle == "" {
@@ -358,11 +359,13 @@ func normalizeImageTextPlans(out *Output) {
 
 func defaultImageSpecs() map[string]ImageSpec {
 	return map[string]ImageSpec{
-		AssetTitle:  {Size: "1792x1024", AspectRatio: "7:4", Clarity: "high"},
-		AssetMain:   {Size: "1024x1024", AspectRatio: "1:1", Clarity: "high"},
-		AssetWhite:  {Size: "1024x1024", AspectRatio: "1:1", Clarity: "high"},
-		AssetDetail: {Size: "1024x1792", AspectRatio: "4:7", Clarity: "high"},
-		AssetPrice:  {Size: "1024x1792", AspectRatio: "4:7", Clarity: "high"},
+		AssetTitle:            {Size: "1792x1024", AspectRatio: "7:4", Clarity: "high"},
+		AssetMain:             {Size: "1024x1024", AspectRatio: "1:1", Clarity: "high"},
+		AssetWhite:            {Size: "1024x1024", AspectRatio: "1:1", Clarity: "high"},
+		AssetDetail:           {Size: "1024x1792", AspectRatio: "4:7", Clarity: "high"},
+		AssetPrice:            {Size: "1024x1792", AspectRatio: "4:7", Clarity: "high"},
+		AssetSpokesperson:     {Size: "1024x1792", AspectRatio: "4:7", Clarity: "high"},
+		AssetModelProductShow: {Size: "1024x1792", AspectRatio: "4:7", Clarity: "high"},
 	}
 }
 
@@ -519,6 +522,16 @@ func formatCompactUnifiedInfoForAssetLanguage(out Output, assetType, languageCod
 				"Key specs: "+strings.Join(limitStrings(out.ProductInfo.KeySpecs, 3), "; "),
 				"Selling points: "+strings.Join(limitStrings(out.ProductInfo.SellingPoints, 3), "; "),
 			)
+		case AssetSpokesperson:
+			lines = append(lines,
+				"Spokesperson scene: product and endorser in one frame",
+				"Selling point: "+firstString(out.ProductInfo.SellingPoints),
+			)
+		case AssetModelProductShow:
+			lines = append(lines,
+				"Model scene: model wearing, holding or using the product",
+				"Key specs: "+strings.Join(limitStrings(out.ProductInfo.KeySpecs, 2), "; "),
+			)
 		case AssetMain, AssetTitle:
 			lines = append(lines,
 				"Key specs: "+strings.Join(limitStrings(out.ProductInfo.KeySpecs, 2), "; "),
@@ -542,6 +555,16 @@ func formatCompactUnifiedInfoForAssetLanguage(out Output, assetType, languageCod
 		lines = append(lines,
 			"关键规格："+strings.Join(limitStrings(out.ProductInfo.KeySpecs, 3), "；"),
 			"卖点："+strings.Join(limitStrings(out.ProductInfo.SellingPoints, 3), "；"),
+		)
+	case AssetSpokesperson:
+		lines = append(lines,
+			"代言场景：商品与代言人同框",
+			"卖点："+firstString(out.ProductInfo.SellingPoints),
+		)
+	case AssetModelProductShow:
+		lines = append(lines,
+			"模特场景：模特穿戴、手持或使用商品",
+			"关键规格："+strings.Join(limitStrings(out.ProductInfo.KeySpecs, 2), "；"),
 		)
 	case AssetMain, AssetTitle:
 		lines = append(lines,
@@ -589,7 +612,7 @@ func formatCompactImageTextPlanForLanguage(plan ImageTextPlan, assetType, langua
 	switch {
 	case normalizeLanguageCode(languageCode) != "zh-CN":
 		switch assetType {
-		case AssetTitle, AssetMain:
+		case AssetTitle, AssetMain, AssetSpokesperson, AssetModelProductShow:
 			lines = []string{
 				"Title: " + plan.Title,
 				"Badge: " + firstString(plan.Badges),
@@ -611,7 +634,7 @@ func formatCompactImageTextPlanForLanguage(plan ImageTextPlan, assetType, langua
 		}
 	default:
 		switch assetType {
-		case AssetTitle, AssetMain:
+		case AssetTitle, AssetMain, AssetSpokesperson, AssetModelProductShow:
 			lines = []string{
 				"标题：" + plan.Title,
 				"标签：" + firstString(plan.Badges),
@@ -693,6 +716,9 @@ func buildHTML(out Output, assets []Asset) string {
 	if u := assetMap[AssetPrice]; u != "" {
 		b.WriteString(`<img class="wide-image" src="` + html.EscapeString(u) + `" alt="价格图">`)
 	}
+	if u := assetMap[AssetSpokesperson]; u != "" {
+		b.WriteString(`<img class="wide-image" src="` + html.EscapeString(u) + `" alt="代言图">`)
+	}
 	b.WriteString(`<section class="copy-grid">`)
 	for _, s := range out.MarketingCopy {
 		b.WriteString(`<span>`)
@@ -702,6 +728,9 @@ func buildHTML(out Output, assets []Asset) string {
 	b.WriteString(`</section>`)
 	if u := assetMap[AssetDetail]; u != "" {
 		b.WriteString(`<img class="wide-image" src="` + html.EscapeString(u) + `" alt="详情图">`)
+	}
+	if u := assetMap[AssetModelProductShow]; u != "" {
+		b.WriteString(`<img class="wide-image" src="` + html.EscapeString(u) + `" alt="模特产品展示图">`)
 	}
 	for _, sec := range out.DetailSections {
 		b.WriteString(`<section class="detail-section"><h2>`)

@@ -317,9 +317,10 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 		prompt    string
 		spec      ImageSpec
 	}
-	jobs := make([]assetJob, 0, len(assetTypes))
+	taskAssetTypes := allAssetTypes(extraAssetTypesFromRaw(task.ExtraAssetTypes))
+	jobs := make([]assetJob, 0, len(taskAssetTypes))
 	var whiteJob assetJob
-	for _, assetType := range assetTypes {
+	for _, assetType := range taskAssetTypes {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -360,7 +361,7 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 			mu.Lock()
 			assetErrors = append(assetErrors, fmt.Sprintf("%s:%s", job.assetTyp, errCode))
 			completed++
-			progress := 35 + completed*10
+			progress := assetGenerationProgress(completed, len(jobs))
 			mu.Unlock()
 			_ = r.dao.UpdateTaskProgress(context.Background(), taskID, progress)
 			return &imgpkg.RunResult{Status: imgpkg.StatusFailed, ErrorCode: errCode}
@@ -391,7 +392,7 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 			mu.Lock()
 			assetErrors = append(assetErrors, fmt.Sprintf("%s:%s", job.assetTyp, errCode))
 			completed++
-			progress := 35 + completed*10
+			progress := assetGenerationProgress(completed, len(jobs))
 			mu.Unlock()
 			_ = r.dao.UpdateTaskProgress(context.Background(), taskID, progress)
 			return res
@@ -407,7 +408,7 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 		_ = r.dao.UpdateAssetResult(context.Background(), job.id, StatusSuccess, job.imgTaskID, url, fileID, "")
 		mu.Lock()
 		completed++
-		progress := 35 + completed*10
+		progress := assetGenerationProgress(completed, len(jobs))
 		mu.Unlock()
 		_ = r.dao.UpdateTaskProgress(context.Background(), taskID, progress)
 		return res
@@ -463,6 +464,17 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 		return err
 	}
 	return nil
+}
+
+func assetGenerationProgress(completed, total int) int {
+	if total <= 0 || completed <= 0 {
+		return 35
+	}
+	progress := 35 + completed*50/total
+	if progress > 85 {
+		return 85
+	}
+	return progress
 }
 
 func (r *Runner) RetryAsset(ctx context.Context, taskID string, assetID uint64, extraPrompt string) error {
@@ -1271,14 +1283,18 @@ func (r *Runner) buildContentPrompt(platform Platform, prompt PromptTemplate, st
     "main_image": {"size": "1024x1024", "aspect_ratio": "1:1", "clarity": "high"},
     "white_image": {"size": "1024x1024", "aspect_ratio": "1:1", "clarity": "high"},
     "detail_image": {"size": "1024x1792", "aspect_ratio": "4:7", "clarity": "high"},
-    "price_image": {"size": "1024x1792", "aspect_ratio": "4:7", "clarity": "high"}
+    "price_image": {"size": "1024x1792", "aspect_ratio": "4:7", "clarity": "high"},
+    "spokesperson_image": {"size": "1024x1792", "aspect_ratio": "4:7", "clarity": "high"},
+    "model_product_image": {"size": "1024x1792", "aspect_ratio": "4:7", "clarity": "high"}
   },
   "image_text_plans": {
     "title_image": {"title": "只使用统一标题", "subtitle": "只使用统一核心价值", "price_text": "只使用统一价格文字", "promotion_text": "只使用统一促销文字", "cta": "只使用统一行动号召", "badges": ["标签"], "selling_points": ["卖点"], "specs": ["规格"], "notes": ["图片文字约束"]},
     "main_image": {"title": "只使用统一标题", "subtitle": "只使用统一核心价值", "price_text": "只使用统一价格文字", "promotion_text": "只使用统一促销文字", "cta": "只使用统一行动号召", "badges": ["标签"], "selling_points": ["卖点"], "specs": ["规格"], "notes": ["图片文字约束"]},
     "white_image": {"title": "", "subtitle": "", "price_text": "", "promotion_text": "", "cta": "", "badges": [], "selling_points": [], "specs": [], "notes": ["白底图不放任何文字、价格、促销标签或图标"]},
     "detail_image": {"title": "只使用统一标题", "subtitle": "只使用统一核心价值", "price_text": "只使用统一价格文字", "promotion_text": "只使用统一促销文字", "cta": "只使用统一行动号召", "badges": ["标签"], "selling_points": ["卖点"], "specs": ["规格"], "notes": ["图片文字约束"]},
-    "price_image": {"title": "只使用统一标题", "subtitle": "只使用统一核心价值", "price_text": "只使用统一价格文字", "promotion_text": "只使用统一促销文字", "cta": "只使用统一行动号召", "badges": ["标签"], "selling_points": ["卖点"], "specs": ["规格"], "notes": ["图片文字约束"]}
+    "price_image": {"title": "只使用统一标题", "subtitle": "只使用统一核心价值", "price_text": "只使用统一价格文字", "promotion_text": "只使用统一促销文字", "cta": "只使用统一行动号召", "badges": ["标签"], "selling_points": ["卖点"], "specs": ["规格"], "notes": ["图片文字约束"]},
+    "spokesperson_image": {"title": "只使用统一标题", "subtitle": "只使用统一核心价值", "price_text": "", "promotion_text": "只使用统一促销文字", "cta": "", "badges": ["背书标签"], "selling_points": ["卖点"], "specs": [], "notes": ["代言人与商品同框"]},
+    "model_product_image": {"title": "只使用统一标题", "subtitle": "只使用统一核心价值", "price_text": "", "promotion_text": "", "cta": "", "badges": ["展示标签"], "selling_points": ["卖点"], "specs": ["规格"], "notes": ["模特穿戴、手持或使用商品"]}
   }
 }
 
@@ -1288,7 +1304,7 @@ func (r *Runner) buildContentPrompt(platform Platform, prompt PromptTemplate, st
 3. 所有图片的 image_text_plans 必须复用同一份 product_info 和 price_info，不得为不同图片编造不同价格、标题、型号或规格。
 4. 白底图 image_text_plans 必须为空文字，只保留无文字备注。
 5. 商品标题和价格在 JSON 内只允许出现一个统一版本。
-6. image_specs 只能使用 1024x1024、1792x1024、1024x1792 三种尺寸；店标题图优先横版 1792x1024，电商大图和白底图优先方图 1024x1024，详情图和价格图优先竖版 1024x1792；不得把所有图片都设置成同一尺寸。`
+6. image_specs 只能使用 1024x1024、1792x1024、1024x1792 三种尺寸；店标题图优先横版 1792x1024，电商大图和白底图优先方图 1024x1024，详情图、价格图、代言图、模特产品展示图优先竖版 1024x1792；不得把所有图片都设置成同一尺寸。`
 	return renderTemplate(tpl, newRenderData(requirement, platform, prompt, style, Output{}))
 }
 
@@ -1644,6 +1660,10 @@ func assetGoalCN(assetType string) string {
 		return "详情页长图模块，展示卖点、场景和参数"
 	case AssetPrice:
 		return "价格促销图，突出优惠和行动号召"
+	case AssetSpokesperson:
+		return "代言人代言图，商品与代言人同框，突出信任感和品牌背书"
+	case AssetModelProductShow:
+		return "模特产品展示图，模特穿戴、手持或使用商品，突出真实展示效果"
 	default:
 		return "按当前图片类型生成电商素材"
 	}
@@ -1661,6 +1681,10 @@ func assetGoalEN(assetType string) string {
 		return "detail-page module image showing selling points, scenes and specs"
 	case AssetPrice:
 		return "price promotion image highlighting the offer and call to action"
+	case AssetSpokesperson:
+		return "spokesperson endorsement image with the product and endorser in one frame, emphasizing trust and brand endorsement"
+	case AssetModelProductShow:
+		return "model product showcase image with a model wearing, holding or using the product, emphasizing realistic presentation"
 	default:
 		return "ecommerce asset for the current image type"
 	}
@@ -1678,6 +1702,10 @@ func assetCompositionCN(assetType string) string {
 		return "竖版详情模块，必须使用满版家居/户外真实场景、有色设计底板或杂志式版面，商品融入场景；分区展示卖点、参数和局部特写，可使用信息卡片和图文排版。"
 	case AssetPrice:
 		return "竖版促销图，突出价格、优惠、CTA 和购买理由，使用强视觉层级、促销色块和海报式背景；商品作为辅助主视觉，不要占满整张图。"
+	case AssetSpokesperson:
+		return "竖版代言海报，代言人占画面 35%-50%，商品占画面 25%-40%，两者必须同框；使用发布会、品牌海报或轻奢商业背景，保留标题区和简短背书文案。"
+	case AssetModelProductShow:
+		return "竖版模特展示图，模特自然穿戴、手持或使用商品，商品清晰可辨并占画面 25%-45%；使用真实生活/棚拍场景，重点展示上身、上手或使用比例。"
 	default:
 		return "按当前图片类型设计独立构图，避免与其他资产重复。"
 	}
@@ -1695,6 +1723,10 @@ func assetCompositionEN(assetType string) string {
 		return "vertical detail module on a full-bleed home/outdoor scene, colored design canvas or magazine-style layout; integrate the product into the scene; include sections for selling points, specs and close-ups with info cards and editorial layout."
 	case AssetPrice:
 		return "vertical promotion image emphasizing price, discount, CTA and purchase reasons with strong visual hierarchy, campaign color blocks and a poster background; keep the product as a supporting hero, not filling the whole canvas."
+	case AssetSpokesperson:
+		return "vertical endorsement poster; the endorser should occupy 35%-50% of the frame and the product 25%-40%, both in the same frame; use a launch-event, brand-poster or premium commercial background with a headline zone and concise endorsement copy."
+	case AssetModelProductShow:
+		return "vertical model showcase image; a model naturally wears, holds or uses the product, with the product clearly visible and occupying 25%-45% of the frame; use a realistic lifestyle or studio scene to show fit, scale or usage."
 	default:
 		return "design an independent composition for this asset type and avoid repeating other assets."
 	}
@@ -1712,6 +1744,10 @@ func assetBackgroundRuleCN(assetType string) string {
 		return "使用品牌海报背景或场景化背景。"
 	case AssetMain:
 		return "使用渐变、浅场景或平台安全背景，主体比例克制，保留留白。"
+	case AssetSpokesperson:
+		return "使用发布会、品牌海报或高级商业广告背景，人物和商品必须同框。"
+	case AssetModelProductShow:
+		return "使用真实生活、棚拍或外景展示背景，模特与商品互动必须自然。"
 	default:
 		return "按当前资产类型使用独立背景。"
 	}
@@ -1729,6 +1765,10 @@ func assetBackgroundRuleEN(assetType string) string {
 		return "Use a brand poster background or lifestyle background."
 	case AssetMain:
 		return "Use a gradient, light lifestyle scene or platform-safe background, with restrained product scale and whitespace."
+	case AssetSpokesperson:
+		return "Use a launch-event, brand-poster or premium commercial advertising background; person and product must appear in the same frame."
+	case AssetModelProductShow:
+		return "Use a realistic lifestyle, studio or outdoor showcase background; the model-product interaction must look natural."
 	default:
 		return "Use an independent background for the current asset type."
 	}
@@ -1744,6 +1784,10 @@ func assetNonWhiteHardRuleCN(assetType string) string {
 		return "店标题图必须是横版品牌海报，保留标题区，背景必须有品牌视觉层次。"
 	case AssetMain:
 		return "电商主图必须是克制的主视觉海报或场景主图，商品主体约占画面 45%-60%，背景必须有渐变、色块或使用氛围，不能生成白底大商品特写。"
+	case AssetSpokesperson:
+		return "代言图必须出现代言人与商品同框，代言人不得遮挡商品关键结构；不得只生成单人写真或只生成商品海报。"
+	case AssetModelProductShow:
+		return "模特产品展示图必须出现模特与商品的真实互动，商品不得被遮挡或变形；不得只生成单人写真或纯场景图。"
 	default:
 		return "当前资产必须保持独立版式，背景必须有明确视觉层次。"
 	}
@@ -1759,6 +1803,10 @@ func assetNonWhiteHardRuleEN(assetType string) string {
 		return "The title image must read as a horizontal brand poster with a clear headline zone, not a catalog cutout."
 	case AssetMain:
 		return "The main image must read as a restrained hero poster or scene-led ecommerce visual; product scale should be around 45%-60% of the canvas with whitespace, gradient, color blocks or usage atmosphere, not an oversized white-background cutout."
+	case AssetSpokesperson:
+		return "The endorsement image must show the spokesperson and product together; the spokesperson must not block defining product structure; do not generate a solo portrait or product-only poster."
+	case AssetModelProductShow:
+		return "The model showcase image must show realistic interaction between model and product; the product must not be hidden or deformed; do not generate a solo portrait or pure scene image."
 	default:
 		return "This asset must keep an independent composition and must not collapse into a catalog cutout."
 	}
@@ -1774,6 +1822,10 @@ func assetSeriesRuleCN(assetType string) string {
 		return "竖版详情图，重点是场景、卖点、参数和局部特写的信息组织。"
 	case AssetPrice:
 		return "竖版价格图，重点是价格/权益/行动号召，促销层级必须强于商品展示。"
+	case AssetSpokesperson:
+		return "竖版代言图，重点是代言人、商品和品牌背书关系，可信氛围必须强于普通主图。"
+	case AssetModelProductShow:
+		return "竖版模特展示图，重点是模特演示商品的真实比例、穿戴或使用效果。"
 	default:
 		return "按当前资产类型做独立版式。"
 	}
@@ -1789,6 +1841,10 @@ func assetSeriesRuleEN(assetType string) string {
 		return "Vertical detail image focused on scene, selling points, specs and close-up information structure."
 	case AssetPrice:
 		return "Vertical price image focused on offer, benefits and CTA; promotion hierarchy must be stronger than product display."
+	case AssetSpokesperson:
+		return "Vertical endorsement image focused on the relationship between spokesperson, product and brand trust; the credibility mood must be stronger than a normal main image."
+	case AssetModelProductShow:
+		return "Vertical model showcase image focused on realistic scale, fit or usage effect demonstrated by the model."
 	default:
 		return "Use an independent layout for the current asset type."
 	}

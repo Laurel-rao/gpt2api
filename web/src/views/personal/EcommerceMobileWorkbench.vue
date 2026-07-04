@@ -21,6 +21,7 @@ import { ElMessage } from 'element-plus/es/components/message/index.mjs'
 import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
 import type { UploadFile } from 'element-plus/es/components/upload/index.mjs'
 import {
+  ECOMMERCE_EXTRA_ASSET_OPTIONS,
   ECOMMERCE_LANGUAGES,
   cancelEcommerceTask,
   createEcommerceTask,
@@ -46,14 +47,16 @@ const POLL_INTERVAL = 2500
 const TASK_PAGE_SIZE = 5
 const TASK_COMPACT_TAG_SCORE = 24
 
-const assetOrder = ['title_image', 'main_image', 'white_image', 'detail_image', 'price_image', 'product_video']
-const imageAssetOrder = ['title_image', 'main_image', 'white_image', 'detail_image', 'price_image']
+const assetOrder = ['title_image', 'main_image', 'white_image', 'detail_image', 'price_image', 'spokesperson_image', 'model_product_image', 'product_video']
+const baseImageAssetCount = 5
 const assetText: Record<string, string> = {
   title_image: '主图',
   main_image: '场景图',
   white_image: '白底图',
   detail_image: '详情图',
   price_image: '价格图',
+  spokesperson_image: '代言图',
+  model_product_image: '模特展示图',
   product_video: '商品视频',
 }
 
@@ -113,6 +116,7 @@ const form = reactive({
   reference_images: [] as string[],
   product_asset_id: '',
   model_asset_id: '',
+  extra_asset_types: [] as string[],
 })
 
 const output = computed<Record<string, any>>(() => activeTask.value?.output_json || {})
@@ -122,10 +126,17 @@ const imageSpecs = computed<Record<string, any>>(() => output.value?.image_specs
 const imageTextPlans = computed<Record<string, any>>(() => output.value?.image_text_plans || {})
 const assets = computed(() => activeTask.value?.assets || [])
 const visibleAssets = computed(() => [...assets.value].sort((a, b) => assetRank(a.asset_type) - assetRank(b.asset_type)))
+const activeExtraAssetTypes = computed(() => activeTask.value ? activeTask.value.extra_asset_types || [] : form.extra_asset_types)
 const assetSlots = computed(() => assetOrder.map((type) => ({
   type,
   asset: visibleAssets.value.find((asset) => asset.asset_type === type),
-})).filter((slot) => slot.type !== 'product_video' || slot.asset))
+})).filter((slot) => {
+  if (slot.type === 'product_video') return !!slot.asset
+  if (ECOMMERCE_EXTRA_ASSET_OPTIONS.some((item) => item.value === slot.type)) {
+    return !!slot.asset || activeExtraAssetTypes.value.includes(slot.type)
+  }
+  return true
+}))
 const running = computed(() => isWorkingStatus(activeTask.value?.status || ''))
 const hasMoreTasks = computed(() => tasks.value.length < tasksTotal.value)
 const currentPlatform = computed(() => platforms.value.find((p) => p.id === form.platform_id))
@@ -138,7 +149,7 @@ const activePercent = computed(() => activeTask.value?.progress || 0)
 const taskElapsed = computed(() => activeTask.value ? generationElapsed(activeTask.value.started_at, activeTask.value.finished_at, running.value) : '0秒')
 const taskQueueElapsed = computed(() => activeTask.value ? queueElapsed(activeTask.value.created_at, activeTask.value.started_at, activeTask.value.finished_at, running.value) : '0秒')
 const doneAssetCount = computed(() => assetSlots.value.filter((slot) => slot.asset && assetIsReady(slot.asset)).length)
-const assetMetricText = computed(() => `${doneAssetCount.value}/${assetSlots.value.length || imageAssetOrder.length}`)
+const assetMetricText = computed(() => `${doneAssetCount.value}/${assetSlots.value.length || baseImageAssetCount + form.extra_asset_types.length}`)
 const heroTitle = computed(() => output.value?.product_title || productInfo.value?.canonical_title || activeTask.value?.requirement || '等待创建任务')
 const heroDescription = computed(() => output.value?.description || productInfo.value?.core_value || '提交商品资料后，这里会展示生成进度、素材资产和交付结果。')
 const priceCopy = computed(() => output.value?.price_copy || priceInfo.value?.price_text || priceInfo.value?.promotion_text || '')
@@ -176,7 +187,7 @@ const detailDoc = computed(() => {
 const deliveryItems = computed(() => [
   { key: 'brief', label: '商品资料', value: activeTask.value?.requirement ? '完成' : '-', done: !!activeTask.value?.requirement },
   { key: 'copy', label: `文案输出（${activeLanguage.value}）`, value: output.value?.product_title ? '完成' : '-', done: !!output.value?.product_title },
-  { key: 'assets', label: '素材资产', value: assetMetricText.value, done: doneAssetCount.value > 0 && doneAssetCount.value === (assetSlots.value.length || imageAssetOrder.length) },
+  { key: 'assets', label: '素材资产', value: assetMetricText.value, done: doneAssetCount.value > 0 && doneAssetCount.value === assetSlots.value.length },
   { key: 'detail', label: '详情页预览', value: detailDoc.value ? '可预览' : '-', done: !!detailDoc.value },
   { key: 'poster', label: '长图导出', value: doneAssetCount.value > 0 ? '可导出' : '-', done: doneAssetCount.value > 0 },
 ])
@@ -507,6 +518,7 @@ async function submit() {
       reference_images: form.reference_images,
       product_asset_id: form.product_asset_id || undefined,
       model_asset_id: form.model_asset_id || undefined,
+      extra_asset_types: form.extra_asset_types,
     })
     activeTask.value = task
     brokenAssetIDs.value = new Set()
@@ -720,8 +732,10 @@ function downloadCanvas(canvas: HTMLCanvasElement, filename: string) {
 
 async function exportPoster() {
   if (!activeTask.value) return
-  const imageAssets = imageAssetOrder
-    .map((type) => assets.value.find((asset) => asset.asset_type === type && assetHasImage(asset)))
+  const imageAssets = assetSlots.value
+    .filter((slot) => slot.type !== 'product_video')
+    .map((slot) => slot.asset)
+    .filter((asset) => asset && assetHasImage(asset))
     .filter(Boolean) as EcommerceAsset[]
   if (!imageAssets.length) {
     ElMessage.warning('暂无可导出的图片')
@@ -951,6 +965,15 @@ onBeforeUnmount(() => {
               <span>{{ selectedModelAsset.name }}</span>
             </div>
           </div>
+          <el-checkbox-group v-model="form.extra_asset_types" class="mobile-extra-asset-options">
+            <el-checkbox-button
+              v-for="item in ECOMMERCE_EXTRA_ASSET_OPTIONS"
+              :key="item.value"
+              :label="item.value"
+            >
+              {{ item.label }}
+            </el-checkbox-button>
+          </el-checkbox-group>
           <el-input
             v-model="form.requirement"
             type="textarea"
@@ -1576,6 +1599,17 @@ h2 {
   color: var(--mobile-ink);
   font-size: 13px;
   font-weight: 600;
+}
+
+.mobile-extra-asset-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mobile-extra-asset-options :deep(.el-checkbox-button__inner) {
+  border-radius: 8px;
+  border-left: 1px solid var(--el-border-color);
 }
 
 .upload-grid {

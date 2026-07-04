@@ -73,6 +73,7 @@ func TestLatestAssetsByTypeUsesNewestAsset(t *testing.T) {
 		{ID: 2, AssetType: AssetMain, Status: StatusSuccess, URL: "/old-main.png"},
 		{ID: 3, AssetType: AssetVideo, Status: StatusSuccess, URL: "/video.mp4"},
 		{ID: 4, AssetType: AssetMain, Status: StatusSuccess, URL: "/new-main.png"},
+		{ID: 5, AssetType: AssetSpokesperson, Status: StatusSuccess, URL: "/spokesperson.png"},
 	}
 	got := latestAssetsByType(assets)
 	byType := map[string]Asset{}
@@ -85,8 +86,28 @@ func TestLatestAssetsByTypeUsesNewestAsset(t *testing.T) {
 	if byType[AssetMain].URL != "/new-main.png" {
 		t.Fatalf("main image should use newest asset: %+v", byType[AssetMain])
 	}
-	if len(got) != 2 {
+	if byType[AssetSpokesperson].URL != "/spokesperson.png" {
+		t.Fatalf("spokesperson image should be included: %+v", byType[AssetSpokesperson])
+	}
+	if len(got) != 3 {
 		t.Fatalf("expected one asset per type, got %+v", got)
+	}
+}
+
+func TestExtraAssetTypesValidation(t *testing.T) {
+	got, err := validateExtraAssetTypes([]string{AssetSpokesperson, AssetSpokesperson, AssetModelProductShow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != AssetSpokesperson+","+AssetModelProductShow {
+		t.Fatalf("extra asset types = %+v", got)
+	}
+	if _, err := validateExtraAssetTypes([]string{"bad_image"}); err == nil {
+		t.Fatal("expected invalid asset type error")
+	}
+	all := allAssetTypes(got)
+	if strings.Join(all[len(assetTypes):], ",") != AssetSpokesperson+","+AssetModelProductShow {
+		t.Fatalf("all asset types = %+v", all)
 	}
 }
 
@@ -122,6 +143,9 @@ func TestNormalizeOutputBuildsConsistentImagePlans(t *testing.T) {
 	if out.ImageTextPlans[AssetWhite].PriceText != "" || len(out.ImageTextPlans[AssetWhite].SellingPoints) != 0 {
 		t.Fatalf("white image should not contain text plan: %+v", out.ImageTextPlans[AssetWhite])
 	}
+	if out.ImageTextPlans[AssetSpokesperson].Title != "800可收纳钢琴" || out.ImageSpecs[AssetModelProductShow].Size != "1024x1792" {
+		t.Fatalf("optional image defaults missing: plan=%+v spec=%+v", out.ImageTextPlans[AssetSpokesperson], out.ImageSpecs[AssetModelProductShow])
+	}
 }
 
 func TestNormalizeOutputResetsUniformImageSpecs(t *testing.T) {
@@ -145,6 +169,9 @@ func TestNormalizeOutputResetsUniformImageSpecs(t *testing.T) {
 	}
 	if out.ImageSpecs[AssetMain].Size != "1024x1024" || out.ImageSpecs[AssetWhite].Size != "1024x1024" {
 		t.Fatalf("square specs = main:%+v white:%+v", out.ImageSpecs[AssetMain], out.ImageSpecs[AssetWhite])
+	}
+	if out.ImageSpecs[AssetSpokesperson].Size != "1024x1792" || out.ImageSpecs[AssetModelProductShow].Size != "1024x1792" {
+		t.Fatalf("optional specs = spokesperson:%+v model:%+v", out.ImageSpecs[AssetSpokesperson], out.ImageSpecs[AssetModelProductShow])
 	}
 }
 
@@ -622,6 +649,37 @@ func TestRunnerImageConcurrencyCustom(t *testing.T) {
 	}
 	if cap(r.imageSem) != 3 {
 		t.Fatalf("image semaphore cap = %d", cap(r.imageSem))
+	}
+}
+
+func TestAssetGenerationProgressScalesWithOptionalAssets(t *testing.T) {
+	if got := assetGenerationProgress(7, 7); got != 85 {
+		t.Fatalf("final progress = %d", got)
+	}
+	if got := assetGenerationProgress(1, 7); got != 42 {
+		t.Fatalf("first progress = %d", got)
+	}
+}
+
+func TestOptionalAssetPromptsHaveDistinctGoals(t *testing.T) {
+	out := Output{
+		ProductTitle: "美肤袜",
+		Description:  "轻薄透气",
+		ProductInfo: ProductInfo{
+			CanonicalTitle: "美肤袜",
+			ShortTitle:     "美肤袜",
+			SellingPoints:  []string{"自然修饰腿型"},
+		},
+	}
+	normalizeOutput(&out, "美肤袜，增加代言人和模特展示")
+	r := NewRunner(nil, nil, nil, nil, nil, nil, nil, 1)
+	spokesperson := r.buildImagePrompt(Platform{Name: "通用电商"}, PromptTemplate{}, StyleTemplate{}, out, "美肤袜，增加代言人和模特展示", AssetSpokesperson)
+	modelShow := r.buildImagePrompt(Platform{Name: "通用电商"}, PromptTemplate{}, StyleTemplate{}, out, "美肤袜，增加代言人和模特展示", AssetModelProductShow)
+	if !strings.Contains(spokesperson, "代言人") || !strings.Contains(spokesperson, "同框") {
+		t.Fatalf("spokesperson prompt missing endorsement requirement: %s", spokesperson)
+	}
+	if !strings.Contains(modelShow, "模特") || !strings.Contains(modelShow, "穿戴") {
+		t.Fatalf("model prompt missing product showcase requirement: %s", modelShow)
 	}
 }
 

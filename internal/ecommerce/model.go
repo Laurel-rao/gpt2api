@@ -19,15 +19,70 @@ const (
 )
 
 const (
-	AssetTitle  = "title_image"
-	AssetMain   = "main_image"
-	AssetWhite  = "white_image"
-	AssetDetail = "detail_image"
-	AssetPrice  = "price_image"
-	AssetVideo  = "product_video"
+	AssetTitle            = "title_image"
+	AssetMain             = "main_image"
+	AssetWhite            = "white_image"
+	AssetDetail           = "detail_image"
+	AssetPrice            = "price_image"
+	AssetSpokesperson     = "spokesperson_image"
+	AssetModelProductShow = "model_product_image"
+	AssetVideo            = "product_video"
 )
 
 var assetTypes = []string{AssetTitle, AssetMain, AssetWhite, AssetDetail, AssetPrice}
+
+var optionalAssetTypes = []string{AssetSpokesperson, AssetModelProductShow}
+
+func allAssetTypes(extraTypes []string) []string {
+	out := append([]string{}, assetTypes...)
+	out = append(out, sanitizeExtraAssetTypes(extraTypes)...)
+	return out
+}
+
+func sanitizeExtraAssetTypes(types []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(types))
+	for _, typ := range types {
+		typ = strings.TrimSpace(typ)
+		if !isOptionalAssetType(typ) || seen[typ] {
+			continue
+		}
+		seen[typ] = true
+		out = append(out, typ)
+	}
+	return out
+}
+
+func extraAssetTypesFromRaw(raw RawJSON) []string {
+	var types []string
+	_ = json.Unmarshal(raw.RawMessage(), &types)
+	return sanitizeExtraAssetTypes(types)
+}
+
+func validateExtraAssetTypes(types []string) ([]string, error) {
+	out := sanitizeExtraAssetTypes(types)
+	seen := map[string]bool{}
+	for _, typ := range types {
+		typ = strings.TrimSpace(typ)
+		if typ == "" || seen[typ] {
+			continue
+		}
+		seen[typ] = true
+		if !isOptionalAssetType(typ) {
+			return nil, fmt.Errorf("不支持的图片类型: %s", typ)
+		}
+	}
+	return out, nil
+}
+
+func isOptionalAssetType(assetType string) bool {
+	for _, typ := range optionalAssetTypes {
+		if assetType == typ {
+			return true
+		}
+	}
+	return false
+}
 
 func latestAssetsByType(assets []Asset) []Asset {
 	latest := make(map[string]Asset, len(assets))
@@ -38,7 +93,7 @@ func latestAssetsByType(assets []Asset) []Asset {
 		}
 	}
 	out := make([]Asset, 0, len(latest))
-	for _, assetType := range append(append([]string{}, assetTypes...), AssetVideo) {
+	for _, assetType := range append(append(append([]string{}, assetTypes...), optionalAssetTypes...), AssetVideo) {
 		if asset, ok := latest[assetType]; ok {
 			out = append(out, asset)
 			delete(latest, assetType)
@@ -115,6 +170,7 @@ type Task struct {
 	ReferenceImages  RawJSON    `db:"reference_images" json:"reference_images,omitempty"`
 	ProductAssetID   string     `db:"product_asset_id" json:"product_asset_id,omitempty"`
 	ModelAssetID     string     `db:"model_asset_id" json:"model_asset_id,omitempty"`
+	ExtraAssetTypes  RawJSON    `db:"extra_asset_types" json:"extra_asset_types,omitempty"`
 	Status           string     `db:"status" json:"status"`
 	Progress         int        `db:"progress" json:"progress"`
 	OutputJSON       RawJSON    `db:"output_json" json:"output_json,omitempty"`

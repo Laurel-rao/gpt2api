@@ -68,6 +68,11 @@ export interface EcommerceAsset {
   updated_at: string
 }
 
+export const ECOMMERCE_EXTRA_ASSET_OPTIONS = [
+  { label: '代言人代言图', value: 'spokesperson_image' },
+  { label: '模特产品展示图', value: 'model_product_image' },
+] as const
+
 export interface EcommerceTask {
   id: number
   task_id: string
@@ -83,6 +88,7 @@ export interface EcommerceTask {
   reference_images?: string[]
   product_asset_id?: string
   model_asset_id?: string
+  extra_asset_types?: string[]
   status: string
   progress: number
   output_json?: any
@@ -111,6 +117,7 @@ export function createEcommerceTask(body: {
   reference_images: string[]
   product_asset_id?: string
   model_asset_id?: string
+  extra_asset_types?: string[]
 }): Promise<EcommerceTask> {
   return http.post('/api/me/ecommerce/tasks', body)
 }

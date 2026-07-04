@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus/es/components/message/index.mjs'
 import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
 import type { UploadFile } from 'element-plus/es/components/upload/index.mjs'
 import {
+  ECOMMERCE_EXTRA_ASSET_OPTIONS,
   ECOMMERCE_LANGUAGES,
   cancelEcommerceTask,
   createEcommerceTask,
@@ -96,6 +97,7 @@ const form = reactive({
   reference_images: [] as string[],
   product_asset_id: '',
   model_asset_id: '',
+  extra_asset_types: [] as string[],
 })
 
 const statusText: Record<string, string> = {
@@ -120,11 +122,13 @@ const assetText: Record<string, string> = {
   white_image: '白底图',
   detail_image: '详情图',
   price_image: '价格图',
+  spokesperson_image: '代言图',
+  model_product_image: '模特展示图',
   product_video: '商品视频',
 }
 
-const assetOrder = ['title_image', 'main_image', 'white_image', 'detail_image', 'price_image', 'product_video']
-const imageAssetOrder = ['title_image', 'main_image', 'white_image', 'detail_image', 'price_image']
+const assetOrder = ['title_image', 'main_image', 'white_image', 'detail_image', 'price_image', 'spokesperson_image', 'model_product_image', 'product_video']
+const baseImageAssetCount = 5
 
 const output = computed<Record<string, any>>(() => activeTask.value?.output_json || {})
 const productInfo = computed<Record<string, any>>(() => output.value?.product_info || {})
@@ -133,6 +137,12 @@ const imageSpecs = computed<Record<string, any>>(() => output.value?.image_specs
 const imageTextPlans = computed<Record<string, any>>(() => output.value?.image_text_plans || {})
 const assets = computed(() => activeTask.value?.assets || [])
 const currentAssets = computed(() => latestAssetsByType(assets.value))
+const activeExtraAssetTypes = computed(() => activeTask.value ? activeTask.value.extra_asset_types || [] : form.extra_asset_types)
+const requiredImageAssetTypes = computed(() => assetOrder.filter((type) => {
+  if (isVideoAsset(type)) return false
+  if (ECOMMERCE_EXTRA_ASSET_OPTIONS.some((item) => item.value === type)) return activeExtraAssetTypes.value.includes(type)
+  return true
+}))
 const taskLooksComplete = computed(() => currentAssets.value.length > 0 && currentAssetsReady(currentAssets.value))
 const displayTaskStatus = computed(() => (taskLooksComplete.value ? 'success' : activeTask.value?.status || ''))
 const running = computed(() => ['queued', 'running'].includes(displayTaskStatus.value))
@@ -150,9 +160,9 @@ const hasWorkingCurrentAsset = computed(() => currentAssets.value.some((asset) =
 const visibleAssets = computed(() => currentAssets.value.filter((asset) => !isVideoAsset(asset)).sort((a, b) => assetRank(a.asset_type) - assetRank(b.asset_type)))
 const videoAsset = computed(() => currentAssets.value.find((asset) => isVideoAsset(asset)) || null)
 const doneAssetCount = computed(() => currentAssets.value.filter((asset) => assetIsReady(asset)).length)
-const expectedAssetCount = computed(() => imageAssetOrder.length + (currentAssets.value.some((asset) => isVideoAsset(asset)) ? 1 : 0))
+const expectedAssetCount = computed(() => requiredImageAssetTypes.value.length + (currentAssets.value.some((asset) => isVideoAsset(asset)) ? 1 : 0))
 const totalAssetCount = computed(() => Math.max(currentAssets.value.length, expectedAssetCount.value))
-const assetMetricText = computed(() => activeTask.value ? `${doneAssetCount.value}/${totalAssetCount.value}` : `0/${imageAssetOrder.length}`)
+const assetMetricText = computed(() => activeTask.value ? `${doneAssetCount.value}/${totalAssetCount.value}` : `0/${baseImageAssetCount + form.extra_asset_types.length}`)
 const videoStatusLabel = computed(() => {
   if (!activeTask.value) return '等待任务'
   if (!videoAsset.value) return '未生成'
@@ -423,7 +433,7 @@ function latestAssetsByType(list: EcommerceAsset[]) {
 function currentAssetsReady(list: EcommerceAsset[]) {
   if (!list.length) return false
   if (list.some((asset) => isAssetWorking(asset.status) || asset.status === 'failed' || asset.status === 'canceled')) return false
-  return imageAssetOrder.every((type) => list.some((asset) => asset.asset_type === type && assetIsReady(asset)))
+  return requiredImageAssetTypes.value.every((type) => list.some((asset) => asset.asset_type === type && assetIsReady(asset)))
     && !list.some((asset) => isVideoAsset(asset) && !assetIsReady(asset))
 }
 
@@ -769,6 +779,7 @@ async function submit() {
       reference_images: form.reference_images,
       product_asset_id: form.product_asset_id || undefined,
       model_asset_id: form.model_asset_id || undefined,
+      extra_asset_types: form.extra_asset_types,
     })
     activeTask.value = task
     rememberLastTaskID(task.task_id)
@@ -1077,7 +1088,7 @@ function downloadCanvas(canvas: HTMLCanvasElement, filename: string) {
 
 async function exportPoster() {
   if (!activeTask.value) return
-  const imageAssets = imageAssetOrder
+  const imageAssets = requiredImageAssetTypes.value
     .map((type) => currentAssets.value.find((asset) => asset.asset_type === type && assetHasImage(asset)))
     .filter(Boolean) as EcommerceAsset[]
   if (!imageAssets.length) {
@@ -1664,6 +1675,18 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </div>
+
+        <el-form-item label="可选图片">
+          <el-checkbox-group v-model="form.extra_asset_types" class="extra-asset-options">
+            <el-checkbox-button
+              v-for="item in ECOMMERCE_EXTRA_ASSET_OPTIONS"
+              :key="item.value"
+              :label="item.value"
+            >
+              {{ item.label }}
+            </el-checkbox-button>
+          </el-checkbox-group>
+        </el-form-item>
 
         <el-form-item>
           <template #label>
@@ -2306,6 +2329,17 @@ h3 {
   margin-top: 2px;
   font-size: 11px;
   color: var(--muted);
+}
+
+.extra-asset-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.extra-asset-options :deep(.el-checkbox-button__inner) {
+  border-radius: 8px;
+  border-left: 1px solid var(--el-border-color);
 }
 
 .brief-form :deep(.el-input__wrapper),

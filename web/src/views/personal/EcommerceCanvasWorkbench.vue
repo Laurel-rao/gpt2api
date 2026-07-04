@@ -24,6 +24,7 @@ import { ElMessage } from 'element-plus/es/components/message/index.mjs'
 import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
 import type { UploadFile } from 'element-plus/es/components/upload/index.mjs'
 import {
+  ECOMMERCE_EXTRA_ASSET_OPTIONS,
   ECOMMERCE_LANGUAGES,
   cancelEcommerceTask,
   createEcommerceTask,
@@ -139,6 +140,7 @@ const form = reactive({
   reference_images: [] as string[],
   product_asset_id: '',
   model_asset_id: '',
+  extra_asset_types: [] as string[],
 })
 
 const statusText: Record<string, string> = {
@@ -163,6 +165,8 @@ const assetText: Record<string, string> = {
   white_image: '白底图',
   detail_image: '详情图',
   price_image: '价格图',
+  spokesperson_image: '代言图',
+  model_product_image: '模特展示图',
   product_video: '商品视频',
 }
 
@@ -172,9 +176,11 @@ const assetRole: Record<string, string> = {
   white_image: '承担商品可信识别与平台基础素材',
   detail_image: '承担卖点、规格、场景的深度说服',
   price_image: '承担促销行动与下单推动',
+  spokesperson_image: '承担代言背书与品牌信任建立',
+  model_product_image: '承担模特上身/上手/使用效果展示',
 }
 
-const assetOrder = ['white_image', 'title_image', 'main_image', 'detail_image', 'price_image']
+const assetOrder = ['white_image', 'title_image', 'main_image', 'detail_image', 'price_image', 'spokesperson_image', 'model_product_image']
 const productVideoType = 'product_video'
 const customNodeSize: Record<string, { w: number; h: number }> = {
   custom_text: { w: 240, h: 150 },
@@ -244,6 +250,7 @@ const selectedNodeIndex = computed(() => Math.max(0, canvasNodes.value.findIndex
 const workingNodeCount = computed(() => canvasNodes.value.filter((node) => node.status === 'working').length)
 const failedNodeCount = computed(() => canvasNodes.value.filter((node) => node.status === 'failed').length)
 const readyNodeCount = computed(() => canvasNodes.value.filter((node) => node.status === 'success').length)
+const canvasImageAssetCount = computed(() => canvasNodes.value.filter((node) => node.kind === 'asset').length)
 const canvasProgressText = computed(() => `${readyNodeCount.value}/${canvasNodes.value.length} 节点就绪`)
 
 const canvasNodes = computed<CanvasNode[]>(() => {
@@ -291,7 +298,9 @@ const canvasNodes = computed<CanvasNode[]>(() => {
       status: hasCopy ? 'success' : working ? 'working' : failed ? 'failed' : 'idle',
     },
   ]
-  assetOrder.forEach((type, index) => {
+  const selectedExtraTypes = new Set(activeTask.value ? activeTask.value.extra_asset_types || [] : form.extra_asset_types)
+  const visibleAssetOrder = assetOrder.filter((type) => !isOptionalCanvasAsset(type) || selectedExtraTypes.has(type) || assetMap.has(type))
+  visibleAssetOrder.forEach((type, index) => {
     const asset = assetMap.get(type)
     const isWhiteImage = type === 'white_image'
     const otherImageIndex = Math.max(0, index - 1)
@@ -366,6 +375,7 @@ const systemEdges = computed<CanvasEdge[]>(() => [
   { from: 'asset:white_image', to: 'asset:price_image' },
   { from: 'asset:white_image', to: 'asset:title_image' },
   { from: 'asset:white_image', to: 'asset:main_image' },
+  ...optionalCanvasAssetEdges(),
   { from: 'copy', to: 'video_script' },
   { from: 'copy', to: 'video' },
   { from: 'asset:white_image', to: 'video' },
@@ -374,11 +384,30 @@ const systemEdges = computed<CanvasEdge[]>(() => [
   { from: 'asset:main_image', to: 'detail' },
   { from: 'asset:detail_image', to: 'detail' },
   { from: 'asset:price_image', to: 'detail' },
+  ...optionalCanvasDetailEdges(),
   { from: 'video', to: 'detail' },
   { from: 'detail', to: 'export' },
 ])
 
 const canvasEdges = computed<CanvasEdge[]>(() => [...systemEdges.value, ...customEdges.value])
+
+function isOptionalCanvasAsset(type: string) {
+  return ECOMMERCE_EXTRA_ASSET_OPTIONS.some((item) => item.value === type)
+}
+
+function selectedOptionalCanvasAssets() {
+  const persisted = activeTask.value ? activeTask.value.extra_asset_types || [] : form.extra_asset_types
+  const generated = new Set(currentAssets.value.map((asset) => asset.asset_type))
+  return assetOrder.filter((type) => isOptionalCanvasAsset(type) && (persisted.includes(type) || generated.has(type)))
+}
+
+function optionalCanvasAssetEdges(): CanvasEdge[] {
+  return selectedOptionalCanvasAssets().map((type) => ({ from: 'asset:white_image', to: `asset:${type}` }))
+}
+
+function optionalCanvasDetailEdges(): CanvasEdge[] {
+  return selectedOptionalCanvasAssets().map((type) => ({ from: `asset:${type}`, to: 'detail' }))
+}
 
 const flowNodes = computed<any[]>(() => canvasNodes.value.map((node) => ({
   id: node.id,
@@ -835,6 +864,7 @@ function resetDraft() {
   form.reference_images = []
   form.product_asset_id = ''
   form.model_asset_id = ''
+  form.extra_asset_types = []
   activeTask.value = null
   brokenAssetIDs.value = new Set()
   selectedNodeID.value = 'brief'
@@ -882,6 +912,7 @@ async function submit() {
       reference_images: form.reference_images,
       product_asset_id: form.product_asset_id || undefined,
       model_asset_id: form.model_asset_id || undefined,
+      extra_asset_types: form.extra_asset_types,
     })
     activeTask.value = task
     selectedNodeID.value = 'copy'
@@ -1270,6 +1301,18 @@ onBeforeUnmount(() => {
           </el-form-item>
         </div>
 
+        <el-form-item label="可选图片">
+          <el-checkbox-group v-model="form.extra_asset_types" class="canvas-extra-asset-options">
+            <el-checkbox-button
+              v-for="item in ECOMMERCE_EXTRA_ASSET_OPTIONS"
+              :key="item.value"
+              :label="item.value"
+            >
+              {{ item.label }}
+            </el-checkbox-button>
+          </el-checkbox-group>
+        </el-form-item>
+
         <el-form-item label="参考图片">
           <el-upload
             class="reference-upload"
@@ -1638,7 +1681,7 @@ onBeforeUnmount(() => {
           <ul class="delivery-list">
             <li :class="{ done: !!activeTask?.requirement }">商品资料</li>
             <li :class="{ done: !!output?.product_title }">营销文案</li>
-            <li :class="{ done: doneAssetCount > 0 }">图片资产 {{ doneAssetCount }}/{{ assetOrder.length }}</li>
+            <li :class="{ done: doneAssetCount > 0 }">图片资产 {{ doneAssetCount }}/{{ canvasImageAssetCount }}</li>
             <li :class="{ done: !!output?.product_title }">短视频脚本</li>
             <li :class="{ done: !!detailDoc }">详情页</li>
             <li :class="{ done: doneAssetCount > 0 }">长图导出</li>
@@ -2000,6 +2043,17 @@ onBeforeUnmount(() => {
   background: var(--field-count-bg);
   color: var(--soft);
   font-size: 10px;
+}
+
+.canvas-extra-asset-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.canvas-extra-asset-options :deep(.el-checkbox-button__inner) {
+  border-radius: 8px;
+  border-left: 1px solid var(--el-border-color);
 }
 
 :deep(.el-select .el-select__caret),
