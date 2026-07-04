@@ -69,6 +69,36 @@ interface CanvasEdge {
   to: string
 }
 
+interface CanvasLayoutNode {
+  id: string
+  node: CanvasNode
+  position: { x: number; y: number }
+  width: number
+  height: number
+}
+
+interface CanvasBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+interface CanvasFitInsets {
+  top: number
+  right: number
+  bottom: number
+  left: number
+}
+
+type CanvasFlowNodeLike = {
+  id: string
+  data?: CanvasFlowNodeData
+  position?: { x: number; y: number }
+  style?: Record<string, any>
+  dimensions?: { width?: number; height?: number }
+}
+
 interface CanvasFlowNodeData {
   node: CanvasNode
 }
@@ -77,6 +107,8 @@ const MAX_IMAGES = 4
 const MAX_IMAGE_MB = 20
 const POLL_INTERVAL = 2500
 const TASK_PAGE_SIZE = 12
+const canvasMinZoom = 0.12
+const canvasMaxZoom = 1.5
 
 const optionsLoading = ref(false)
 const tasksLoading = ref(false)
@@ -104,7 +136,7 @@ const retryPrompts = ref<Record<number, string>>({})
 const backgroundMode = ref<'grid' | 'dots' | 'blank'>('grid')
 const showMiniMap = ref(true)
 const initialViewport = { x: 26, y: 72, zoom: 0.86 }
-const { fitView, getViewport, setViewport } = useVueFlow({ id: 'ecommerce-canvas-flow' })
+const { getViewport, setViewport } = useVueFlow({ id: 'ecommerce-canvas-flow' })
 const customNodes = ref<CanvasNode[]>([])
 const customEdges = ref<CanvasEdge[]>([])
 const editDialogVisible = ref(false)
@@ -722,8 +754,104 @@ function retryNode(target?: CanvasNode) {
   ElMessage.info('该系统节点会在整套生成时更新')
 }
 
+function flowNodeSize(node: CanvasFlowNodeLike, fallback?: CanvasNode) {
+  const dataNode = node.data?.node || fallback
+  const style = node.style || {}
+  const styleWidth = typeof style.width === 'string' ? Number.parseFloat(style.width) : Number(style.width)
+  const styleHeight = typeof style.height === 'string' ? Number.parseFloat(style.height) : Number(style.height)
+  return {
+    width: Number(node.dimensions?.width) || styleWidth || dataNode?.w || 240,
+    height: Number(node.dimensions?.height) || styleHeight || dataNode?.h || 150,
+  }
+}
+
+function canvasLayoutNodes(sourceNodes: CanvasFlowNodeLike[] = flowNodeState.value as CanvasFlowNodeLike[]): CanvasLayoutNode[] {
+  const fallbackMap = new Map(canvasNodes.value.map((node) => [node.id, node]))
+  const layoutNodes: CanvasLayoutNode[] = []
+  for (const node of sourceNodes) {
+    const dataNode = node.data?.node || fallbackMap.get(node.id)
+    if (!dataNode) continue
+    const size = flowNodeSize(node, dataNode)
+    const position = node.position || { x: dataNode.x, y: dataNode.y }
+    layoutNodes.push({
+      id: node.id,
+      node: dataNode,
+      position,
+      width: size.width,
+      height: size.height,
+    })
+  }
+  return layoutNodes
+}
+
+function canvasBounds(layoutNodes = canvasLayoutNodes()): CanvasBounds | null {
+  if (!layoutNodes.length) return null
+  let minX = Number.POSITIVE_INFINITY
+  let minY = Number.POSITIVE_INFINITY
+  let maxX = Number.NEGATIVE_INFINITY
+  let maxY = Number.NEGATIVE_INFINITY
+  for (const item of layoutNodes) {
+    minX = Math.min(minX, item.position.x)
+    minY = Math.min(minY, item.position.y)
+    maxX = Math.max(maxX, item.position.x + item.width)
+    maxY = Math.max(maxY, item.position.y + item.height)
+  }
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
+}
+
+function canvasFitInsets(): CanvasFitInsets {
+  const viewport = document.querySelector<HTMLElement>('.canvas-viewport')
+  if (!viewport) return { top: 24, right: 24, bottom: 24, left: 24 }
+  const viewportRect = viewport.getBoundingClientRect()
+  const visibleRect = (element?: HTMLElement | null) => {
+    if (!element) return null
+    const rect = element.getBoundingClientRect()
+    return rect.width > 0 && rect.height > 0 ? rect : null
+  }
+  const controlsRect = visibleRect(viewport.querySelector<HTMLElement>('.canvas-controls'))
+  const hintRect = visibleRect(viewport.querySelector<HTMLElement>('.canvas-hint'))
+  const inspector = document.querySelector<HTMLElement>('.inspector-panel')
+  const inspectorRect = inspector && window.getComputedStyle(inspector).position !== 'static' ? visibleRect(inspector) : null
+  const controlsBottom = controlsRect ? Math.max(0, controlsRect.bottom - viewportRect.top + 24) : 24
+  const hintTop = hintRect ? Math.max(0, viewportRect.bottom - hintRect.top + 18) : 24
+  const inspectorLeft = inspectorRect
+    && inspectorRect.right > viewportRect.left
+    && inspectorRect.left < viewportRect.right
+    && inspectorRect.bottom > viewportRect.top
+    && inspectorRect.top < viewportRect.bottom
+    ? Math.max(24, viewportRect.right - inspectorRect.left + 20)
+    : 24
+  return {
+    top: Math.max(24, controlsBottom),
+    right: Math.min(Math.max(24, inspectorLeft), Math.max(24, viewportRect.width * 0.42)),
+    bottom: Math.max(24, hintTop),
+    left: 24,
+  }
+}
+
+function fitCanvasToView(duration = 260, sourceNodes = flowNodeState.value) {
+  nextTick(() => {
+    const viewport = document.querySelector<HTMLElement>('.canvas-viewport')
+    const bounds = canvasBounds(canvasLayoutNodes(sourceNodes))
+    if (!viewport || !bounds) return
+    const viewportRect = viewport.getBoundingClientRect()
+    const insets = canvasFitInsets()
+    const usableWidth = Math.max(240, viewportRect.width - insets.left - insets.right)
+    const usableHeight = Math.max(220, viewportRect.height - insets.top - insets.bottom)
+    const zoom = Math.max(
+      canvasMinZoom,
+      Math.min(canvasMaxZoom, Math.min(usableWidth / Math.max(bounds.width, 1), usableHeight / Math.max(bounds.height, 1))),
+    )
+    setViewport({
+      x: insets.left + (usableWidth - bounds.width * zoom) / 2 - bounds.x * zoom,
+      y: insets.top + (usableHeight - bounds.height * zoom) / 2 - bounds.y * zoom,
+      zoom,
+    }, { duration })
+  })
+}
+
 function centerCanvas() {
-  fitView({ padding: 0.06, duration: 260 })
+  fitCanvasToView(260)
 }
 
 function autoArrangeCanvas() {
@@ -758,19 +886,40 @@ function autoArrangeCanvas() {
   }
   const previous = new Map(flowNodeState.value.map((node: any) => [node.id, node]))
   const arrangedPositions = new Map<string, { x: number; y: number }>()
-  const layerGap = 300
-  const rowGap = 210
+  const nodeWidth = new Map(nodes.map((node) => [node.id, node.w]))
+  const nodeHeight = new Map(nodes.map((node) => [node.id, node.h]))
+  for (const flowNode of flowNodeState.value) {
+    const size = flowNodeSize(flowNode, nodeMap.get(flowNode.id))
+    nodeWidth.set(flowNode.id, size.width)
+    nodeHeight.set(flowNode.id, size.height)
+  }
+  const columnWidths = new Map<number, number>()
+  const columnX = new Map<number, number>()
+  const columnGap = 220
+  const rowGap = 96
   const originX = 44
   const originY = 54
-  Array.from(grouped.entries()).sort(([a], [b]) => a - b).forEach(([depth, layerNodes]) => {
+  const sortedGroups = Array.from(grouped.entries()).sort(([a], [b]) => a - b)
+  for (const [depth, layerNodes] of sortedGroups) {
+    columnWidths.set(depth, Math.max(...layerNodes.map((node) => nodeWidth.get(node.id) || node.w)))
+  }
+  let nextX = originX
+  for (const [depth] of sortedGroups) {
+    columnX.set(depth, nextX)
+    nextX += (columnWidths.get(depth) || 240) + columnGap
+  }
+  sortedGroups.forEach(([depth, layerNodes]) => {
+    let nextY = originY
     layerNodes
       .slice()
       .sort((a, b) => (a.y - b.y) || a.id.localeCompare(b.id))
-      .forEach((node, index) => {
+      .forEach((node) => {
+        const height = nodeHeight.get(node.id) || node.h
         arrangedPositions.set(node.id, {
-          x: originX + depth * layerGap,
-          y: originY + index * rowGap,
+          x: columnX.get(depth) || originX,
+          y: nextY,
         })
+        nextY += height + rowGap
       })
   })
   const nextNodes: any[] = []
@@ -783,7 +932,7 @@ function autoArrangeCanvas() {
   }
   flowNodeState.value = nextNodes
   flowEdgeState.value = flowEdges.value
-  nextTick(() => fitView({ padding: 0.08, duration: 260 }))
+  fitCanvasToView(260, nextNodes)
 }
 
 function resetViewport() {
@@ -1451,8 +1600,8 @@ onBeforeUnmount(() => {
           class="commerce-flow"
           v-model:nodes="flowNodeState"
           v-model:edges="flowEdgeState"
-          :min-zoom="0.35"
-          :max-zoom="1.5"
+          :min-zoom="canvasMinZoom"
+          :max-zoom="canvasMaxZoom"
           :default-viewport="initialViewport"
           :fit-view-on-init="false"
           :nodes-draggable="true"
