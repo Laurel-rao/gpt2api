@@ -33,6 +33,8 @@ var menuTree = []Menu{
 				Perms: []Permission{PermSelfImage, PermSelfUsage}},
 			{Key: "personal.ecommerce-v2", Title: "电商智能体", Icon: "ShoppingBag", Path: "/personal/ecommerce-v2",
 				Perms: []Permission{PermSelfEcommerce}},
+			{Key: "personal.ecommerce-canvas", Title: "电商画布", Icon: "Operation", Path: "/personal/ecommerce-canvas",
+				Perms: []Permission{PermSelfEcommerce}},
 			{Key: "personal.ecommerce-assets", Title: "电商资产库", Icon: "Collection", Path: "/personal/ecommerce-assets",
 				Perms: []Permission{PermSelfEcommerce}},
 			{Key: "personal.ecommerce-mobile", Title: "电商移动工作台", Icon: "Cellphone", Path: "/personal/ecommerce-mobile",

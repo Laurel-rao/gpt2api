@@ -49,6 +49,8 @@ const routes: RouteRecordRaw[] = [
       { path: 'ecommerce', redirect: '/personal/ecommerce-v2' },
       { path: 'ecommerce-v2', component: () => import('@/views/personal/EcommerceWorkbench.vue'),
         meta: { title: '电商智能体', perm: 'self:ecommerce' } },
+      { path: 'ecommerce-canvas', component: () => import('@/views/personal/EcommerceCanvasWorkbench.vue'),
+        meta: { title: '电商画布', perm: 'self:ecommerce' } },
       { path: 'ecommerce-assets', component: () => import('@/views/personal/EcommerceAssets.vue'),
         meta: { title: '电商资产库', perm: 'self:ecommerce' } },
       { path: 'ecommerce-mobile', component: () => import('@/views/personal/EcommerceMobileWorkbench.vue'),
