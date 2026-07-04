@@ -23,6 +23,11 @@ type videoAssetRow struct {
 	ImageTaskID string `db:"image_task_id"`
 }
 
+type videoRefreshClient struct {
+	Channel string
+	Client  *videogen.Client
+}
+
 func main() {
 	configPath := flag.String("c", "configs/config.yaml", "config file path")
 	limit := flag.Int("limit", 0, "max assets to localize, 0 means all")
@@ -60,7 +65,7 @@ SELECT id, COALESCE(url, '') AS url, COALESCE(image_task_id, '') AS image_task_i
 	}
 
 	dao := ecommerce.NewDAO(sqldb)
-	videoClient := newVideoClient(ctx, sqldb, cfg)
+	refreshClients := newVideoClients(ctx, sqldb, cfg)
 	var ok, failed int
 	for _, row := range rows {
 		if *dryRun {
@@ -68,28 +73,22 @@ SELECT id, COALESCE(url, '') AS url, COALESCE(image_task_id, '') AS image_task_i
 			continue
 		}
 		sourceURL := row.URL
-		saved, err := ecommerce.SaveVideoFromURL(ctx, fmt.Sprintf("video_%d", row.ID), sourceURL)
-		if err != nil && videoClient != nil && strings.TrimSpace(row.ImageTaskID) != "" {
-			refreshedURL, refreshErr := refreshVideoURL(ctx, videoClient, row.ImageTaskID)
-			if refreshErr != nil {
-				fmt.Fprintf(os.Stderr, "refresh failed id=%d: %v\n", row.ID, refreshErr)
-			} else if refreshedURL != "" && refreshedURL != sourceURL {
-				sourceURL = refreshedURL
-				saved, err = ecommerce.SaveVideoFromURL(ctx, fmt.Sprintf("video_%d", row.ID), sourceURL)
-			}
+		localURL, fileID, err := localizeVideoURL(ctx, row, sourceURL)
+		if err != nil && len(refreshClients) > 0 && strings.TrimSpace(row.ImageTaskID) != "" {
+			localURL, fileID, err = localizeWithRefreshedURLs(ctx, row, sourceURL, refreshClients)
 		}
 		if err != nil {
 			failed++
 			fmt.Fprintf(os.Stderr, "failed id=%d: %v\n", row.ID, err)
 			continue
 		}
-		if err := dao.UpdateAssetFile(ctx, row.ID, saved.URL, "local_video:"+saved.SHA256); err != nil {
+		if err := dao.UpdateAssetFile(ctx, row.ID, localURL, fileID); err != nil {
 			failed++
 			fmt.Fprintf(os.Stderr, "update failed id=%d: %v\n", row.ID, err)
 			continue
 		}
 		ok++
-		fmt.Printf("localized id=%d url=%s\n", row.ID, saved.URL)
+		fmt.Printf("localized id=%d url=%s\n", row.ID, localURL)
 	}
 	fmt.Printf("done candidates=%d localized=%d failed=%d\n", len(rows), ok, failed)
 	if failed > 0 {
@@ -97,48 +96,76 @@ SELECT id, COALESCE(url, '') AS url, COALESCE(image_task_id, '') AS image_task_i
 	}
 }
 
-func newVideoClient(ctx context.Context, sqldb *sqlx.DB, cfg *config.Config) *videogen.Client {
+func newVideoClients(ctx context.Context, sqldb *sqlx.DB, cfg *config.Config) []videoRefreshClient {
 	settingsDAO := settings.NewDAO(sqldb)
 	settingsSvc := settings.NewService(settingsDAO)
 	if err := settingsSvc.Reload(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "settings reload failed: %v\n", err)
 		return nil
 	}
-	videoGenBaseURL := cfg.VideoGen.BaseURL
-	videoGenAPIKey := cfg.VideoGen.APIKey
-	videoGenModel := cfg.VideoGen.Model
-	switch cfg.VideoGen.ChannelType {
-	case videogen.ChannelAPIYISeedance:
-		videoGenBaseURL = cfg.VideoGen.APIYI.BaseURL
-		videoGenAPIKey = cfg.VideoGen.APIYI.APIKey
-		videoGenModel = cfg.VideoGen.APIYI.Model
-	case videogen.ChannelAPIYIWan27:
-		videoGenBaseURL = cfg.VideoGen.APIYIWan27.BaseURL
-		videoGenAPIKey = cfg.VideoGen.APIYIWan27.APIKey
-		videoGenModel = cfg.VideoGen.APIYIWan27.Model
-	case videogen.ChannelAPIYIHappyHorse:
-		videoGenBaseURL = cfg.VideoGen.APIYIHappyHorse.BaseURL
-		videoGenAPIKey = cfg.VideoGen.APIYIHappyHorse.APIKey
-		videoGenModel = cfg.VideoGen.APIYIHappyHorse.Model
+	channels := []string{
+		settingsSvc.VideoGenChannelType(),
+		videogen.ChannelAPIYISeedance,
+		videogen.ChannelAPIYIWan27,
+		videogen.ChannelAPIYIHappyHorse,
+		videogen.ChannelEchoon,
 	}
-	client := videogen.NewClient(videogen.Config{
-		ChannelType:   cfg.VideoGen.ChannelType,
-		BaseURL:       videoGenBaseURL,
-		APIKey:        videoGenAPIKey,
-		APIKeyEnv:     cfg.VideoGen.APIKeyEnv,
-		Model:         videoGenModel,
+	var out []videoRefreshClient
+	seen := map[string]struct{}{}
+	for _, channel := range channels {
+		channel = strings.TrimSpace(channel)
+		if channel == "" {
+			continue
+		}
+		if _, ok := seen[channel]; ok {
+			continue
+		}
+		seen[channel] = struct{}{}
+		clientCfg := settingsSvc.VideoGenConfigForChannel(channel)
+		if strings.TrimSpace(clientCfg.APIKey) == "" {
+			clientCfg = startupVideoConfigForChannel(cfg, channel)
+		}
+		if strings.TrimSpace(clientCfg.APIKey) == "" {
+			continue
+		}
+		out = append(out, videoRefreshClient{Channel: channel, Client: videogen.NewClient(clientCfg)})
+	}
+	if len(out) == 0 {
+		fmt.Fprintln(os.Stderr, "videogen refresh disabled: api key is empty")
+	}
+	return out
+}
+
+func startupVideoConfigForChannel(cfg *config.Config, channel string) videogen.Config {
+	out := videogen.Config{
+		ChannelType:   channel,
 		TimeoutSec:    cfg.VideoGen.TimeoutSec,
 		DurationSec:   cfg.VideoGen.DurationSec,
 		AspectRatio:   cfg.VideoGen.AspectRatio,
 		Resolution:    cfg.VideoGen.Resolution,
 		GenerateAudio: cfg.VideoGen.GenerateAudio,
-	})
-	client.SetConfigProvider(settingsSvc)
-	if !client.Enabled() {
-		fmt.Fprintln(os.Stderr, "videogen refresh disabled: api key is empty")
-		return nil
+		APIKeyEnv:     cfg.VideoGen.APIKeyEnv,
 	}
-	return client
+	switch channel {
+	case videogen.ChannelAPIYISeedance:
+		out.BaseURL = cfg.VideoGen.APIYI.BaseURL
+		out.APIKey = cfg.VideoGen.APIYI.APIKey
+		out.Model = cfg.VideoGen.APIYI.Model
+	case videogen.ChannelAPIYIWan27:
+		out.BaseURL = cfg.VideoGen.APIYIWan27.BaseURL
+		out.APIKey = cfg.VideoGen.APIYIWan27.APIKey
+		out.Model = cfg.VideoGen.APIYIWan27.Model
+	case videogen.ChannelAPIYIHappyHorse:
+		out.BaseURL = cfg.VideoGen.APIYIHappyHorse.BaseURL
+		out.APIKey = cfg.VideoGen.APIYIHappyHorse.APIKey
+		out.Model = cfg.VideoGen.APIYIHappyHorse.Model
+	default:
+		out.ChannelType = videogen.ChannelEchoon
+		out.BaseURL = cfg.VideoGen.BaseURL
+		out.APIKey = cfg.VideoGen.APIKey
+		out.Model = cfg.VideoGen.Model
+	}
+	return out
 }
 
 func refreshVideoURL(ctx context.Context, client *videogen.Client, taskID string) (string, error) {
@@ -153,6 +180,46 @@ func refreshVideoURL(ctx context.Context, client *videogen.Client, taskID string
 		return "", fmt.Errorf("upstream status %s", result.Status)
 	}
 	return strings.TrimSpace(result.ResultURL), nil
+}
+
+func localizeVideoURL(ctx context.Context, row videoAssetRow, sourceURL string) (string, string, error) {
+	saved, err := ecommerce.SaveVideoFromURL(ctx, fmt.Sprintf("video_%d", row.ID), sourceURL)
+	if err != nil {
+		return "", "", err
+	}
+	return saved.URL, "local_video:" + saved.SHA256, nil
+}
+
+func localizeWithRefreshedURLs(ctx context.Context, row videoAssetRow, originalURL string, clients []videoRefreshClient) (string, string, error) {
+	seen := map[string]struct{}{originalURL: {}}
+	var lastErr error
+	for _, refreshClient := range clients {
+		refreshedURL, refreshErr := refreshVideoURL(ctx, refreshClient.Client, row.ImageTaskID)
+		if refreshErr != nil {
+			lastErr = refreshErr
+			fmt.Fprintf(os.Stderr, "refresh failed id=%d channel=%s: %v\n", row.ID, refreshClient.Channel, refreshErr)
+			continue
+		}
+		if refreshedURL == "" {
+			lastErr = fmt.Errorf("empty refreshed url")
+			continue
+		}
+		if _, ok := seen[refreshedURL]; ok {
+			continue
+		}
+		seen[refreshedURL] = struct{}{}
+		localURL, fileID, err := localizeVideoURL(ctx, row, refreshedURL)
+		if err == nil {
+			fmt.Printf("refreshed id=%d channel=%s\n", row.ID, refreshClient.Channel)
+			return localURL, fileID, nil
+		}
+		lastErr = err
+		fmt.Fprintf(os.Stderr, "download refreshed failed id=%d channel=%s: %v\n", row.ID, refreshClient.Channel, err)
+	}
+	if lastErr != nil {
+		return "", "", lastErr
+	}
+	return "", "", fmt.Errorf("no refreshed result url")
 }
 
 func exitf(format string, args ...interface{}) {
