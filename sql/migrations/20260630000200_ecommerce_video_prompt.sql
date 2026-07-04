@@ -1,5 +1,4 @@
 -- +goose Up
--- +goose StatementBegin
 ALTER TABLE `ecommerce_prompt_templates`
   ADD COLUMN `video_prompt` TEXT NULL AFTER `image_prompt`;
 
@@ -24,10 +23,7 @@ UPDATE `ecommerce_prompt_templates`
 
 ALTER TABLE `ecommerce_prompt_templates`
   MODIFY COLUMN `video_prompt` TEXT NOT NULL;
--- +goose StatementEnd
 
 -- +goose Down
--- +goose StatementBegin
 ALTER TABLE `ecommerce_prompt_templates`
   DROP COLUMN `video_prompt`;
--- +goose StatementEnd

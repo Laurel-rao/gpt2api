@@ -1,5 +1,4 @@
 -- +goose Up
--- +goose StatementBegin
 UPDATE `ecommerce_prompt_templates`
    SET `video_prompt` = '生成一支 5 秒精致电商商品短视频。
 目标平台：{{.Platform.Name}}
@@ -28,10 +27,8 @@ UPDATE `ecommerce_prompt_templates`
      `video_prompt` LIKE '%镜头设计：开场商品主视觉亮相%'
      OR `video_prompt` LIKE '%运动要求：平滑推镜%'
    );
--- +goose StatementEnd
 
 -- +goose Down
--- +goose StatementBegin
 UPDATE `ecommerce_prompt_templates`
    SET `video_prompt` = '生成一支精致的电商商品短视频。
 目标平台：{{.Platform.Name}}
@@ -49,6 +46,5 @@ UPDATE `ecommerce_prompt_templates`
 文字要求：只使用商品资料中的短促可读营销文字；不得编造价格、规格、Logo 或品牌承诺。
 必须保持商品身份与需求一致：{{.CompactRequirement}}
 {{.RetryExtraLine}}'
- WHERE `deleted_at` IS NULL
+WHERE `deleted_at` IS NULL
    AND `video_prompt` LIKE '%分秒脚本：每一秒都必须同时交代镜头、灯光、背景、声音和细节描述%';
--- +goose StatementEnd

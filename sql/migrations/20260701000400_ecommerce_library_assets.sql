@@ -1,6 +1,4 @@
 -- +goose Up
--- +goose StatementBegin
-
 CREATE TABLE IF NOT EXISTS `ecommerce_library_assets` (
     `id`            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     `asset_id`      VARCHAR(64)     NOT NULL,
@@ -50,11 +48,7 @@ CREATE TABLE IF NOT EXISTS `ecommerce_library_asset_files` (
 ALTER TABLE `ecommerce_tasks`
   ADD COLUMN `product_asset_id` VARCHAR(64) NOT NULL DEFAULT '' AFTER `reference_images`,
   ADD COLUMN `model_asset_id` VARCHAR(64) NOT NULL DEFAULT '' AFTER `product_asset_id`;
-
--- +goose StatementEnd
-
 -- +goose Down
--- +goose StatementBegin
 
 ALTER TABLE `ecommerce_tasks`
   DROP COLUMN `model_asset_id`,
@@ -62,5 +56,3 @@ ALTER TABLE `ecommerce_tasks`
 
 DROP TABLE IF EXISTS `ecommerce_library_asset_files`;
 DROP TABLE IF EXISTS `ecommerce_library_assets`;
-
--- +goose StatementEnd

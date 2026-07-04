@@ -1,6 +1,4 @@
 -- +goose Up
--- +goose StatementBegin
-
 ALTER TABLE `ecommerce_assets`
   ADD COLUMN `progress` INT NOT NULL DEFAULT 0 AFTER `status`;
 
@@ -11,13 +9,7 @@ UPDATE `ecommerce_assets`
      WHEN `status` = 'queued' THEN 0
      ELSE 0
    END;
-
--- +goose StatementEnd
-
 -- +goose Down
--- +goose StatementBegin
 
 ALTER TABLE `ecommerce_assets`
   DROP COLUMN `progress`;
-
--- +goose StatementEnd
