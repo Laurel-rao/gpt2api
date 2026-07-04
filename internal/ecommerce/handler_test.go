@@ -7,6 +7,7 @@ import (
 	"time"
 
 	imgpkg "github.com/432539/gpt2api/internal/image"
+	"github.com/gin-gonic/gin"
 )
 
 func TestTaskViewFromRowListModeUsesLocalDataOnly(t *testing.T) {
@@ -50,13 +51,17 @@ func TestTaskViewFromRowListModeUsesLocalDataOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got["output_html"] != row.OutputHTML {
-		t.Fatalf("list mode should keep stored output_html, got %q", got["output_html"])
+	if got["output_html"] != "" {
+		t.Fatalf("list mode should omit output_html, got %q", got["output_html"])
+	}
+	output, ok := got["output_json"].(gin.H)
+	if !ok || output["product_title"] != "新标题" {
+		t.Fatalf("list mode output summary = %#v", got["output_json"])
 	}
 	if got["status"] != StatusRunning || got["progress"] != 80 {
 		t.Fatalf("list mode should not auto-complete task, got status=%v progress=%v", got["status"], got["progress"])
 	}
-	viewAssets, ok := got["assets"].([]Asset)
+	viewAssets, ok := got["assets"].([]taskAssetListItem)
 	if !ok {
 		t.Fatalf("assets type = %T", got["assets"])
 	}

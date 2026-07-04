@@ -71,6 +71,15 @@ type retryAssetReq struct {
 	Prompt string `json:"prompt"`
 }
 
+type taskAssetListItem struct {
+	ID        uint64 `json:"id"`
+	TaskID    string `json:"task_id"`
+	AssetType string `json:"asset_type"`
+	URL       string `json:"url,omitempty"`
+	Status    string `json:"status"`
+	Progress  int    `json:"progress"`
+}
+
 func (h *Handler) Options(c *gin.Context) {
 	ctx := c.Request.Context()
 	platforms, err := h.dao.ListPlatforms(ctx, ListFilter{EnabledOnly: true})
@@ -460,6 +469,8 @@ func (h *Handler) taskViewFromRow(ctx context.Context, row *TaskRow, assets []As
 	refreshAssetProxyURLs(viewAssets)
 	refreshAssetProxyURLs(latestAssets)
 	outputHTML := row.OutputHTML
+	outputJSON := any(row.OutputJSON)
+	assetsValue := any(viewAssets)
 	if syncRemote {
 		if out := outputFromTask(row); out.ProductTitle != "" {
 			outputHTML = buildHTML(out, latestAssets)
@@ -472,6 +483,10 @@ func (h *Handler) taskViewFromRow(ctx context.Context, row *TaskRow, assets []As
 				}
 			}
 		}
+	} else {
+		outputHTML = ""
+		outputJSON = taskOutputListSummary(row)
+		assetsValue = taskAssetListItems(viewAssets)
 	}
 	refCount := 0
 	if len(row.ReferenceImages) > 0 {
@@ -497,9 +512,9 @@ func (h *Handler) taskViewFromRow(ctx context.Context, row *TaskRow, assets []As
 		"reference_image_count": refCount,
 		"status":                row.Status,
 		"progress":              row.Progress,
-		"output_json":           row.OutputJSON,
+		"output_json":           outputJSON,
 		"output_html":           outputHTML,
-		"assets":                viewAssets,
+		"assets":                assetsValue,
 		"error":                 row.Error,
 		"created_at":            row.CreatedAt,
 		"started_at":            row.StartedAt,
@@ -509,6 +524,30 @@ func (h *Handler) taskViewFromRow(ctx context.Context, row *TaskRow, assets []As
 		out["reference_images"] = row.ReferenceImages
 	}
 	return out, nil
+}
+
+func taskOutputListSummary(row *TaskRow) any {
+	out := outputFromTask(row)
+	title := strings.TrimSpace(out.ProductTitle)
+	if title == "" {
+		return nil
+	}
+	return gin.H{"product_title": title}
+}
+
+func taskAssetListItems(assets []Asset) []taskAssetListItem {
+	out := make([]taskAssetListItem, 0, len(assets))
+	for _, asset := range assets {
+		out = append(out, taskAssetListItem{
+			ID:        asset.ID,
+			TaskID:    asset.TaskID,
+			AssetType: asset.AssetType,
+			URL:       asset.URL,
+			Status:    asset.Status,
+			Progress:  asset.Progress,
+		})
+	}
+	return out
 }
 
 func canAutoCompleteTaskStatus(status string) bool {
