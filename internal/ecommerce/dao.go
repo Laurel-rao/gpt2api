@@ -394,6 +394,29 @@ SELECT id, task_id, asset_type, image_task_id, url, file_id, prompt, status, pro
 	return out, err
 }
 
+func (d *DAO) ListAssetsByTaskIDs(ctx context.Context, taskIDs []string) (map[string][]Asset, error) {
+	out := make(map[string][]Asset, len(taskIDs))
+	if len(taskIDs) == 0 {
+		return out, nil
+	}
+	query, args, err := sqlx.In(`
+SELECT id, task_id, asset_type, image_task_id, url, file_id, prompt, status, progress, credit_cost, error, created_at, started_at, finished_at, updated_at
+  FROM ecommerce_assets
+ WHERE task_id IN (?)
+ ORDER BY task_id ASC, id ASC`, taskIDs)
+	if err != nil {
+		return nil, err
+	}
+	var rows []Asset
+	if err := d.db.SelectContext(ctx, &rows, d.db.Rebind(query), args...); err != nil {
+		return nil, err
+	}
+	for _, asset := range rows {
+		out[asset.TaskID] = append(out[asset.TaskID], asset)
+	}
+	return out, nil
+}
+
 func (d *DAO) GetLatestAssetByType(ctx context.Context, taskID, assetType string) (*Asset, error) {
 	var a Asset
 	err := d.db.GetContext(ctx, &a, `

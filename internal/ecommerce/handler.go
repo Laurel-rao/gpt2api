@@ -185,9 +185,18 @@ func (h *Handler) ListTasks(c *gin.Context) {
 		resp.Internal(c, err.Error())
 		return
 	}
+	taskIDs := make([]string, 0, len(rows))
+	for i := range rows {
+		taskIDs = append(taskIDs, rows[i].TaskID)
+	}
+	assetsByTaskID, err := h.dao.ListAssetsByTaskIDs(c.Request.Context(), taskIDs)
+	if err != nil {
+		resp.Internal(c, err.Error())
+		return
+	}
 	items := make([]gin.H, 0, len(rows))
 	for i := range rows {
-		v, err := h.taskViewFromRow(c.Request.Context(), &rows[i], false)
+		v, err := h.taskViewFromRow(c.Request.Context(), &rows[i], assetsByTaskID[rows[i].TaskID], false, false)
 		if err != nil {
 			logger.L().Warn("ecommerce task view sync failed",
 				zap.String("task_id", rows[i].TaskID),
@@ -218,7 +227,12 @@ func (h *Handler) GetTask(c *gin.Context) {
 		resp.NotFound(c, "任务不存在")
 		return
 	}
-	v, err := h.taskViewFromRow(c.Request.Context(), row, true)
+	assets, err := h.dao.ListAssets(c.Request.Context(), row.TaskID)
+	if err != nil {
+		resp.Internal(c, err.Error())
+		return
+	}
+	v, err := h.taskViewFromRow(c.Request.Context(), row, assets, true, true)
 	if err != nil {
 		resp.Internal(c, err.Error())
 		return
@@ -412,42 +426,50 @@ func (h *Handler) taskView(ctx context.Context, taskID string, includeRefs bool)
 	if err != nil {
 		return nil, err
 	}
-	return h.taskViewFromRow(ctx, row, includeRefs)
-}
-
-func (h *Handler) taskViewFromRow(ctx context.Context, row *TaskRow, includeRefs bool) (gin.H, error) {
 	assets, err := h.dao.ListAssets(ctx, row.TaskID)
 	if err != nil {
 		return nil, err
 	}
-	for i := range assets {
-		if assets[i].AssetType != AssetVideo || !isAssetWorking(assets[i].Status) || h.runner == nil {
-			continue
-		}
-		if err := h.runner.SyncVideoAsset(ctx, assets[i]); err == nil {
-			if fresh, getErr := h.dao.GetAsset(ctx, assets[i].ID); getErr == nil {
-				assets[i] = *fresh
+	return h.taskViewFromRow(ctx, row, assets, includeRefs, true)
+}
+
+func (h *Handler) taskViewFromRow(ctx context.Context, row *TaskRow, assets []Asset, includeRefs bool, syncRemote bool) (gin.H, error) {
+	if syncRemote {
+		for i := range assets {
+			if assets[i].AssetType != AssetVideo || !isAssetWorking(assets[i].Status) || h.runner == nil {
+				continue
 			}
-		} else {
-			logger.L().Warn("ecommerce video asset sync failed",
-				zap.String("task_id", row.TaskID),
-				zap.Uint64("asset_id", assets[i].ID),
-				zap.String("upstream_task_id", assets[i].ImageTaskID),
-				zap.Error(err))
+			if err := h.runner.SyncVideoAsset(ctx, assets[i]); err == nil {
+				if fresh, getErr := h.dao.GetAsset(ctx, assets[i].ID); getErr == nil {
+					assets[i] = *fresh
+				}
+			} else {
+				logger.L().Warn("ecommerce video asset sync failed",
+					zap.String("task_id", row.TaskID),
+					zap.Uint64("asset_id", assets[i].ID),
+					zap.String("upstream_task_id", assets[i].ImageTaskID),
+					zap.Error(err))
+			}
 		}
 	}
-	latestAssets := latestAssetsByType(assets)
-	refreshAssetProxyURLs(assets)
+	if assets == nil {
+		assets = []Asset{}
+	}
+	viewAssets := append([]Asset(nil), assets...)
+	latestAssets := latestAssetsByType(viewAssets)
+	refreshAssetProxyURLs(viewAssets)
 	refreshAssetProxyURLs(latestAssets)
 	outputHTML := row.OutputHTML
-	if out := outputFromTask(row); out.ProductTitle != "" {
-		outputHTML = buildHTML(out, latestAssets)
-		if canAutoCompleteTaskStatus(row.Status) && latestAssetsReady(latestAssets) {
-			outBytes, _ := json.Marshal(out)
-			if err := h.dao.MarkTaskSuccess(ctx, row.TaskID, outBytes, outputHTML); err == nil {
-				row.Status = StatusSuccess
-				row.Progress = 100
-				row.Error = ""
+	if syncRemote {
+		if out := outputFromTask(row); out.ProductTitle != "" {
+			outputHTML = buildHTML(out, latestAssets)
+			if canAutoCompleteTaskStatus(row.Status) && latestAssetsReady(latestAssets) {
+				outBytes, _ := json.Marshal(out)
+				if err := h.dao.MarkTaskSuccess(ctx, row.TaskID, outBytes, outputHTML); err == nil {
+					row.Status = StatusSuccess
+					row.Progress = 100
+					row.Error = ""
+				}
 			}
 		}
 	}
@@ -477,7 +499,7 @@ func (h *Handler) taskViewFromRow(ctx context.Context, row *TaskRow, includeRefs
 		"progress":              row.Progress,
 		"output_json":           row.OutputJSON,
 		"output_html":           outputHTML,
-		"assets":                assets,
+		"assets":                viewAssets,
 		"error":                 row.Error,
 		"created_at":            row.CreatedAt,
 		"started_at":            row.StartedAt,
