@@ -520,7 +520,7 @@ function syncFlowElements(resetPositions = false) {
 function assetStatus(asset: EcommerceAsset | undefined, failedTask: boolean): CanvasNodeStatus {
   if (!asset) return failedTask ? 'failed' : 'idle'
   if (isAssetWorking(asset.status)) return 'working'
-  if (assetHasImage(asset)) return 'success'
+  if (assetIsReady(asset)) return 'success'
   if (asset.status === 'failed' || asset.status === 'canceled') return 'failed'
   return 'idle'
 }
