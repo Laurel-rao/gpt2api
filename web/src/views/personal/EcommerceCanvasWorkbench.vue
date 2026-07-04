@@ -44,6 +44,7 @@ import {
 } from '@/api/ecommerce'
 import { formatDateTime } from '@/utils/format'
 import { getCachedImageObjectURL, peekCachedImageObjectURL } from '@/utils/imageCache'
+import ImagePreviewDialog from '@/components/ImagePreviewDialog.vue'
 
 type CanvasNodeKind = 'brief' | 'strategy' | 'copy' | 'asset' | 'video_script' | 'video' | 'detail' | 'export' | 'custom_text' | 'custom_image' | 'custom_video' | 'custom_config'
 type CanvasNodeStatus = 'idle' | 'working' | 'success' | 'failed'
@@ -1699,10 +1700,26 @@ onBeforeUnmount(() => {
       </template>
     </aside>
 
-    <el-dialog v-model="previewVisible" width="920px" append-to-body :title="previewAsset ? assetText[previewAsset.asset_type] || previewAsset.asset_type : '资产预览'">
+    <ImagePreviewDialog
+      v-if="previewAsset && !isVideoAsset(previewAsset)"
+      v-model="previewVisible"
+      :src="previewImageURL"
+      :original-src="previewAsset.url"
+      :title="assetText[previewAsset.asset_type] || previewAsset.asset_type"
+      :alt="assetText[previewAsset.asset_type] || previewAsset.asset_type"
+      :download-name="`${activeTask?.task_id || previewAsset.task_id || 'ecommerce'}-${previewAsset.asset_type}.png`"
+      :loading="previewImageLoading"
+    />
+
+    <el-dialog
+      v-if="previewAsset && isVideoAsset(previewAsset)"
+      v-model="previewVisible"
+      width="920px"
+      append-to-body
+      :title="assetText[previewAsset.asset_type] || previewAsset.asset_type"
+    >
       <div class="preview-dialog" v-loading="previewImageLoading">
-        <video v-if="previewAsset && isVideoAsset(previewAsset) && previewImageURL" :src="previewImageURL" controls autoplay playsinline />
-        <img v-else-if="previewImageURL" :src="previewImageURL" :alt="previewAsset?.asset_type || 'preview'" />
+        <video v-if="previewImageURL" :src="previewImageURL" controls autoplay playsinline />
       </div>
       <template #footer>
         <el-button v-if="previewAsset" :icon="Download" @click="downloadAsset(previewAsset)">下载原始资产</el-button>

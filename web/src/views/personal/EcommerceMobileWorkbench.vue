@@ -40,6 +40,7 @@ import {
 } from '@/api/ecommerce'
 import { formatDateTime } from '@/utils/format'
 import { getCachedImageObjectURL, peekCachedImageObjectURL } from '@/utils/imageCache'
+import ImagePreviewDialog from '@/components/ImagePreviewDialog.vue'
 
 const MAX_IMAGES = 4
 const MAX_IMAGE_MB = 20
@@ -1279,22 +1280,34 @@ onBeforeUnmount(() => {
       </section>
     </div>
 
+    <ImagePreviewDialog
+      v-if="previewAsset && !isVideoAsset(previewAsset)"
+      v-model="previewVisible"
+      :src="previewImageURL"
+      :original-src="previewAsset.url"
+      :title="assetText[previewAsset.asset_type] || previewAsset.asset_type"
+      :alt="assetText[previewAsset.asset_type] || previewAsset.asset_type"
+      :download-name="assetFileName(previewAsset)"
+      :loading="previewImageLoading"
+      width="92vw"
+    />
+
     <el-dialog
+      v-if="previewAsset && isVideoAsset(previewAsset)"
       v-model="previewVisible"
       width="92vw"
       append-to-body
-      :title="previewAsset ? (assetText[previewAsset.asset_type] || previewAsset.asset_type) : '素材预览'"
+      :title="assetText[previewAsset.asset_type] || previewAsset.asset_type"
       class="asset-dialog"
     >
       <div v-if="previewAsset" class="asset-dialog-body" v-loading="previewImageLoading">
         <video
-          v-if="isVideoAsset(previewAsset) && previewImageURL"
+          v-if="previewImageURL"
           :src="previewImageURL"
           controls
           playsinline
           preload="metadata"
         />
-        <img v-else-if="previewImageURL" :src="previewImageURL" :alt="previewAsset.asset_type" />
       </div>
       <template #footer>
         <el-button v-if="previewAsset" @click="downloadAsset(previewAsset)">

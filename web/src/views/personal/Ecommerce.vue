@@ -21,6 +21,7 @@ import {
 } from '@/api/ecommerce'
 import { formatDateTime } from '@/utils/format'
 import { getCachedImageObjectURL, peekCachedImageObjectURL } from '@/utils/imageCache'
+import ImagePreviewDialog from '@/components/ImagePreviewDialog.vue'
 
 const MAX_IMAGES = 4
 const POLL_INTERVAL = 2500
@@ -834,15 +835,16 @@ onBeforeUnmount(() => {
       </main>
     </section>
 
-    <el-dialog v-model="previewVisible" width="920px" append-to-body :title="previewAsset ? (assetText[previewAsset.asset_type] || previewAsset.asset_type) : '图片预览'" class="asset-dialog">
-      <div v-if="previewAsset" class="asset-dialog-body" v-loading="previewImageLoading">
-        <img v-if="previewImageURL" :src="previewImageURL" :alt="previewAsset.asset_type" />
-      </div>
-      <template #footer>
-        <el-button v-if="previewAsset" @click="downloadAsset(previewAsset)"><el-icon><Download /></el-icon> 下载</el-button>
-        <el-button type="primary" @click="previewVisible = false">关闭</el-button>
-      </template>
-    </el-dialog>
+    <ImagePreviewDialog
+      v-if="previewAsset"
+      v-model="previewVisible"
+      :src="previewImageURL"
+      :original-src="previewAsset.url"
+      :title="assetText[previewAsset.asset_type] || previewAsset.asset_type"
+      :alt="assetText[previewAsset.asset_type] || previewAsset.asset_type"
+      :download-name="assetFileName(previewAsset)"
+      :loading="previewImageLoading"
+    />
   </div>
 </template>
 
