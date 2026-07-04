@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, computed } from 'vue'
-import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index.mjs'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
+import { ElNotification } from 'element-plus/es/components/notification/index.mjs'
 import { Upload } from '@element-plus/icons-vue'
 import * as accountApi from '@/api/accounts'
 import * as proxyApi from '@/api/proxies'

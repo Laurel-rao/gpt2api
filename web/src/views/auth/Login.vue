@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { reactive, ref, computed } from 'vue'
-import type { FormInstance } from 'element-plus'
-import { ElMessage } from 'element-plus'
+import type { FormInstance } from 'element-plus/es/components/form/index.mjs'
+import { ElMessage } from 'element-plus/es/components/message/index.mjs'
 import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useSiteStore } from '@/stores/site'

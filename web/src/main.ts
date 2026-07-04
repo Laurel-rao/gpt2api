@@ -1,10 +1,8 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import piniaPersist from 'pinia-plugin-persistedstate'
-import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
 import 'element-plus/theme-chalk/dark/css-vars.css'
-import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import * as ElementIcons from '@element-plus/icons-vue'
 
 import App from './App.vue'
@@ -18,7 +16,6 @@ const pinia = createPinia()
 pinia.use(piniaPersist)
 app.use(pinia)
 app.use(router)
-app.use(ElementPlus, { size: 'default', locale: zhCn })
 
 // 把 element icons 作为全局组件注册,模板里可直接 <el-icon><Setting /></el-icon>
 for (const [name, comp] of Object.entries(ElementIcons)) {

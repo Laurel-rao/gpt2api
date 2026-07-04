@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, reactive, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index.mjs'
 import { http } from '@/api/http'
 import { formatDateTime } from '@/utils/format'
 

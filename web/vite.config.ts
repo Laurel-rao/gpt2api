@@ -5,6 +5,13 @@ import Components from 'unplugin-vue-components/vite'
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 import path from 'node:path'
 
+function elementPlusChunk(id: string) {
+  const normalized = id.replace(/\\/g, '/')
+  if (normalized.includes('/node_modules/@element-plus/icons-vue/')) return 'element-icons'
+  if (normalized.includes('/node_modules/element-plus/')) return 'element-plus'
+  return undefined
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const apiBase = env.VITE_API_BASE || 'http://localhost:8080'
@@ -41,18 +48,20 @@ export default defineConfig(({ mode }) => {
     build: {
       outDir: 'dist',
       sourcemap: false,
-      chunkSizeWarningLimit: 700,
+      chunkSizeWarningLimit: 800,
       rollupOptions: {
         output: {
           /**
-           * 手工拆包,避免把 Element Plus 全量塞进 index.js。
-           * - element-plus:UI 组件库 + 图标,业务里几乎每页都用,拆出独立 chunk 以便浏览器长期缓存。
+           * 手工拆包,避免图标全集沉到页面入口。
+           * - element-icons:@element-plus/icons-vue 图标全集,独立缓存。
+           * - Element Plus 组件由自动导入和 Rollup 按实际页面依赖拆分。
            * - vue-core:vue / vue-router / pinia / @vueuse,运行时核心。
            * - vendor:其它 node_modules(axios、dayjs 等)。
            */
           manualChunks(id) {
             if (!id.includes('node_modules')) return
-            if (id.includes('element-plus') || id.includes('@element-plus')) return 'element-plus'
+            const elementChunk = elementPlusChunk(id)
+            if (elementChunk) return elementChunk
             if (
               id.includes('/vue/') ||
               id.includes('/@vue/') ||

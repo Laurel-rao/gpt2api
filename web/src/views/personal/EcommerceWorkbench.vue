@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ArrowDown, Close, CopyDocument, Document, Download, MoreFilled, Refresh, RefreshRight, VideoPlay, View } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox, type UploadFile } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index.mjs'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
+import type { UploadFile } from 'element-plus/es/components/upload/index.mjs'
 import {
   ECOMMERCE_LANGUAGES,
   cancelEcommerceTask,

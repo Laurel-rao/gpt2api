@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, computed } from 'vue'
-import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index.mjs'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
+import type { FormInstance } from 'element-plus/es/components/form/index.mjs'
+import type { FormRules } from 'element-plus/es/components/form/index.mjs'
 import { Plus } from '@element-plus/icons-vue'
 import * as channelsApi from '@/api/channels'
 import { useUserStore } from '@/stores/user'
