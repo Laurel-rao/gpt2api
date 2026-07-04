@@ -163,6 +163,7 @@ const assetText: Record<string, string> = {
   white_image: '白底图',
   detail_image: '详情图',
   price_image: '价格图',
+  product_video: '商品视频',
 }
 
 const assetRole: Record<string, string> = {
@@ -174,6 +175,7 @@ const assetRole: Record<string, string> = {
 }
 
 const assetOrder = ['white_image', 'title_image', 'main_image', 'detail_image', 'price_image']
+const productVideoType = 'product_video'
 const customNodeSize: Record<string, { w: number; h: number }> = {
   custom_text: { w: 240, h: 150 },
   custom_image: { w: 260, h: 190 },
@@ -251,6 +253,9 @@ const canvasNodes = computed<CanvasNode[]>(() => {
   const failed = activeTask.value?.status === 'failed' || activeTask.value?.status === 'canceled'
   const working = isRunning.value
   const assetMap = new Map(currentAssets.value.map((asset) => [asset.asset_type, asset]))
+  const videoAsset = assetMap.get(productVideoType)
+  const whiteReady = assetStatus(assetMap.get('white_image'), failed) === 'success'
+  const videoReady = assetCanPreview(videoAsset)
   const nodes: CanvasNode[] = [
     {
       id: 'brief',
@@ -319,12 +324,14 @@ const canvasNodes = computed<CanvasNode[]>(() => {
     id: 'video',
     kind: 'video',
     title: '视频成片',
-    subtitle: hasCopy && assetStatus(assetMap.get('white_image'), failed) === 'success' ? '由文案、白底图和脚本生成视频' : '等待文案、白底图和短视频脚本',
+    subtitle: videoReady ? '视频已生成，可预览或下载' : hasCopy && whiteReady ? '由文案、白底图和脚本生成视频' : '等待文案、白底图和短视频脚本',
     x: 1530,
     y: 504,
     w: 270,
     h: 175,
-    status: hasCopy && assetStatus(assetMap.get('white_image'), failed) === 'success' ? 'success' : working ? 'working' : failed ? 'failed' : 'idle',
+    status: videoAsset ? assetStatus(videoAsset, failed) : hasCopy && whiteReady ? 'success' : working ? 'working' : failed ? 'failed' : 'idle',
+    assetType: productVideoType,
+    asset: videoAsset,
   })
   nodes.push({
     id: 'detail',
@@ -446,22 +453,35 @@ function compactText(text?: string | null, limit = 84) {
 }
 
 function latestAssetsByType(list: EcommerceAsset[]) {
-  const rank = (type: string) => assetOrder.indexOf(type) === -1 ? 99 : assetOrder.indexOf(type)
+  const order = [...assetOrder, productVideoType]
+  const rank = (type: string) => order.indexOf(type) === -1 ? 99 : order.indexOf(type)
   const map = new Map<string, EcommerceAsset>()
   for (const asset of list) {
-    if (asset.asset_type === 'product_video') continue
     const prev = map.get(asset.asset_type)
     if (!prev || asset.id >= prev.id) map.set(asset.asset_type, asset)
   }
   return [...map.values()].sort((a, b) => rank(a.asset_type) - rank(b.asset_type))
 }
 
+function isVideoAsset(assetOrType?: EcommerceAsset | string) {
+  const type = typeof assetOrType === 'string' ? assetOrType : assetOrType?.asset_type
+  return type === productVideoType
+}
+
 function isAssetWorking(status: string) {
   return status === 'queued' || status === 'running'
 }
 
+function assetIsReady(asset?: EcommerceAsset) {
+  return !!asset && asset.status === 'success' && !!asset.url && !brokenAssetIDs.value.has(asset.id)
+}
+
 function assetHasImage(asset?: EcommerceAsset) {
-  return !!asset && !!asset.url && asset.status === 'success' && !brokenAssetIDs.value.has(asset.id)
+  return !!asset && !isVideoAsset(asset) && assetIsReady(asset)
+}
+
+function assetCanPreview(asset?: EcommerceAsset) {
+  return isVideoAsset(asset) ? assetIsReady(asset) : assetHasImage(asset)
 }
 
 function elapsedText(start?: string | null, end?: string | null, live = false) {
@@ -981,11 +1001,16 @@ function markBrokenAsset(asset: EcommerceAsset) {
 }
 
 async function openAssetPreview(asset?: EcommerceAsset) {
-  if (!assetHasImage(asset)) return
-  const sourceURL = thumbURL(asset!.url, 500)
+  if (!assetCanPreview(asset)) return
   previewAsset.value = asset!
-  previewImageURL.value = peekCachedImageObjectURL(sourceURL)
   previewVisible.value = true
+  if (isVideoAsset(asset)) {
+    previewImageURL.value = asset!.url
+    previewImageLoading.value = false
+    return
+  }
+  const sourceURL = thumbURL(asset!.url, 500)
+  previewImageURL.value = peekCachedImageObjectURL(sourceURL)
   if (previewImageURL.value) {
     previewImageLoading.value = false
     return
@@ -1019,7 +1044,8 @@ async function downloadAsset(asset?: EcommerceAsset) {
     const res = await fetch(asset.url)
     if (!res.ok) throw new Error(`download failed: ${res.status}`)
     const blob = await res.blob()
-    downloadBlob(blob, `${activeTask.value?.task_id || asset.task_id || 'ecommerce'}-${asset.asset_type}.png`)
+    const ext = isVideoAsset(asset) ? 'mp4' : 'png'
+    downloadBlob(blob, `${activeTask.value?.task_id || asset.task_id || 'ecommerce'}-${asset.asset_type}.${ext}`)
   } catch (err) {
     console.error('download ecommerce canvas asset failed:', err)
     window.open(asset.url, '_blank', 'noopener,noreferrer')
@@ -1401,8 +1427,22 @@ onBeforeUnmount(() => {
               <img v-if="assetHasImage(data.node.asset)" :src="thumbURL(data.node.asset!.url)" :alt="data.node.title" @error="markBrokenAsset(data.node.asset!)" />
               <span v-else>{{ data.node.asset?.error || '等待素材' }}</span>
             </div>
+            <div v-else-if="data.node.kind === 'video' && data.node.asset" class="node-preview node-video-preview">
+              <button v-if="assetCanPreview(data.node.asset)" type="button" @click="openAssetPreview(data.node.asset)">
+                <el-icon><VideoPlay /></el-icon>
+                <span>预览视频</span>
+              </button>
+              <span v-else>{{ data.node.asset.error || '等待视频' }}</span>
+            </div>
             <div v-if="data.node.kind === 'asset' && data.node.asset" class="node-actions" @pointerdown.stop @click.stop>
-              <button type="button" :disabled="!assetHasImage(data.node.asset)" @click="openAssetPreview(data.node.asset)">预览</button>
+              <button type="button" :disabled="!assetCanPreview(data.node.asset)" @click="openAssetPreview(data.node.asset)">预览</button>
+              <button type="button" :disabled="!data.node.asset.url" @click="downloadAsset(data.node.asset)">下载</button>
+              <button type="button" :disabled="isAssetWorking(data.node.asset.status) || retryingAssetID === data.node.asset.id" @click="retryAsset(data.node.asset)">
+                {{ retryingAssetID === data.node.asset.id ? '提交中' : '重试' }}
+              </button>
+            </div>
+            <div v-else-if="data.node.kind === 'video' && data.node.asset" class="node-actions" @pointerdown.stop @click.stop>
+              <button type="button" :disabled="!assetCanPreview(data.node.asset)" @click="openAssetPreview(data.node.asset)">预览</button>
               <button type="button" :disabled="!data.node.asset.url" @click="downloadAsset(data.node.asset)">下载</button>
               <button type="button" :disabled="isAssetWorking(data.node.asset.status) || retryingAssetID === data.node.asset.id" @click="retryAsset(data.node.asset)">
                 {{ retryingAssetID === data.node.asset.id ? '提交中' : '重试' }}
@@ -1513,6 +1553,14 @@ onBeforeUnmount(() => {
           <template v-else-if="selectedNode.kind === 'video_script' || selectedNode.kind === 'video' || selectedNode.kind === 'custom_video'">
             <h3>{{ selectedNode.title }}</h3>
             <p>{{ selectedNode.subtitle }}</p>
+            <dl v-if="selectedNode.kind === 'video' && selectedAsset">
+              <dt>状态</dt>
+              <dd>{{ statusText[selectedAsset.status] || selectedAsset.status }}</dd>
+              <dt>生成</dt>
+              <dd>{{ assetGenerateElapsed(selectedAsset) }}</dd>
+              <dt>排队</dt>
+              <dd>{{ assetQueueElapsed(selectedAsset) }}</dd>
+            </dl>
             <div class="video-script-list">
               <span v-for="line in videoScriptLines" :key="line">{{ line }}</span>
             </div>
@@ -1555,10 +1603,10 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <section v-if="selectedNode.kind === 'asset'" class="inspector-card">
+        <section v-if="selectedNode.kind === 'asset' || selectedNode.kind === 'video'" class="inspector-card">
           <b>节点操作</b>
           <div class="inspector-actions">
-            <el-button :disabled="!assetHasImage(selectedAsset || undefined)" :icon="View" @click="openAssetPreview(selectedAsset || undefined)">预览</el-button>
+            <el-button :disabled="!assetCanPreview(selectedAsset || undefined)" :icon="View" @click="openAssetPreview(selectedAsset || undefined)">预览</el-button>
             <el-button :disabled="!selectedAsset?.url" :icon="Download" @click="downloadAsset(selectedAsset || undefined)">下载</el-button>
           </div>
           <el-input
@@ -1608,12 +1656,13 @@ onBeforeUnmount(() => {
       </template>
     </aside>
 
-    <el-dialog v-model="previewVisible" width="920px" append-to-body :title="previewAsset ? assetText[previewAsset.asset_type] || previewAsset.asset_type : '图片预览'">
+    <el-dialog v-model="previewVisible" width="920px" append-to-body :title="previewAsset ? assetText[previewAsset.asset_type] || previewAsset.asset_type : '资产预览'">
       <div class="preview-dialog" v-loading="previewImageLoading">
-        <img v-if="previewImageURL" :src="previewImageURL" :alt="previewAsset?.asset_type || 'preview'" />
+        <video v-if="previewAsset && isVideoAsset(previewAsset) && previewImageURL" :src="previewImageURL" controls autoplay playsinline />
+        <img v-else-if="previewImageURL" :src="previewImageURL" :alt="previewAsset?.asset_type || 'preview'" />
       </div>
       <template #footer>
-        <el-button v-if="previewAsset" :icon="Download" @click="downloadAsset(previewAsset)">下载原图</el-button>
+        <el-button v-if="previewAsset" :icon="Download" @click="downloadAsset(previewAsset)">下载原始资产</el-button>
         <el-button type="primary" @click="previewVisible = false">关闭</el-button>
       </template>
     </el-dialog>
@@ -1657,6 +1706,13 @@ onBeforeUnmount(() => {
             </div>
           </template>
           <template v-else-if="selectedNode.kind === 'video_script' || selectedNode.kind === 'video' || selectedNode.kind === 'custom_video'">
+            <div v-if="selectedNode.kind === 'video' && selectedAsset" class="detail-asset-preview">
+              <button v-if="assetCanPreview(selectedAsset)" class="asset-video-play" type="button" @click="openAssetPreview(selectedAsset)">
+                <el-icon><VideoPlay /></el-icon>
+                <span>播放视频</span>
+              </button>
+              <span v-else>{{ selectedAsset.error || '等待视频' }}</span>
+            </div>
             <div class="video-script-list">
               <span v-for="line in videoScriptLines" :key="line">{{ line }}</span>
             </div>
@@ -1703,7 +1759,7 @@ onBeforeUnmount(() => {
       <template #footer>
         <el-button @click="openEditNode()">编辑</el-button>
         <el-button :disabled="!!selectedAsset && isAssetWorking(selectedAsset.status)" @click="retrySelectedNode">重试</el-button>
-        <el-button v-if="selectedAsset" :disabled="!assetHasImage(selectedAsset)" @click="openAssetPreview(selectedAsset)">预览原图</el-button>
+        <el-button v-if="selectedAsset" :disabled="!assetCanPreview(selectedAsset)" @click="openAssetPreview(selectedAsset)">预览资产</el-button>
         <el-button v-if="selectedAsset" :disabled="!selectedAsset.url" @click="downloadAsset(selectedAsset)">下载</el-button>
         <el-button type="primary" @click="nodeDetailVisible = false">关闭</el-button>
       </template>
@@ -2738,6 +2794,14 @@ onBeforeUnmount(() => {
     max-height: 72vh;
     display: block;
   }
+
+  video {
+    width: min(100%, 860px);
+    max-height: 72vh;
+    display: block;
+    border-radius: 14px;
+    background: #000;
+  }
 }
 
 .node-detail-dialog {
@@ -2818,6 +2882,34 @@ onBeforeUnmount(() => {
 
   span {
     color: var(--muted);
+  }
+}
+
+.asset-video-play,
+.node-video-preview button {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 96px;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+
+  .el-icon {
+    width: 36px;
+    height: 36px;
+    padding: 9px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--button-bg);
+    font-size: 18px;
+  }
+
+  span {
+    color: inherit;
+    font-weight: 700;
   }
 }
 
