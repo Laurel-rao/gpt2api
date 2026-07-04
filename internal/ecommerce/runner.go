@@ -426,6 +426,12 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 			zap.String("task_id", taskID),
 			zap.Int("refs", len(whiteRefs)))
 	}
+	videoErrCh := make(chan error, 1)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		videoErrCh <- r.generateVideoAsset(ctx, taskID, platformForTask, *prompt, *style, out, task.Requirement, whiteRefs)
+	}()
 	for _, job := range jobs {
 		if job.assetTyp == AssetWhite {
 			continue
@@ -437,6 +443,7 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 		}(job)
 	}
 	wg.Wait()
+	videoErr := <-videoErrCh
 	dbCtx := context.Background()
 	html, err := r.rebuildTaskHTML(dbCtx, taskID, out)
 	if err != nil {
@@ -445,9 +452,9 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 	if len(assetErrors) > 0 {
 		return r.dao.MarkTaskFailedWithOutput(dbCtx, taskID, "图片生成失败: "+strings.Join(assetErrors, "; "), outBytes, html)
 	}
-	if err := r.generateVideoAsset(ctx, taskID, platformForTask, *prompt, *style, out, task.Requirement, whiteRefs); err != nil {
+	if videoErr != nil {
 		html, _ = r.rebuildTaskHTML(dbCtx, taskID, out)
-		return r.dao.MarkTaskFailedWithOutput(dbCtx, taskID, "视频生成失败: "+err.Error(), outBytes, html)
+		return r.dao.MarkTaskFailedWithOutput(dbCtx, taskID, "视频生成失败: "+videoErr.Error(), outBytes, html)
 	}
 	if rebuilt, err := r.rebuildTaskHTML(dbCtx, taskID, out); err == nil {
 		html = rebuilt
