@@ -532,15 +532,17 @@ code {
 
 /* ==== Hero ==== */
 .hero-card {
+  --hero-card-bg:
+    radial-gradient(520px 220px at 84% 10%, rgba(20, 184, 166, .14), transparent 64%),
+    radial-gradient(620px 260px at 10% 8%, rgba(37, 99, 235, .12), transparent 62%),
+    rgba(255, 255, 255, .86);
+  --hero-orb-bg: rgba(37, 99, 235, 0.06);
   position: relative;
   border: 1px solid var(--lc-border);
   border-radius: 18px;
   padding: 22px 24px;
   color: var(--lc-text);
-  background:
-    radial-gradient(520px 220px at 84% 10%, rgba(20, 184, 166, .14), transparent 64%),
-    radial-gradient(620px 260px at 10% 8%, rgba(37, 99, 235, .12), transparent 62%),
-    rgba(255, 255, 255, .86);
+  background: var(--hero-card-bg);
   box-shadow: var(--lc-shadow-card);
   display: flex;
   justify-content: space-between;
@@ -556,8 +558,15 @@ code {
   right: -60px; top: -60px;
   width: 220px; height: 220px;
   border-radius: 50%;
-  background: rgba(37, 99, 235, 0.06);
+  background: var(--hero-orb-bg);
   pointer-events: none;
+}
+:global(html.dark .hero-card) {
+  --hero-card-bg:
+    radial-gradient(520px 220px at 84% 10%, rgba(20, 184, 166, .16), transparent 64%),
+    radial-gradient(620px 260px at 10% 8%, rgba(37, 99, 235, .18), transparent 62%),
+    rgba(17, 24, 39, .94);
+  --hero-orb-bg: rgba(37, 99, 235, 0.18);
 }
 .hero-main { flex: 1 1 360px; min-width: 0; }
 .hero-kicker {
@@ -605,7 +614,7 @@ code {
 .hero-balance {
   min-width: 180px;
   padding: 12px 20px;
-  background: #fff;
+  background: var(--lc-surface);
   border: 1px solid var(--lc-border);
   border-radius: 16px;
   backdrop-filter: blur(6px);
@@ -639,7 +648,7 @@ code {
   border: 1px solid var(--lc-border-soft);
   border-radius: 16px;
   padding: 14px;
-  background: #fff;
+  background: var(--lc-surface);
   text-align: left;
   cursor: pointer;
   transition: border-color .18s ease, background .18s ease, box-shadow .18s ease;
@@ -659,7 +668,7 @@ code {
   }
   &:hover {
     border-color: rgba(37, 99, 235, .28);
-    background: linear-gradient(180deg, #fff, #f8fbff);
+    background: linear-gradient(180deg, var(--lc-surface), var(--lc-surface-soft));
     box-shadow: var(--lc-shadow-card);
   }
 }

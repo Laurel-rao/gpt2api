@@ -390,6 +390,10 @@ const features = [
   padding: 20px;
   box-shadow: var(--lc-shadow-popover);
 }
+.landing.dark .hero-workbench {
+  background: var(--lp-card-solid);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .32);
+}
 .prompt-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -414,7 +418,7 @@ const features = [
 .prompt-card {
   border: 1px solid #cfdaf0;
   border-radius: 16px;
-  background: #fff;
+  background: var(--lp-card-solid);
   padding: 16px;
   p {
     min-height: 78px;
@@ -422,6 +426,9 @@ const features = [
     font-size: 15px;
     line-height: 1.75;
   }
+}
+.landing.dark .prompt-card {
+  border-color: var(--lp-border);
 }
 .prompt-actions {
   display: flex;
@@ -450,7 +457,7 @@ const features = [
     min-width: 0;
     border: 1px solid var(--lp-border);
     border-radius: 16px;
-    background: linear-gradient(145deg, #fff, #f6faff);
+    background: linear-gradient(145deg, var(--lp-card-solid), var(--lp-bg-soft));
     padding: 12px;
   }
   b, span {

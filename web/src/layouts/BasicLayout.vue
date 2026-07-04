@@ -128,8 +128,9 @@ watch(() => store.isLoggedIn, (v) => { if (v) loadMenu() })
         :default-active="activePath"
         :collapse="sideCollapsed"
         background-color="transparent"
-        text-color="#475569"
-        active-text-color="#2563eb"
+        :text-color="'var(--gp-menu-text)'"
+        :active-text-color="'var(--lc-primary)'"
+        popper-class="layout-menu-popper"
         class="side-menu"
         router
       >
@@ -138,7 +139,7 @@ watch(() => store.isLoggedIn, (v) => { if (v) loadMenu() })
             <el-icon v-if="group.icon"><component :is="group.icon" /></el-icon>
             <template #title>{{ group.title }}</template>
           </el-menu-item>
-          <el-sub-menu v-else-if="group.children?.length" :index="group.key">
+          <el-sub-menu v-else-if="group.children?.length" :index="group.key" popper-class="layout-menu-popper">
             <template #title>
               <el-icon v-if="group.icon"><component :is="group.icon" /></el-icon>
               <span>{{ group.title }}</span>
@@ -346,19 +347,26 @@ watch(() => store.isLoggedIn, (v) => { if (v) loadMenu() })
   border-right: none !important;
   padding: 0 12px 12px;
   background: transparent !important;
-  --el-menu-hover-bg-color: rgba(37, 99, 235, 0.06);
+  --el-menu-hover-bg-color: var(--gp-menu-hover-bg);
+  --el-menu-text-color: var(--gp-menu-text);
+  --el-menu-active-color: var(--lc-primary);
   :deep(.el-menu-item),
   :deep(.el-sub-menu__title) {
     height: 42px;
     margin: 3px 0;
     border-radius: 12px;
-    color: #475569;
+    color: var(--gp-menu-text);
     font-weight: 650;
+  }
+  :deep(.el-menu-item:hover),
+  :deep(.el-sub-menu__title:hover) {
+    color: var(--lc-text);
+    background: var(--gp-menu-hover-bg);
   }
   :deep(.el-menu-item.is-active) {
     position: relative;
     color: var(--lc-primary);
-    background: var(--lc-primary-soft);
+    background: var(--gp-menu-active-bg);
   }
   :deep(.el-menu-item.is-active::before) {
     content: '';
@@ -386,7 +394,7 @@ watch(() => store.isLoggedIn, (v) => { if (v) loadMenu() })
   justify-content: space-between;
   height: 60px;
   min-height: 60px;
-  background: rgba(255, 255, 255, 0.78);
+  background: var(--gp-topbar-bg);
   color: var(--lc-text);
   border-bottom: 1px solid var(--lc-border);
   padding: 0 22px;

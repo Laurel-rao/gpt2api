@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
 import { useUserStore } from './stores/user'
+import { useUIStore } from './stores/ui'
 
+useUIStore()
 const userStore = useUserStore()
 
 // 冷启动时如果已有 access token,主动拉一次 /me,拿到最新 role/permissions。

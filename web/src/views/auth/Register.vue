@@ -146,8 +146,18 @@ async function onSubmit() {
     radial-gradient(620px 300px at 82% 72%, rgba(20,184,166,.18), transparent 62%),
     linear-gradient(135deg, #f7faff, #eef4ff);
 }
-:global(html.dark) .register-page {
-  background: linear-gradient(135deg,#0d1117,#0b1f17);
+:global(html.dark .register-page) {
+  background:
+    radial-gradient(760px 360px at 18% 18%, rgba(37,99,235,.18), transparent 62%),
+    radial-gradient(620px 300px at 82% 72%, rgba(20,184,166,.14), transparent 62%),
+    var(--lc-bg);
+}
+:global(html.dark .register-stage) {
+  border-color: var(--lc-border);
+  background:
+    radial-gradient(520px 320px at 72% 22%, rgba(20,184,166,.14), transparent 64%),
+    radial-gradient(420px 260px at 28% 80%, rgba(37,99,235,.18), transparent 62%),
+    rgba(17, 24, 39, .76);
 }
 .register-stage {
   position: relative;
@@ -202,6 +212,10 @@ async function onSubmit() {
   background: rgba(255,255,255,.72);
   box-shadow: 0 20px 54px rgba(15, 23, 42, .14);
 }
+:global(html.dark .stage-preview) {
+  border-color: var(--lc-border);
+  background: rgba(17, 24, 39, .9);
+}
 .preview-toolbar {
   display: flex;
   gap: 7px;
@@ -248,6 +262,11 @@ async function onSubmit() {
       repeating-linear-gradient(45deg, #f8fafc 0 10px, #eef2f7 10px 20px);
   }
 }
+:global(html.dark .preview-grid i) {
+  border-color: var(--lc-border);
+  background:
+    repeating-linear-gradient(45deg, var(--lc-surface-soft) 0 10px, var(--lc-surface) 10px 20px);
+}
 .form-card {
   position: absolute;
   z-index: 4;
@@ -263,6 +282,10 @@ async function onSubmit() {
   backdrop-filter: blur(22px);
   -webkit-backdrop-filter: blur(22px);
   :deep(.el-card__body) { padding: 30px; }
+}
+:global(html.dark .form-card) {
+  border-color: var(--lc-border);
+  background: rgba(17, 24, 39, .9);
 }
 .form-title { font-size: 24px; font-weight: 800; margin-bottom: 6px; letter-spacing: 0; }
 .form-sub { color: var(--el-text-color-secondary); margin-bottom: 20px; font-size: 14px; line-height: 1.7; }
