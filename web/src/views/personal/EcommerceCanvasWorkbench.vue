@@ -136,6 +136,8 @@ const retryPrompts = ref<Record<number, string>>({})
 const backgroundMode = ref<'grid' | 'dots' | 'blank'>('grid')
 const showMiniMap = ref(true)
 const showNodeMedia = ref(true)
+const showInspector = ref(true)
+const extraAssetOptionsExpanded = ref(false)
 const initialViewport = { x: 26, y: 72, zoom: 0.86 }
 const { getViewport, setViewport } = useVueFlow({ id: 'ecommerce-canvas-flow' })
 const customNodes = ref<CanvasNode[]>([])
@@ -318,6 +320,10 @@ const failedNodeCount = computed(() => canvasNodes.value.filter((node) => node.s
 const readyNodeCount = computed(() => canvasNodes.value.filter((node) => node.status === 'success').length)
 const canvasImageAssetCount = computed(() => canvasNodes.value.filter((node) => node.kind === 'asset').length)
 const canvasProgressText = computed(() => `${readyNodeCount.value}/${canvasNodes.value.length} 节点就绪`)
+const selectedExtraAssetLabels = computed(() => ECOMMERCE_EXTRA_ASSET_OPTIONS
+  .filter((item) => form.extra_asset_types.includes(item.value))
+  .map((item) => item.label))
+const extraAssetSummary = computed(() => selectedExtraAssetLabels.value.length ? selectedExtraAssetLabels.value.join('、') : '默认图片链路')
 
 const canvasNodes = computed<CanvasNode[]>(() => {
   const hasTask = !!activeTask.value
@@ -642,6 +648,11 @@ function errorMessage(err: unknown, fallback: string) {
 function selectNode(id: string) {
   selectedNodeID.value = id
   syncFlowElements(false)
+}
+
+function toggleInspector() {
+  showInspector.value = !showInspector.value
+  fitCanvasToView(180)
 }
 
 function openNodeDetail(node?: CanvasNode) {
@@ -1510,15 +1521,21 @@ onBeforeUnmount(() => {
           </el-form-item>
         </div>
 
-        <el-form-item label="可选图片">
-          <el-checkbox-group v-model="form.extra_asset_types" class="canvas-extra-asset-options">
+        <el-form-item class="extra-asset-form-item">
+          <button type="button" class="extra-asset-toggle" @click="extraAssetOptionsExpanded = !extraAssetOptionsExpanded">
+            <span>
+              <b>可选图片</b>
+              <small>{{ extraAssetSummary }}</small>
+            </span>
+            <el-icon :class="{ expanded: extraAssetOptionsExpanded }"><ArrowDown /></el-icon>
+          </button>
+          <el-checkbox-group v-if="extraAssetOptionsExpanded" v-model="form.extra_asset_types" class="canvas-extra-asset-options">
             <el-checkbox-button
               v-for="item in ECOMMERCE_EXTRA_ASSET_OPTIONS"
               :key="item.value"
               :label="item.value"
             >
               <span>{{ item.label }}</span>
-              <small>{{ item.description }}</small>
             </el-checkbox-button>
           </el-checkbox-group>
         </el-form-item>
@@ -1613,6 +1630,7 @@ onBeforeUnmount(() => {
           <el-button @click="centerCanvas">全览</el-button>
           <el-button :icon="Operation" @click="autoArrangeCanvas">自动排列</el-button>
           <el-button :icon="View" @click="showNodeMedia = !showNodeMedia">{{ showNodeMedia ? '隐藏图片' : '显示图片' }}</el-button>
+          <el-button :icon="View" @click="toggleInspector">{{ showInspector ? '隐藏详情' : '显示详情' }}</el-button>
           <el-button :icon="Operation" @click="showMiniMap = !showMiniMap">{{ showMiniMap ? '隐藏地图' : '显示地图' }}</el-button>
         </div>
 
@@ -1752,12 +1770,17 @@ onBeforeUnmount(() => {
       </section>
     </main>
 
-    <aside class="inspector-panel">
+    <aside v-if="showInspector" class="inspector-panel">
       <template v-if="selectedNode">
-        <header>
-          <span>Inspector</span>
-          <h2>{{ selectedNode.title }}</h2>
-          <p>{{ selectedNode.subtitle }}</p>
+        <header class="inspector-head">
+          <div>
+            <span>Inspector</span>
+            <h2>{{ selectedNode.title }}</h2>
+            <p>{{ selectedNode.subtitle }}</p>
+          </div>
+          <button type="button" class="inspector-close" title="关闭详情" @click="toggleInspector">
+            <el-icon><Close /></el-icon>
+          </button>
         </header>
 
         <section class="inspector-card node-command-card">
@@ -2107,10 +2130,11 @@ onBeforeUnmount(() => {
   --failed-ink: #991b1b;
   --panel-pad: 16px;
   --control-radius: 10px;
-  min-height: calc(100vh - 60px);
+  height: calc(100vh - 60px);
+  min-height: 0;
   display: grid;
   grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
-  grid-template-rows: 1fr;
+  grid-template-rows: minmax(0, 1fr);
   background: var(--bg);
   color: var(--ink);
   overflow: hidden;
@@ -2150,7 +2174,8 @@ onBeforeUnmount(() => {
 
 .left-panel,
 .inspector-panel {
-  min-height: calc(100vh - 60px);
+  min-height: 0;
+  height: 100%;
   background: var(--panel);
   border-right: 1px solid var(--line);
   overflow-y: auto;
@@ -2170,6 +2195,36 @@ onBeforeUnmount(() => {
   border: 1px solid var(--line);
   border-radius: 16px;
   box-shadow: 0 24px 70px var(--shadow);
+}
+
+.inspector-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.inspector-head > div {
+  min-width: 0;
+}
+
+.inspector-close {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--button-bg);
+  color: var(--ink);
+  cursor: pointer;
+  transition: background 0.16s ease, border-color 0.16s ease;
+
+  &:hover {
+    border-color: var(--field-border-focus);
+    background: var(--button-hover-bg);
+  }
 }
 
 .left-panel header,
@@ -2272,6 +2327,64 @@ onBeforeUnmount(() => {
   font-size: 10px;
 }
 
+.extra-asset-form-item {
+  :deep(.el-form-item__content) {
+    display: grid;
+    gap: 8px;
+  }
+}
+
+.extra-asset-toggle {
+  width: 100%;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--field-border);
+  border-radius: 10px;
+  background: var(--field-bg);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease;
+
+  &:hover {
+    border-color: var(--field-border-focus);
+    background: var(--button-bg);
+  }
+
+  span {
+    min-width: 0;
+    display: grid;
+    gap: 3px;
+  }
+
+  b {
+    font-size: 13px;
+    line-height: 1.1;
+  }
+
+  small {
+    overflow: hidden;
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.2;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .el-icon {
+    flex: 0 0 auto;
+    transition: transform 0.16s ease;
+
+    &.expanded {
+      transform: rotate(180deg);
+    }
+  }
+}
+
 .canvas-extra-asset-options {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2283,29 +2396,27 @@ onBeforeUnmount(() => {
 }
 
 .canvas-extra-asset-options :deep(.el-checkbox-button__inner) {
-  display: grid;
-  gap: 4px;
+  display: block;
   width: 100%;
-  min-height: 64px;
-  padding: 9px 10px;
+  min-height: 38px;
+  padding: 10px 12px;
   border-radius: 8px;
   border-left: 1px solid var(--el-border-color);
   text-align: left;
-  white-space: normal;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .canvas-extra-asset-options :deep(.el-checkbox-button__inner span) {
+  display: block;
+  overflow: hidden;
   color: var(--ink);
   font-size: 13px;
   font-weight: 800;
   line-height: 1.2;
-}
-
-.canvas-extra-asset-options :deep(.el-checkbox-button__inner small) {
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 :deep(.el-select .el-select__caret),
@@ -2464,9 +2575,10 @@ onBeforeUnmount(() => {
 
 .canvas-shell {
   min-width: 0;
-  min-height: calc(100vh - 60px);
+  min-height: 0;
+  height: 100%;
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto minmax(0, 1fr);
   background:
     linear-gradient(var(--grid-line) 1px, transparent 1px),
     linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
@@ -2534,6 +2646,7 @@ onBeforeUnmount(() => {
 
 .canvas-viewport {
   position: relative;
+  min-height: 0;
   overflow: hidden;
   overscroll-behavior: contain;
   background: var(--canvas-bg);
@@ -3345,6 +3458,7 @@ onBeforeUnmount(() => {
 @media (max-width: 1500px) {
   .ecommerce-canvas-page {
     grid-template-columns: 286px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
   }
 
   .canvas-topbar {
@@ -3396,11 +3510,13 @@ onBeforeUnmount(() => {
 
   .left-panel,
   .inspector-panel {
+    height: auto;
     min-height: auto;
     max-height: none;
   }
 
   .canvas-shell {
+    height: 640px;
     min-height: 640px;
   }
 
