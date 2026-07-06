@@ -4,7 +4,7 @@ VALUES
   ('imagegen.enabled', 'false'),
   ('imagegen.account', ''),
   ('imagegen.api_key', ''),
-  ('imagegen.base_url', 'http://43.128.120.182/v1'),
+  ('imagegen.base_url', 'http://123.207.53.152/v1'),
   ('imagegen.quality', 'low'),
   ('imagegen.background', 'auto'),
   ('imagegen.output_format', 'png'),

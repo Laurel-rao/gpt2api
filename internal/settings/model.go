@@ -201,7 +201,7 @@ var Defs = []KeyDef{
 	{Key: ImageGenEnabled, Type: "bool", Category: "imagegen", Default: "false", Label: "启用生图网关", Desc: "开启后所有生图/图生图/电商图片都走此网关"},
 	{Key: ImageGenAccount, Type: "string", Category: "imagegen", Default: "", Label: "账号", Desc: "用于后台识别这组 AI Zero Token 配置,不参与接口鉴权"},
 	{Key: ImageGenAPIKey, Type: "password", Category: "imagegen", Default: "", Label: "密钥", Desc: "AI Zero Token API Key;保存后仅显示脱敏值,留空保存可清除"},
-	{Key: ImageGenBaseURL, Type: "url", Category: "imagegen", Default: "http://43.128.120.182/v1", Label: "Base URL", Desc: "OpenAI 兼容 /v1 地址"},
+	{Key: ImageGenBaseURL, Type: "url", Category: "imagegen", Default: "http://123.207.53.152/v1", Label: "Base URL", Desc: "OpenAI 兼容 /v1 地址"},
 	{Key: ImageGenQuality, Type: "string", Category: "imagegen", Default: "low", Label: "默认质量", Desc: "low / medium / high / auto;请求未指定时使用"},
 	{Key: ImageGenBackground, Type: "string", Category: "imagegen", Default: "auto", Label: "默认背景", Desc: "transparent / opaque / auto;请求未指定时使用"},
 	{Key: ImageGenOutputFormat, Type: "string", Category: "imagegen", Default: "png", Label: "输出格式", Desc: "png / webp / jpeg;请求未指定时使用"},
@@ -212,7 +212,7 @@ var Defs = []KeyDef{
 	{Key: TextGenEnabled, Type: "bool", Category: "textgen", Default: "false", Label: "启用文本网关", Desc: "开启后聊天接口和电商文案生成优先走 AI Zero Token 文本网关"},
 	{Key: TextGenAccount, Type: "string", Category: "textgen", Default: "", Label: "账号", Desc: "用于后台识别这组 AI Zero Token 文本配置,不参与接口鉴权"},
 	{Key: TextGenAPIKey, Type: "password", Category: "textgen", Default: "", Label: "密钥", Desc: "AI Zero Token API Key;保存后仅显示脱敏值,留空保存可清除"},
-	{Key: TextGenBaseURL, Type: "url", Category: "textgen", Default: "http://43.128.120.182/v1", Label: "Base URL", Desc: "OpenAI 兼容 /v1 地址"},
+	{Key: TextGenBaseURL, Type: "url", Category: "textgen", Default: "http://123.207.53.152/v1", Label: "Base URL", Desc: "OpenAI 兼容 /v1 地址"},
 	{Key: TextGenModel, Type: "string", Category: "textgen", Default: "gpt-5.4", Label: "默认模型", Desc: "当前网关支持 gpt-5.5 / gpt-5.4 / gpt-5.4-mini / gpt-5.3-codex-spark"},
 	{Key: TextGenTimeoutSec, Type: "int", Category: "textgen", Default: "120", Label: "超时(秒)", Desc: "文本生成等待上限"},
 

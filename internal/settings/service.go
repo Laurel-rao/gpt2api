@@ -369,7 +369,7 @@ func (s *Service) ImageGenAPIKey() string {
 	return strings.TrimSpace(s.GetString(ImageGenAPIKey))
 }
 func (s *Service) ImageGenBaseURL() string {
-	return firstNonEmpty(strings.TrimSpace(s.GetString(ImageGenBaseURL)), "http://43.128.120.182/v1")
+	return firstNonEmpty(strings.TrimSpace(s.GetString(ImageGenBaseURL)), "http://123.207.53.152/v1")
 }
 func (s *Service) ImageGenQuality() string {
 	return firstNonEmpty(strings.TrimSpace(s.GetString(ImageGenQuality)), "low")
@@ -404,7 +404,7 @@ func (s *Service) TextGenAPIKey() string {
 	return strings.TrimSpace(s.GetString(TextGenAPIKey))
 }
 func (s *Service) TextGenBaseURL() string {
-	return firstNonEmpty(strings.TrimSpace(s.GetString(TextGenBaseURL)), "http://43.128.120.182/v1")
+	return firstNonEmpty(strings.TrimSpace(s.GetString(TextGenBaseURL)), "http://123.207.53.152/v1")
 }
 func (s *Service) TextGenModel() string {
 	return firstNonEmpty(strings.TrimSpace(s.GetString(TextGenModel)), "gpt-5.4")
