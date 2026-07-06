@@ -56,6 +56,24 @@ const sideCollapsed = computed(() => isMobile.value ? false : collapsed.value)
 const asideWidth = computed(() => isMobile.value ? '0px' : (collapsed.value ? '72px' : '236px'))
 
 const activePath = computed(() => route.path)
+const visibleMenu = computed<MenuItem[]>(() => {
+  return menu.value.map((group) => {
+    if (group.key !== 'personal') return group
+    const children = [...(group.children || [])]
+    if (!children.some((item) => item.key === 'personal.guide')) {
+      const guideItem: MenuItem = {
+        key: 'personal.guide',
+        title: '系统指南',
+        icon: 'Guide',
+        path: '/personal/guide',
+      }
+      const playIndex = children.findIndex((item) => item.key === 'personal.play')
+      if (playIndex >= 0) children.splice(playIndex + 1, 0, guideItem)
+      else children.push(guideItem)
+    }
+    return { ...group, children }
+  })
+})
 
 const titleMap = computed(() => {
   const m = new Map<string, string>()
@@ -65,7 +83,7 @@ const titleMap = computed(() => {
       if (it.children) walk(it.children)
     }
   }
-  walk(menu.value)
+  walk(visibleMenu.value)
   return m
 })
 
@@ -134,7 +152,7 @@ watch(() => store.isLoggedIn, (v) => { if (v) loadMenu() })
         class="side-menu"
         router
       >
-        <template v-for="group in menu" :key="group.key">
+        <template v-for="group in visibleMenu" :key="group.key">
           <el-menu-item v-if="!group.children?.length && group.path" :index="group.path">
             <el-icon v-if="group.icon"><component :is="group.icon" /></el-icon>
             <template #title>{{ group.title }}</template>
@@ -433,6 +451,8 @@ watch(() => store.isLoggedIn, (v) => { if (v) loadMenu() })
 
 // ─── 主区 ─────────────────────────────────────────────────────────────────────
 .main {
+  flex: 1;
+  min-height: 0;
   background: var(--gp-bg);
   padding: 0;
   overflow-y: auto;

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus/es/components/message/index.mjs'
 import {
   listMyUsageLogs,
@@ -11,18 +12,54 @@ import {
 } from '@/api/me'
 import { formatCredit, formatDateTime, formatErrorCode } from '@/utils/format'
 import { ENABLE_CHAT_MODEL } from '@/config/feature'
+import { useUserStore } from '@/stores/user'
+import ApiKeys from './ApiKeys.vue'
 
-const activeTab = ref<'chat' | 'image'>(ENABLE_CHAT_MODEL ? 'chat' : 'image')
+type DocsTab = 'keys' | 'chat' | 'image'
+
+const route = useRoute()
+const router = useRouter()
+const userStore = useUserStore()
 const API_MODEL_PLACEHOLDER = '<MODEL>'
 
 // 原点:浏览器当前地址,用于 SDK 示例的 base_url
 const origin = computed(() => window.location.origin)
+const canManageKeys = computed(() => userStore.hasPerm('self:key'))
+const canViewUsage = computed(() => userStore.hasPerm('self:usage'))
+const canViewImages = computed(() => userStore.hasPerm('self:image'))
+const canViewChat = computed(() => ENABLE_CHAT_MODEL && canViewUsage.value)
+
+function queryTab(): string {
+  const tab = route.query.tab
+  return Array.isArray(tab) ? tab[0] || '' : String(tab || '')
+}
+
+function defaultTab(): DocsTab {
+  if (canViewChat.value) return 'chat'
+  if (canViewImages.value) return 'image'
+  if (canManageKeys.value) return 'keys'
+  return 'image'
+}
+
+function resolveTab(): DocsTab {
+  const tab = queryTab()
+  if (tab === 'keys' && canManageKeys.value) return 'keys'
+  if (tab === 'image' && canViewImages.value) return 'image'
+  if (tab === 'chat' && canViewChat.value) return 'chat'
+  return defaultTab()
+}
+
+const activeTab = ref<DocsTab>(resolveTab())
 
 // ---------- 当前用户汇总 ----------
 const stats = ref<MyStatsResp | null>(null)
 const statsLoading = ref(false)
 
 async function loadStats() {
+  if (!canViewUsage.value) {
+    stats.value = null
+    return
+  }
   statsLoading.value = true
   try {
     stats.value = await getMyUsageStats({ days: 14, top_n: 5 })
@@ -37,6 +74,11 @@ const chatPage = ref({ limit: 20, offset: 0, total: 0 })
 const chatLoading = ref(false)
 
 async function loadChatLogs() {
+  if (!canViewUsage.value) {
+    chatLogs.value = []
+    chatPage.value.total = 0
+    return
+  }
   chatLoading.value = true
   try {
     const data = await listMyUsageLogs({
@@ -71,6 +113,11 @@ const previewImageURL = ref('')
 const previewImageTitle = ref('')
 
 async function loadImageTasks(reset = true) {
+  if (!canViewImages.value) {
+    imageTasks.value = []
+    hasMoreImage.value = false
+    return
+  }
   imageLoading.value = true
   try {
     if (reset) {
@@ -274,9 +321,23 @@ function downloadImage(url: string, prompt: string) {
 
 // ---------- 初始化 ----------
 onMounted(async () => {
-  loadStats()
-  if (ENABLE_CHAT_MODEL) loadChatLogs()
-  loadImageTasks()
+  if (canViewUsage.value) {
+    loadStats()
+    if (ENABLE_CHAT_MODEL) loadChatLogs()
+  }
+  if (canViewImages.value) loadImageTasks()
+})
+
+watch(() => route.query.tab, () => {
+  const next = resolveTab()
+  if (activeTab.value !== next) activeTab.value = next
+})
+
+watch(activeTab, (tab) => {
+  const current = queryTab()
+  if (current === tab) return
+  if (!current && tab === defaultTab()) return
+  router.replace({ query: { ...route.query, tab } })
 })
 </script>
 
@@ -295,7 +356,7 @@ onMounted(async () => {
           下面给出 curl / Python SDK 代码片段;个人用量与图片任务汇总在这里。若想在浏览器里直接体验,请打开「在线体验」。
         </p>
       </div>
-      <div class="hero-stats" v-loading="statsLoading">
+      <div v-if="canViewUsage" class="hero-stats" v-loading="statsLoading">
         <div class="stat">
           <div class="lbl">14 天请求</div>
           <div class="val">{{ stats?.overall.requests ?? 0 }}</div>
@@ -316,14 +377,16 @@ onMounted(async () => {
     </div>
 
     <el-tabs v-model="activeTab" class="pg-tabs">
+      <el-tab-pane v-if="canManageKeys" label="API Keys" name="keys">
+        <ApiKeys embedded />
+      </el-tab-pane>
+
       <!-- ================== 文字对话 ================== -->
-      <el-tab-pane v-if="ENABLE_CHAT_MODEL" label="对话生成" name="chat">
+      <el-tab-pane v-if="canViewChat" label="对话生成" name="chat">
         <div class="card-block">
           <div class="row">
             <div class="label">调用示例</div>
-            <router-link to="/personal/keys">
-              <el-button text type="primary">没有 Key?去「API Keys」创建</el-button>
-            </router-link>
+            <el-button v-if="canManageKeys" text type="primary" @click="activeTab = 'keys'">没有 Key?去「API Keys」创建</el-button>
           </div>
 
           <el-tabs type="border-card" class="code-tabs">
@@ -381,7 +444,7 @@ onMounted(async () => {
       </el-tab-pane>
 
       <!-- ================== 图片生成 ================== -->
-      <el-tab-pane label="图片生成" name="image">
+      <el-tab-pane v-if="canViewImages" label="图片生成" name="image">
         <div class="card-block">
           <div class="row">
             <div class="label">调用示例</div>

@@ -5,6 +5,12 @@ import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
 import * as keyApi from '@/api/apikey'
 import { formatCredit, formatDateTime } from '@/utils/format'
 
+const props = withDefaults(defineProps<{
+  embedded?: boolean
+}>(), {
+  embedded: false,
+})
+
 const loading = ref(false)
 const page = ref(1)
 const pageSize = ref(20)
@@ -102,7 +108,7 @@ onMounted(fetchList)
 </script>
 
 <template>
-  <div class="page-container">
+  <div class="page-container api-keys-page" :class="{ 'is-embedded': props.embedded }">
     <div class="card-block">
       <div class="flex-between" style="margin-bottom:16px">
         <div>
@@ -225,6 +231,14 @@ onMounted(fetchList)
 </template>
 
 <style scoped lang="scss">
+.api-keys-page.is-embedded {
+  padding: 0;
+}
+
+.api-keys-page.is-embedded .card-block {
+  margin-bottom: 0;
+}
+
 .key-display :deep(input) {
   font-family: ui-monospace, Menlo, Consolas, monospace;
   font-size: 13px;

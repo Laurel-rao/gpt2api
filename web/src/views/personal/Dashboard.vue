@@ -216,7 +216,7 @@ const quickTools = [
           <el-button type="primary" :icon="Wallet" @click="go('/personal/billing')">
             充值积分
           </el-button>
-          <el-button :icon="Key" @click="go('/personal/keys')">
+          <el-button :icon="Key" @click="go('/personal/docs?tab=keys')">
             管理 API Key
           </el-button>
           <el-button :icon="ChatLineRound" @click="go('/personal/play')">

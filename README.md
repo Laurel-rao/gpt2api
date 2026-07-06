@@ -75,7 +75,7 @@
   <img src="docs/screenshots/playground-preview.png" alt="gpt2api 管理后台 · 图片全屏预览 · 左侧完整菜单" width="960">
 </p>
 
-- 左侧:**个人中心 / 后台管理** 双分区菜单 —— API Keys、使用记录、账单与充值、在线体验、接口文档、用户管理、GPT 账号池、代理管理、模型配置、用户分组、用量统计、全局 Keys、审计日志、数据备份、系统设置,一个台子全搞定;
+- 左侧:**个人中心 / 后台管理** 双分区菜单 —— 使用记录、账单与充值、在线体验、接口文档、用户管理、GPT 账号池、代理管理、模型配置、用户分组、用量统计、全局 Keys、审计日志、数据备份、系统设置,一个台子全搞定;
 - 中间:全屏放大查看终稿,直接右键"图片另存为"。所有图片 URL 都是内置 `/p/img/:task/:idx` **HMAC 签名代理**,绕过 `chatgpt.com` `estuary/content` 的 403 防盗链。
 
 ---
@@ -641,7 +641,7 @@ scheduler:
 | 个人总览 | `/personal/dashboard` | 积分余额、14 天请求趋势、热门模型、最近请求/账变 |
 | 在线体验 | `/personal/play` | 浏览器内 Playground,文生图 / 图生图,实时扣费 |
 | 接口文档 | `/personal/docs` | curl / Python SDK 代码片段、历史任务列表 |
-| API Keys | `/personal/keys` | 创建 / 禁用 / 限流 Key |
+| API Keys | `/personal/docs?tab=keys` | 在接口文档页创建 / 禁用 / 限流 Key |
 | 使用记录 | `/personal/usage` | 本人的请求日志 / 积分流水 |
 | 账单与充值 | `/personal/billing` | 套餐购买、易支付下单 |
 | 用户管理 | `/admin/users` | 用户 CRUD、角色、状态、分组 |
