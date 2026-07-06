@@ -50,6 +50,9 @@ const libraryAssetsLoaded = ref(false)
 const tasksLoading = ref(false)
 const historyDeferred = ref(true)
 const taskHistoryExpanded = ref(true)
+const composerAssetsExpanded = ref(false)
+const composerExtraAssetsExpanded = ref(false)
+const composerReferencesExpanded = ref(false)
 const taskMoreVisible = ref(false)
 const tasksTotal = ref(0)
 const retryingTaskID = ref('')
@@ -177,6 +180,25 @@ const activePlatform = computed(() => platforms.value.find((p) => p.id === activ
 const selectedLanguage = computed(() => ecommerceLanguageName(form.language || currentPlatform.value?.language))
 const selectedProductAsset = computed(() => productLibraryAssets.value.find((asset) => asset.asset_id === form.product_asset_id))
 const selectedModelAsset = computed(() => modelLibraryAssets.value.find((asset) => asset.asset_id === form.model_asset_id))
+const selectedLibrarySummary = computed(() => {
+  const items = [
+    selectedProductAsset.value?.name || (form.product_asset_id ? '商品资产已选' : ''),
+    selectedModelAsset.value?.name || (form.model_asset_id ? '模特资产已选' : ''),
+  ].filter(Boolean)
+  return items.length ? items.join(' / ') : '未选择，点击展开'
+})
+const extraAssetSummary = computed(() => {
+  const labels = form.extra_asset_types
+    .map((type) => ECOMMERCE_EXTRA_ASSET_OPTIONS.find((item) => item.value === type)?.label || assetText[type] || type)
+    .filter(Boolean)
+  if (!labels.length) return `默认 ${baseImageAssetCount} 张基础图`
+  if (labels.length <= 2) return labels.join(' / ')
+  return `${labels.slice(0, 2).join(' / ')} 等 ${labels.length} 项`
+})
+const referenceImageSummary = computed(() => {
+  if (!form.reference_images.length) return '未添加，可选'
+  return `${form.reference_images.length}/${MAX_IMAGES} 张已选`
+})
 const activeLanguage = computed(() => activeTask.value?.language_name || ecommerceLanguageName(activeTask.value?.language || activePlatform.value?.language || form.language))
 const activePercent = computed(() => taskLooksComplete.value ? 100 : activeTask.value?.progress || 0)
 const taskElapsed = computed(() => activeTask.value ? generationElapsed(activeTask.value.started_at, activeTask.value.finished_at, running.value) : '0秒')
@@ -784,6 +806,36 @@ function clearBrief() {
   form.requirement = ''
 }
 
+function resetComposer() {
+  form.requirement = ''
+  form.reference_images = []
+  form.product_asset_id = ''
+  form.model_asset_id = ''
+  form.extra_asset_types = []
+  activeTask.value = null
+  previewAsset.value = null
+  promptAsset.value = null
+  brokenAssetIDs.value = new Set()
+  retryPanelOpenIDs.value = new Set()
+  retryPrompts.value = {}
+  clearLastTaskID()
+  stopPolling()
+  applySectionDefaults(null)
+}
+
+function fillFormFromTask(task: EcommerceTask) {
+  form.platform_id = task.platform_id || form.platform_id
+  form.prompt_template_id = task.prompt_template_id || form.prompt_template_id
+  form.style_template_id = task.style_template_id || form.style_template_id
+  form.requirement = task.requirement || ''
+  form.reference_images = Array.isArray(task.reference_images) ? [...task.reference_images] : []
+  form.product_asset_id = task.product_asset_id || ''
+  form.model_asset_id = task.model_asset_id || ''
+  form.extra_asset_types = Array.isArray(task.extra_asset_types) ? [...task.extra_asset_types] : []
+  form.language = task.language || platforms.value.find((item) => item.id === form.platform_id)?.language || form.language || 'zh-CN'
+  if (form.product_asset_id || form.model_asset_id) loadLibraryAssets()
+}
+
 async function submit() {
   if (!form.platform_id || !form.prompt_template_id || !form.style_template_id) {
     ElMessage.warning('请选择平台、提示词模板和风格模板')
@@ -807,6 +859,7 @@ async function submit() {
       extra_asset_types: form.extra_asset_types,
     })
     activeTask.value = task
+    fillFormFromTask(task)
     rememberLastTaskID(task.task_id)
     brokenAssetIDs.value = new Set()
     ElMessage.success('任务已进入生成队列')
@@ -830,6 +883,7 @@ async function openTaskByID(taskID: string): Promise<boolean> {
   try {
     const fresh = await getEcommerceTask(taskID)
     activeTask.value = fresh
+    fillFormFromTask(fresh)
     rememberLastTaskID(fresh.task_id)
     brokenAssetIDs.value = new Set()
     if (isAssetWorking(fresh.status) || latestAssetsByType(fresh.assets || []).some((asset) => isAssetWorking(asset.status))) startPolling(fresh.task_id)
@@ -853,6 +907,7 @@ async function cancelTask() {
   canceling.value = true
   try {
     activeTask.value = await cancelEcommerceTask(activeTask.value.task_id)
+    fillFormFromTask(activeTask.value)
     stopPolling()
     await loadTasks()
     ElMessage.success('已取消任务')
@@ -870,6 +925,7 @@ async function retryAsset(asset: EcommerceAsset) {
     await retryEcommerceAsset(activeTask.value.task_id, asset.id, retryPrompts.value[asset.id] || '')
     const fresh = await getEcommerceTask(activeTask.value.task_id)
     activeTask.value = fresh
+    fillFormFromTask(fresh)
     const next = new Set(brokenAssetIDs.value)
     next.delete(asset.id)
     brokenAssetIDs.value = next
@@ -891,6 +947,7 @@ async function generateVideo() {
     await generateEcommerceVideo(activeTask.value.task_id)
     const fresh = await getEcommerceTask(activeTask.value.task_id)
     activeTask.value = fresh
+    fillFormFromTask(fresh)
     startPolling(fresh.task_id)
     ElMessage.success('视频生成已提交')
   } catch (err) {
@@ -908,6 +965,7 @@ async function retryTask(task = activeTask.value, ev?: Event) {
   try {
     const fresh = await retryEcommerceTask(task.task_id)
     activeTask.value = fresh
+    fillFormFromTask(fresh)
     brokenAssetIDs.value = new Set()
     brokenTaskThumbIDs.value = new Set()
     retryPanelOpenIDs.value = new Set()
@@ -963,7 +1021,10 @@ function startPolling(taskID: string) {
     try {
       const fresh = await getEcommerceTask(taskID)
       if (pollingTaskID.value !== taskID) return
-      if (activeTask.value?.task_id === taskID) activeTask.value = fresh
+      if (activeTask.value?.task_id === taskID) {
+        activeTask.value = fresh
+        fillFormFromTask(fresh)
+      }
       if (!isAssetWorking(fresh.status) && !latestAssetsByType(fresh.assets || []).some((asset) => isAssetWorking(asset.status))) {
         stopPolling()
         await loadTasks()
@@ -1225,7 +1286,9 @@ watch(
   () => form.platform_id,
   (id) => {
     const platform = platforms.value.find((item) => item.id === id)
-    form.language = platform?.language || 'zh-CN'
+    form.language = activeTask.value?.platform_id === id
+      ? activeTask.value.language || platform?.language || 'zh-CN'
+      : platform?.language || 'zh-CN'
   },
 )
 
@@ -1597,7 +1660,10 @@ onBeforeUnmount(() => {
           <span class="kicker">任务创建</span>
           <h1>电商智能体</h1>
         </div>
-        <span class="lang-chip">{{ selectedLanguage }}</span>
+        <div class="composer-head-actions">
+          <el-button text @click="resetComposer">新建</el-button>
+          <span class="lang-chip">{{ selectedLanguage }}</span>
+        </div>
       </div>
 
       <el-form label-position="top" class="brief-form">
@@ -1646,106 +1712,148 @@ onBeforeUnmount(() => {
           </el-select>
         </el-form-item>
 
-        <div class="library-picker-grid">
-          <el-form-item label="商品资产">
-            <el-select
-              v-model="form.product_asset_id"
-              placeholder="可选：从资产库选择商品"
-              filterable
-              clearable
-              :loading="libraryAssetsLoading"
-              @visible-change="onLibrarySelectVisible"
-            >
-              <el-option v-for="asset in productLibraryAssets" :key="asset.asset_id" :label="asset.name" :value="asset.asset_id">
-                <div class="asset-option">
-                  <img v-if="asset.cover_url" :src="asset.cover_url" :alt="asset.name" />
-                  <span>{{ asset.name }}</span>
-                  <small>{{ asset.code || asset.review_status }}</small>
+        <section class="composer-fold">
+          <button
+            class="composer-fold-head"
+            type="button"
+            :aria-expanded="composerAssetsExpanded"
+            @click="composerAssetsExpanded = !composerAssetsExpanded"
+          >
+            <span>
+              <b>资产引用</b>
+              <small>{{ selectedLibrarySummary }}</small>
+            </span>
+            <el-icon :class="['collapse-icon', { open: composerAssetsExpanded }]"><ArrowDown /></el-icon>
+          </button>
+          <div v-show="composerAssetsExpanded" class="composer-fold-body">
+            <div class="library-picker-grid">
+              <el-form-item label="商品资产">
+                <el-select
+                  v-model="form.product_asset_id"
+                  placeholder="可选：从资产库选择商品"
+                  filterable
+                  clearable
+                  :loading="libraryAssetsLoading"
+                  @visible-change="onLibrarySelectVisible"
+                >
+                  <el-option v-for="asset in productLibraryAssets" :key="asset.asset_id" :label="asset.name" :value="asset.asset_id">
+                    <div class="asset-option">
+                      <img v-if="asset.cover_url" :src="asset.cover_url" :alt="asset.name" />
+                      <span>{{ asset.name }}</span>
+                      <small>{{ asset.code || asset.review_status }}</small>
+                    </div>
+                  </el-option>
+                </el-select>
+              </el-form-item>
+              <el-form-item label="模特资产">
+                <el-select
+                  v-model="form.model_asset_id"
+                  placeholder="可选：从资产库选择模特"
+                  filterable
+                  clearable
+                  :loading="libraryAssetsLoading"
+                  @visible-change="onLibrarySelectVisible"
+                >
+                  <el-option v-for="asset in modelLibraryAssets" :key="asset.asset_id" :label="asset.name" :value="asset.asset_id">
+                    <div class="asset-option">
+                      <img v-if="asset.cover_url" :src="asset.cover_url" :alt="asset.name" />
+                      <span>{{ asset.name }}</span>
+                      <small>{{ asset.code || asset.review_status }}</small>
+                    </div>
+                  </el-option>
+                </el-select>
+              </el-form-item>
+            </div>
+            <div v-if="selectedProductAsset || selectedModelAsset" class="selected-library-assets">
+              <div v-if="selectedProductAsset" class="selected-library-card">
+                <img v-if="selectedProductAsset.cover_url" :src="selectedProductAsset.cover_url" :alt="selectedProductAsset.name" />
+                <div>
+                  <strong>{{ selectedProductAsset.name }}</strong>
+                  <span>商品资产将注入资料与参考图</span>
                 </div>
-              </el-option>
-            </el-select>
-          </el-form-item>
-          <el-form-item label="模特资产">
-            <el-select
-              v-model="form.model_asset_id"
-              placeholder="可选：从资产库选择模特"
-              filterable
-              clearable
-              :loading="libraryAssetsLoading"
-              @visible-change="onLibrarySelectVisible"
-            >
-              <el-option v-for="asset in modelLibraryAssets" :key="asset.asset_id" :label="asset.name" :value="asset.asset_id">
-                <div class="asset-option">
-                  <img v-if="asset.cover_url" :src="asset.cover_url" :alt="asset.name" />
-                  <span>{{ asset.name }}</span>
-                  <small>{{ asset.code || asset.review_status }}</small>
+              </div>
+              <div v-if="selectedModelAsset" class="selected-library-card">
+                <img v-if="selectedModelAsset.cover_url" :src="selectedModelAsset.cover_url" :alt="selectedModelAsset.name" />
+                <div>
+                  <strong>{{ selectedModelAsset.name }}</strong>
+                  <span>模特资产将注入外观与授权约束</span>
                 </div>
-              </el-option>
-            </el-select>
-          </el-form-item>
-        </div>
-        <div v-if="selectedProductAsset || selectedModelAsset" class="selected-library-assets">
-          <div v-if="selectedProductAsset" class="selected-library-card">
-            <img v-if="selectedProductAsset.cover_url" :src="selectedProductAsset.cover_url" :alt="selectedProductAsset.name" />
-            <div>
-              <strong>{{ selectedProductAsset.name }}</strong>
-              <span>商品资产将注入资料与参考图</span>
+              </div>
             </div>
           </div>
-          <div v-if="selectedModelAsset" class="selected-library-card">
-            <img v-if="selectedModelAsset.cover_url" :src="selectedModelAsset.cover_url" :alt="selectedModelAsset.name" />
-            <div>
-              <strong>{{ selectedModelAsset.name }}</strong>
-              <span>模特资产将注入外观与授权约束</span>
-            </div>
-          </div>
-        </div>
+        </section>
 
-        <el-form-item label="可选图片">
-          <el-checkbox-group v-model="form.extra_asset_types" class="extra-asset-options">
-            <el-checkbox-button
-              v-for="item in ECOMMERCE_EXTRA_ASSET_OPTIONS"
-              :key="item.value"
-              :label="item.value"
-            >
-              <span>{{ item.label }}</span>
-              <small>{{ item.description }}</small>
-            </el-checkbox-button>
-          </el-checkbox-group>
-        </el-form-item>
+        <section class="composer-fold">
+          <button
+            class="composer-fold-head"
+            type="button"
+            :aria-expanded="composerExtraAssetsExpanded"
+            @click="composerExtraAssetsExpanded = !composerExtraAssetsExpanded"
+          >
+            <span>
+              <b>可选图片</b>
+              <small>{{ extraAssetSummary }}</small>
+            </span>
+            <el-icon :class="['collapse-icon', { open: composerExtraAssetsExpanded }]"><ArrowDown /></el-icon>
+          </button>
+          <div v-show="composerExtraAssetsExpanded" class="composer-fold-body compact-scroll">
+            <el-checkbox-group v-model="form.extra_asset_types" class="extra-asset-options">
+              <el-checkbox-button
+                v-for="item in ECOMMERCE_EXTRA_ASSET_OPTIONS"
+                :key="item.value"
+                :label="item.value"
+              >
+                <span>{{ item.label }}</span>
+                <small>{{ item.description }}</small>
+              </el-checkbox-button>
+            </el-checkbox-group>
+          </div>
+        </section>
 
-        <el-form-item>
-          <template #label>
-            <span>参考图片（最多 {{ MAX_IMAGES }} 张，{{ MAX_IMAGE_MB }}MB/张）</span>
-          </template>
-          <div class="reference-field">
-            <div class="reference-grid">
-              <button
-                v-for="(img, index) in form.reference_images"
-                :key="index"
-                class="reference-thumb"
-                type="button"
-                @click="removeImage(index)"
-              >
-                <img :src="img" alt="参考图" />
-                <span><el-icon><Close /></el-icon></span>
-              </button>
-              <el-upload
-                v-if="form.reference_images.length < MAX_IMAGES"
-                drag
-                multiple
-                accept="image/*"
-                :auto-upload="false"
-                :show-file-list="false"
-                :on-change="onImageChange"
-                class="reference-upload"
-              >
-                <el-icon><UploadFilled /></el-icon>
-                <strong>上传图片</strong>
-              </el-upload>
+        <section class="composer-fold">
+          <button
+            class="composer-fold-head"
+            type="button"
+            :aria-expanded="composerReferencesExpanded"
+            @click="composerReferencesExpanded = !composerReferencesExpanded"
+          >
+            <span>
+              <b>参考图片</b>
+              <small>{{ referenceImageSummary }} · 最多 {{ MAX_IMAGES }} 张</small>
+            </span>
+            <el-icon :class="['collapse-icon', { open: composerReferencesExpanded }]"><ArrowDown /></el-icon>
+          </button>
+          <div v-show="composerReferencesExpanded" class="composer-fold-body">
+            <div class="reference-field">
+              <p class="fold-note">{{ MAX_IMAGE_MB }}MB/张，点击已选图片可移除。</p>
+              <div class="reference-grid">
+                <button
+                  v-for="(img, index) in form.reference_images"
+                  :key="index"
+                  class="reference-thumb"
+                  type="button"
+                  @click="removeImage(index)"
+                >
+                  <img :src="img" alt="参考图" />
+                  <span><el-icon><Close /></el-icon></span>
+                </button>
+                <el-upload
+                  v-if="form.reference_images.length < MAX_IMAGES"
+                  drag
+                  multiple
+                  accept="image/*"
+                  :auto-upload="false"
+                  :show-file-list="false"
+                  :on-change="onImageChange"
+                  class="reference-upload"
+                >
+                  <el-icon><UploadFilled /></el-icon>
+                  <strong>上传图片</strong>
+                </el-upload>
+              </div>
             </div>
           </div>
-        </el-form-item>
+        </section>
 
         <el-button class="primary-submit" type="primary" size="large" :loading="submitting" @click="submit">
           <el-icon v-if="!submitting"><MagicStick /></el-icon>
@@ -2085,14 +2193,29 @@ onBeforeUnmount(() => {
   --amber: var(--lc-amber);
   --red: var(--lc-danger);
   --shadow: var(--lc-shadow-card);
+  --font-size-xs: 12px;
+  --font-size-sm: 13px;
+  --font-size-md: 14px;
+  --spacing-xs: 4px;
+  --spacing-sm: 6px;
+  --spacing-md: 8px;
+  --spacing-lg: 12px;
+  --card-padding: 10px;
+  --card-radius: 8px;
+  --control-height: 28px;
+  --compact-height: 20px;
   box-sizing: border-box;
   width: 100%;
-  min-height: calc(100vh - 60px);
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
   display: grid;
   grid-template-columns: minmax(340px, 390px) minmax(0, 1fr) minmax(286px, 320px);
-  gap: 14px;
-  padding: 18px;
-  overflow-x: hidden;
+  grid-template-rows: minmax(0, 1fr);
+  align-items: stretch;
+  gap: var(--spacing-lg);
+  padding: var(--spacing-lg);
+  overflow: hidden;
   color: var(--ink);
   background:
     radial-gradient(900px 420px at 8% -8%, rgba(37, 99, 235, .10), transparent 62%),
@@ -2120,23 +2243,34 @@ onBeforeUnmount(() => {
 }
 
 .commerce-workbench :deep(.el-button) {
-  min-height: 32px;
-  height: 32px;
-  padding: 6px 10px;
-  border-radius: 7px;
+  min-height: var(--control-height);
+  height: var(--control-height);
+  padding: 4px 9px;
+  border-radius: var(--card-radius);
+  font-size: var(--font-size-xs);
+}
+
+.commerce-workbench :deep(.el-input__wrapper),
+.commerce-workbench :deep(.el-select__wrapper) {
+  min-height: var(--control-height);
+  font-size: var(--font-size-xs);
+}
+
+.commerce-workbench :deep(.el-form-item__content) {
+  line-height: var(--control-height);
 }
 
 .surface {
   min-width: 0;
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: 12px;
   background: var(--surface-bg);
   box-shadow: var(--shadow);
 }
 
 .surface-inset {
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 10px;
   background: var(--wash);
 }
 
@@ -2144,33 +2278,47 @@ onBeforeUnmount(() => {
 .current-task,
 .asset-section,
 .side-block {
-  padding: 16px;
+  padding: var(--card-padding);
 }
 
 .composer-card {
-  align-self: start;
-  position: sticky;
-  top: 16px;
+  align-self: stretch;
   grid-column: 1;
   grid-row: 1;
+  max-height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 .task-column {
   min-width: 0;
   display: grid;
-  gap: 12px;
-  align-content: start;
+  grid-template-rows: minmax(0, auto) minmax(0, 1fr);
+  gap: var(--spacing-md);
+  align-content: stretch;
   grid-column: 2;
   grid-row: 1;
+  max-height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 .delivery-card {
   min-width: 0;
   display: grid;
-  gap: 12px;
+  gap: var(--spacing-md);
   align-content: start;
   grid-column: 3;
   grid-row: 1;
+  max-height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 .section-head,
@@ -2180,7 +2328,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 10px;
+  gap: var(--spacing-md);
 }
 
 .section-head.compact,
@@ -2189,12 +2337,27 @@ onBeforeUnmount(() => {
   align-items: center;
 }
 
+.composer-head-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+  flex: 0 0 auto;
+}
+
+.composer-head-actions :deep(.el-button) {
+  min-height: var(--compact-height);
+  height: var(--compact-height);
+  padding: 0 var(--spacing-sm);
+}
+
 .kicker {
   display: inline-flex;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
   color: var(--lc-primary);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   font-weight: 700;
+  line-height: 16px;
 }
 
 h1,
@@ -2205,20 +2368,20 @@ p {
 }
 
 h1 {
-  font-size: 26px;
-  line-height: 34px;
-  font-weight: 800;
-}
-
-h2 {
   font-size: 20px;
   line-height: 26px;
   font-weight: 800;
 }
 
-h3 {
-  font-size: 15px;
+h2 {
+  font-size: 17px;
   line-height: 22px;
+  font-weight: 800;
+}
+
+h3 {
+  font-size: var(--font-size-sm);
+  line-height: 18px;
   font-weight: 800;
 }
 
@@ -2228,12 +2391,13 @@ h3 {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 24px;
+  min-height: var(--compact-height);
   border-radius: 6px;
-  padding: 3px 8px;
-  font-size: 12px;
+  padding: 1px 6px;
+  font-size: var(--font-size-xs);
   font-weight: 700;
   white-space: nowrap;
+  line-height: 16px;
 }
 
 .lang-chip {
@@ -2267,16 +2431,18 @@ h3 {
 }
 
 .brief-form {
-  margin-top: 12px;
+  margin-top: var(--spacing-md);
 }
 
 .brief-form :deep(.el-form-item) {
-  margin-bottom: 10px;
+  margin-bottom: var(--spacing-md);
 }
 
 .brief-form :deep(.el-form-item__label) {
-  min-height: 24px;
-  line-height: 24px;
+  min-height: var(--compact-height);
+  line-height: var(--compact-height);
+  padding-bottom: 3px;
+  font-size: var(--font-size-xs);
 }
 
 .brief-form :deep(.el-form-item__label) {
@@ -2326,25 +2492,25 @@ h3 {
 .selected-library-assets {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 8px;
-  margin: -4px 0 12px;
+  gap: var(--spacing-sm);
+  margin: 0;
 }
 
 .selected-library-card {
   display: grid;
-  grid-template-columns: 44px 1fr;
-  gap: 10px;
+  grid-template-columns: 34px 1fr;
+  gap: var(--spacing-md);
   align-items: center;
-  min-height: 52px;
-  padding: 8px;
+  min-height: 42px;
+  padding: var(--spacing-sm);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--card-radius);
   background: var(--field-bg);
 }
 
 .selected-library-card img {
-  width: 44px;
-  height: 44px;
+  width: 34px;
+  height: 34px;
   border-radius: 6px;
   object-fit: cover;
 }
@@ -2358,7 +2524,7 @@ h3 {
 }
 
 .selected-library-card strong {
-  font-size: 13px;
+  font-size: var(--font-size-xs);
   color: var(--ink);
 }
 
@@ -2368,10 +2534,108 @@ h3 {
   color: var(--muted);
 }
 
+.composer-fold {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--card-radius);
+  background: var(--field-bg);
+  overflow: hidden;
+}
+
+.composer-fold + .composer-fold {
+  margin-top: var(--spacing-sm);
+}
+
+.composer-fold-head {
+  width: 100%;
+  min-height: var(--compact-height);
+  height: var(--compact-height);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  border: 0;
+  padding: 1px var(--spacing-sm);
+  color: var(--ink);
+  background: var(--tile-soft);
+  cursor: pointer;
+  text-align: left;
+}
+
+.composer-fold-head span {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.composer-fold-head b,
+.composer-fold-head small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 16px;
+}
+
+.composer-fold-head b {
+  font-size: var(--font-size-xs);
+  font-weight: 800;
+}
+
+.composer-fold-head small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.composer-fold-head .collapse-icon {
+  font-size: 13px;
+}
+
+.composer-fold-body {
+  display: grid;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-md);
+  border-top: 1px solid var(--line);
+}
+
+.composer-fold-body.compact-scroll {
+  max-height: 226px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.5) transparent;
+}
+
+.composer-fold-body.compact-scroll::-webkit-scrollbar {
+  width: 5px;
+}
+
+.composer-fold-body.compact-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.46);
+}
+
+.composer-fold-body.compact-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.composer-fold-body :deep(.el-form-item:last-child) {
+  margin-bottom: 0;
+}
+
+.fold-note {
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+  line-height: 16px;
+}
+
 .extra-asset-options {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 5px;
 }
 
 .extra-asset-options :deep(.el-checkbox-button) {
@@ -2379,35 +2643,81 @@ h3 {
 }
 
 .extra-asset-options :deep(.el-checkbox-button__inner) {
+  position: relative;
   display: grid;
-  gap: 4px;
+  gap: 2px;
   width: 100%;
-  min-height: 66px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  border-left: 1px solid var(--el-border-color);
+  min-height: 38px;
+  padding: 5px 8px 5px 18px;
+  border-radius: var(--card-radius);
+  border: 1px solid var(--line);
   text-align: left;
   white-space: normal;
+  color: var(--ink);
+  background: var(--field-bg);
+  box-shadow: none;
+  transition: border-color .18s ease, background-color .18s ease, box-shadow .18s ease;
+}
+
+.extra-asset-options :deep(.el-checkbox-button__inner::before) {
+  content: '';
+  position: absolute;
+  left: 7px;
+  top: 12px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--line);
+  transition: background-color .18s ease, box-shadow .18s ease;
 }
 
 .extra-asset-options :deep(.el-checkbox-button__inner span) {
   color: var(--ink);
-  font-size: 14px;
+  font-size: var(--font-size-xs);
   font-weight: 800;
-  line-height: 1.2;
+  line-height: 15px;
 }
 
 .extra-asset-options :deep(.el-checkbox-button__inner small) {
+  display: -webkit-box;
+  overflow: hidden;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
-  line-height: 1.2;
+  line-height: 14px;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+}
+
+.extra-asset-options :deep(.el-checkbox-button:not(.is-disabled):hover .el-checkbox-button__inner) {
+  border-color: rgba(37, 99, 235, 0.34);
+  background: color-mix(in srgb, var(--lc-primary-soft) 46%, var(--field-bg));
+}
+
+.extra-asset-options :deep(.el-checkbox-button.is-checked .el-checkbox-button__inner) {
+  color: var(--ink);
+  border-color: rgba(37, 99, 235, 0.46);
+  background: color-mix(in srgb, var(--lc-primary-soft) 58%, var(--field-bg));
+  box-shadow: inset 2px 0 0 var(--lc-primary);
+}
+
+.extra-asset-options :deep(.el-checkbox-button.is-checked .el-checkbox-button__inner::before) {
+  background: var(--lc-primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.extra-asset-options :deep(.el-checkbox-button.is-checked .el-checkbox-button__inner span) {
+  color: var(--lc-primary);
+}
+
+.extra-asset-options :deep(.el-checkbox-button.is-checked .el-checkbox-button__inner small) {
+  color: var(--muted);
 }
 
 .brief-form :deep(.el-input__wrapper),
 .brief-form :deep(.el-select__wrapper),
 .brief-form :deep(.el-textarea__inner) {
-  border-radius: 12px;
+  border-radius: var(--card-radius);
   background: var(--field-bg);
   box-shadow: 0 0 0 1px var(--line) inset;
 }
@@ -2443,20 +2753,20 @@ h3 {
   width: 100%;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  gap: var(--spacing-sm);
 }
 
 .reference-thumb,
 .reference-upload {
   min-width: 0;
-  height: 64px;
+  height: 54px;
 }
 
 .reference-thumb {
   position: relative;
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--card-radius);
   padding: 0;
   background: var(--tile-soft);
   cursor: pointer;
@@ -2485,7 +2795,7 @@ h3 {
 .reference-upload :deep(.el-upload),
 .reference-upload :deep(.el-upload-dragger) {
   width: 100%;
-  height: 64px;
+  height: 54px;
 }
 
 .reference-upload :deep(.el-upload-dragger) {
@@ -2494,7 +2804,7 @@ h3 {
   place-content: center;
   gap: 2px;
   padding: 0;
-  border-radius: 12px;
+  border-radius: var(--card-radius);
   border-color: var(--line);
   background: var(--field-bg);
   color: var(--muted);
@@ -2502,15 +2812,15 @@ h3 {
 
 .reference-upload :deep(.el-icon) {
   margin: 0;
-  font-size: 16px;
+  font-size: 15px;
 }
 
 .reference-upload strong {
   display: block;
   margin-top: 0;
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   font-weight: 700;
-  line-height: 18px;
+  line-height: 16px;
 }
 
 .cost-hint {
@@ -2522,10 +2832,10 @@ h3 {
 
 .primary-submit {
   width: 100%;
-  min-height: 42px;
-  height: 42px;
+  min-height: 34px;
+  height: 34px;
   border: 0;
-  border-radius: 12px;
+  border-radius: var(--card-radius);
   font-weight: 800;
   background: linear-gradient(135deg, var(--lc-primary), var(--green));
   box-shadow: 0 12px 24px rgba(37, 99, 235, 0.22);
@@ -3881,16 +4191,25 @@ h3 {
 @media (max-width: 1320px) {
   .commerce-workbench {
     grid-template-columns: minmax(310px, 360px) minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    height: auto;
+    max-height: none;
+    min-height: 100%;
+    overflow-y: auto;
   }
 
   .task-column {
     grid-column: 2;
     grid-row: 1;
+    max-height: none;
+    overflow: visible;
   }
 
   .composer-card {
     grid-column: 1;
     grid-row: 1;
+    max-height: none;
+    overflow: visible;
   }
 
   .delivery-card {
@@ -3898,6 +4217,8 @@ h3 {
     grid-row: 2;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     position: static;
+    max-height: none;
+    overflow: visible;
   }
 
   .delivery-card .side-block:first-child {
@@ -3908,6 +4229,11 @@ h3 {
 @media (max-width: 960px) {
   .commerce-workbench {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    height: auto;
+    max-height: none;
+    min-height: 100%;
+    overflow: visible;
     padding: 12px;
   }
 
