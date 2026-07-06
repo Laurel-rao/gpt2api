@@ -454,6 +454,14 @@ UPDATE ecommerce_assets
 	return n > 0, nil
 }
 
+func (d *DAO) UpdateAssetCost(ctx context.Context, id uint64, amount int64) error {
+	_, err := d.db.ExecContext(ctx, `
+UPDATE ecommerce_assets
+   SET credit_cost=?
+ WHERE id=?`, amount, id)
+	return err
+}
+
 func (d *DAO) ClearAssetVideoBilling(ctx context.Context, id uint64) error {
 	_, err := d.db.ExecContext(ctx, `
 UPDATE ecommerce_assets

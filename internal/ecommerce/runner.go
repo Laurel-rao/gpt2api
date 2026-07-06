@@ -25,6 +25,7 @@ import (
 	"github.com/432539/gpt2api/internal/textgen"
 	"github.com/432539/gpt2api/internal/upstream/adapter"
 	"github.com/432539/gpt2api/internal/upstream/chatgpt"
+	"github.com/432539/gpt2api/internal/usage"
 	"github.com/432539/gpt2api/internal/videogen"
 	"github.com/432539/gpt2api/pkg/logger"
 )
@@ -61,6 +62,7 @@ type Runner struct {
 	videoGen         *videogen.Client
 	billing          *billing.Engine
 	billingRatio     VideoBillingRatioProvider
+	usage            *usage.Logger
 	appBaseURL       string
 	imageConcurrency int
 	imageSem         chan struct{}
@@ -101,6 +103,10 @@ func (r *Runner) SetVideoGenClient(client *videogen.Client) {
 func (r *Runner) SetBilling(engine *billing.Engine, ratioProvider VideoBillingRatioProvider) {
 	r.billing = engine
 	r.billingRatio = ratioProvider
+}
+
+func (r *Runner) SetUsageLogger(logger *usage.Logger) {
+	r.usage = logger
 }
 
 func (r *Runner) SetAppBaseURL(baseURL string) {
@@ -320,6 +326,7 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 	taskAssetTypes := allAssetTypes(extraAssetTypesFromRaw(task.ExtraAssetTypes))
 	jobs := make([]assetJob, 0, len(taskAssetTypes))
 	var whiteJob assetJob
+	expectedImageCost := r.imageBillingCost(imageModel, 1)
 	for _, assetType := range taskAssetTypes {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -333,13 +340,15 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 		}
 		if r.imageDAO != nil {
 			_ = r.imageDAO.Create(ctx, &imgpkg.Task{
-				TaskID:  imgTaskID,
-				UserID:  task.UserID,
-				ModelID: imageModel.ID,
-				Prompt:  assetPrompt,
-				N:       1,
-				Size:    spec.Size,
-				Status:  imgpkg.StatusDispatched,
+				TaskID:          imgTaskID,
+				UserID:          task.UserID,
+				ModelID:         imageModel.ID,
+				Prompt:          assetPrompt,
+				N:               1,
+				Size:            spec.Size,
+				Status:          imgpkg.StatusDispatched,
+				KeyID:           0,
+				EstimatedCredit: expectedImageCost,
 			})
 		}
 		job := assetJob{id: asset.ID, assetTyp: assetType, imgTaskID: imgTaskID, prompt: assetPrompt, spec: spec}
@@ -357,7 +366,9 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 		release, err := r.acquireImageSlot(ctx)
 		if err != nil {
 			errCode := err.Error()
+			r.markImageTaskFailed(job.imgTaskID, errCode)
 			_ = r.dao.UpdateAssetResult(context.Background(), job.id, StatusFailed, job.imgTaskID, "", "", errCode)
+			r.writeImageUsage(task.UserID, imageModel, job.id, job.imgTaskID, nil, expectedImageCost, 0, usage.StatusFailed, errCode)
 			mu.Lock()
 			assetErrors = append(assetErrors, fmt.Sprintf("%s:%s", job.assetTyp, errCode))
 			completed++
@@ -368,6 +379,19 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 		}
 		defer release()
 		_ = r.dao.UpdateAssetResult(context.Background(), job.id, StatusRunning, job.imgTaskID, "", "", "")
+		if err := r.preDeductImageCost(ctx, task.UserID, job.id, job.imgTaskID, expectedImageCost); err != nil {
+			errCode := imageBillingErrorCode(err)
+			r.markImageTaskFailed(job.imgTaskID, errCode)
+			_ = r.dao.UpdateAssetResult(context.Background(), job.id, StatusFailed, job.imgTaskID, "", "", err.Error())
+			r.writeImageUsage(task.UserID, imageModel, job.id, job.imgTaskID, nil, expectedImageCost, 0, usage.StatusFailed, errCode)
+			mu.Lock()
+			assetErrors = append(assetErrors, fmt.Sprintf("%s:%s", job.assetTyp, err.Error()))
+			completed++
+			progress := assetGenerationProgress(completed, len(jobs))
+			mu.Unlock()
+			_ = r.dao.UpdateTaskProgress(context.Background(), taskID, progress)
+			return &imgpkg.RunResult{Status: imgpkg.StatusFailed, ErrorCode: errCode, ErrorMessage: err.Error()}
+		}
 		res := r.imageRun.Run(ctx, imgpkg.RunOptions{
 			TaskID:           job.imgTaskID,
 			UserID:           task.UserID,
@@ -388,6 +412,8 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 			if errCode == "" {
 				errCode = "unknown"
 			}
+			r.refundImageCost(task.UserID, job.id, job.imgTaskID, expectedImageCost, "ecommerce image refund")
+			r.writeImageUsage(task.UserID, imageModel, job.id, job.imgTaskID, res, expectedImageCost, 0, usage.StatusFailed, errCode)
 			_ = r.dao.UpdateAssetResult(context.Background(), job.id, StatusFailed, job.imgTaskID, "", "", errCode)
 			mu.Lock()
 			assetErrors = append(assetErrors, fmt.Sprintf("%s:%s", job.assetTyp, errCode))
@@ -405,6 +431,21 @@ func (r *Runner) Run(ctx context.Context, taskID string) error {
 		if len(res.FileIDs) > 0 {
 			fileID = strings.TrimPrefix(res.FileIDs[0], "sed:")
 		}
+		actualCost := r.imageBillingCost(imageModel, actualImageCount(res))
+		if err := r.settleImageCost(task.UserID, job.id, job.imgTaskID, expectedImageCost, actualCost); err != nil {
+			errCode := imageBillingErrorCode(err)
+			r.writeImageUsage(task.UserID, imageModel, job.id, job.imgTaskID, res, expectedImageCost, 0, usage.StatusFailed, errCode)
+			_ = r.dao.UpdateAssetResult(context.Background(), job.id, StatusFailed, job.imgTaskID, "", "", err.Error())
+			mu.Lock()
+			assetErrors = append(assetErrors, fmt.Sprintf("%s:%s", job.assetTyp, err.Error()))
+			completed++
+			progress := assetGenerationProgress(completed, len(jobs))
+			mu.Unlock()
+			_ = r.dao.UpdateTaskProgress(context.Background(), taskID, progress)
+			return &imgpkg.RunResult{Status: imgpkg.StatusFailed, ErrorCode: errCode, ErrorMessage: err.Error()}
+		}
+		r.updateImageCreditCost(job.id, job.imgTaskID, actualCost)
+		r.writeImageUsage(task.UserID, imageModel, job.id, job.imgTaskID, res, expectedImageCost, actualCost, usage.StatusSuccess, "")
 		_ = r.dao.UpdateAssetResult(context.Background(), job.id, StatusSuccess, job.imgTaskID, url, fileID, "")
 		mu.Lock()
 		completed++
@@ -537,18 +578,21 @@ func (r *Runner) RetryAsset(ctx context.Context, taskID string, assetID uint64, 
 	assetPrompt := r.buildRetryImagePrompt(platformForTask, *prompt, *style, out, task.Requirement, asset.AssetType, extraPrompt)
 	spec := out.ImageSpecs[asset.AssetType]
 	imgTaskID := imgpkg.GenerateTaskID()
+	expectedImageCost := r.imageBillingCost(imageModel, 1)
 	if err := r.dao.MarkTaskRetrying(ctx, taskID); err != nil {
 		return err
 	}
 	if r.imageDAO != nil {
 		_ = r.imageDAO.Create(ctx, &imgpkg.Task{
-			TaskID:  imgTaskID,
-			UserID:  task.UserID,
-			ModelID: imageModel.ID,
-			Prompt:  assetPrompt,
-			N:       1,
-			Size:    spec.Size,
-			Status:  imgpkg.StatusDispatched,
+			TaskID:          imgTaskID,
+			UserID:          task.UserID,
+			ModelID:         imageModel.ID,
+			Prompt:          assetPrompt,
+			N:               1,
+			Size:            spec.Size,
+			Status:          imgpkg.StatusDispatched,
+			KeyID:           0,
+			EstimatedCredit: expectedImageCost,
 		})
 	}
 	if err := r.dao.MarkAssetRetrying(ctx, assetID, imgTaskID, assetPrompt); err != nil {
@@ -557,10 +601,19 @@ func (r *Runner) RetryAsset(ctx context.Context, taskID string, assetID uint64, 
 	release, err := r.acquireImageSlot(ctx)
 	if err != nil {
 		errCode := err.Error()
+		r.markImageTaskFailed(imgTaskID, errCode)
 		_ = r.dao.UpdateAssetResult(context.Background(), assetID, StatusFailed, imgTaskID, "", "", errCode)
+		r.writeImageUsage(task.UserID, imageModel, assetID, imgTaskID, nil, expectedImageCost, 0, usage.StatusFailed, errCode)
 		return r.finalizeTaskAfterRetry(context.Background(), taskID, out, "图片重试失败: "+asset.AssetType+":"+errCode)
 	}
 	defer release()
+	if err := r.preDeductImageCost(ctx, task.UserID, assetID, imgTaskID, expectedImageCost); err != nil {
+		errCode := imageBillingErrorCode(err)
+		r.markImageTaskFailed(imgTaskID, errCode)
+		_ = r.dao.UpdateAssetResult(context.Background(), assetID, StatusFailed, imgTaskID, "", "", err.Error())
+		r.writeImageUsage(task.UserID, imageModel, assetID, imgTaskID, nil, expectedImageCost, 0, usage.StatusFailed, errCode)
+		return r.finalizeTaskAfterRetry(context.Background(), taskID, out, "图片重试失败: "+asset.AssetType+":"+err.Error())
+	}
 	refImages := r.retryReferences(ctx, taskID, *asset, refs)
 	res := r.imageRun.Run(ctx, imgpkg.RunOptions{
 		TaskID:        imgTaskID,
@@ -575,6 +628,8 @@ func (r *Runner) RetryAsset(ctx context.Context, taskID string, assetID uint64, 
 	})
 	if res.Status != imgpkg.StatusSuccess {
 		errCode := imageErrorCode(res)
+		r.refundImageCost(task.UserID, assetID, imgTaskID, expectedImageCost, "ecommerce image retry refund")
+		r.writeImageUsage(task.UserID, imageModel, assetID, imgTaskID, res, expectedImageCost, 0, usage.StatusFailed, errCode)
 		_ = r.dao.UpdateAssetResult(context.Background(), assetID, StatusFailed, imgTaskID, "", "", errCode)
 		return r.finalizeTaskAfterRetry(context.Background(), taskID, out, "图片重试失败: "+asset.AssetType+":"+errCode)
 	}
@@ -586,6 +641,15 @@ func (r *Runner) RetryAsset(ctx context.Context, taskID string, assetID uint64, 
 	if len(res.FileIDs) > 0 {
 		fileID = strings.TrimPrefix(res.FileIDs[0], "sed:")
 	}
+	actualCost := r.imageBillingCost(imageModel, actualImageCount(res))
+	if err := r.settleImageCost(task.UserID, assetID, imgTaskID, expectedImageCost, actualCost); err != nil {
+		errCode := imageBillingErrorCode(err)
+		r.writeImageUsage(task.UserID, imageModel, assetID, imgTaskID, res, expectedImageCost, 0, usage.StatusFailed, errCode)
+		_ = r.dao.UpdateAssetResult(context.Background(), assetID, StatusFailed, imgTaskID, "", "", err.Error())
+		return r.finalizeTaskAfterRetry(context.Background(), taskID, out, "图片重试失败: "+asset.AssetType+":"+err.Error())
+	}
+	r.updateImageCreditCost(assetID, imgTaskID, actualCost)
+	r.writeImageUsage(task.UserID, imageModel, assetID, imgTaskID, res, expectedImageCost, actualCost, usage.StatusSuccess, "")
 	if err := r.dao.UpdateAssetResult(context.Background(), assetID, StatusSuccess, imgTaskID, url, fileID, ""); err != nil {
 		return err
 	}
@@ -761,6 +825,141 @@ func (r *Runner) runVideoAsset(ctx context.Context, taskID string, assetID uint6
 	}
 	_ = r.dao.UpdateTaskProgress(context.Background(), taskID, 95)
 	return nil
+}
+
+func (r *Runner) imageBillingCost(m *modelpkg.Model, n int) int64 {
+	return billing.ComputeImageCost(m, n, 1)
+}
+
+func (r *Runner) preDeductImageCost(ctx context.Context, userID, assetID uint64, imgTaskID string, expectedCost int64) error {
+	if r.billing == nil {
+		return errors.New("图片计费未初始化")
+	}
+	if expectedCost <= 0 {
+		return errors.New("图片模型未配置有效价格")
+	}
+	if err := r.billing.PreDeduct(ctx, userID, 0, expectedCost, imageBillingRef(assetID, imgTaskID), "ecommerce image prepay"); err != nil {
+		if errors.Is(err, billing.ErrInsufficient) {
+			return errors.New("积分不足，请前往「账单与充值」充值后再试")
+		}
+		return fmt.Errorf("图片计费预扣失败: %w", err)
+	}
+	return nil
+}
+
+func (r *Runner) settleImageCost(userID, assetID uint64, imgTaskID string, expectedCost, actualCost int64) error {
+	if r.billing == nil {
+		return errors.New("图片计费未初始化")
+	}
+	if expectedCost <= 0 {
+		return errors.New("图片模型未配置有效价格")
+	}
+	if actualCost <= 0 {
+		actualCost = expectedCost
+	}
+	if err := r.billing.Settle(context.Background(), userID, 0, expectedCost, actualCost, imageBillingRef(assetID, imgTaskID), "ecommerce image settle"); err != nil {
+		if errors.Is(err, billing.ErrInsufficient) {
+			return errors.New("积分不足，请前往「账单与充值」充值后再试")
+		}
+		return fmt.Errorf("图片计费结算失败: %w", err)
+	}
+	return nil
+}
+
+func (r *Runner) refundImageCost(userID, assetID uint64, imgTaskID string, expectedCost int64, reason string) {
+	if r.billing == nil || expectedCost <= 0 {
+		return
+	}
+	if err := r.billing.Refund(context.Background(), userID, 0, expectedCost, imageBillingRef(assetID, imgTaskID), reason); err != nil {
+		logger.L().Warn("ecommerce image billing refund failed",
+			zap.Uint64("asset_id", assetID),
+			zap.Error(err))
+	}
+}
+
+func (r *Runner) updateImageCreditCost(assetID uint64, imgTaskID string, actualCost int64) {
+	if r.imageDAO != nil {
+		_ = r.imageDAO.UpdateCost(context.Background(), imgTaskID, actualCost)
+	}
+	if r.dao != nil {
+		_ = r.dao.UpdateAssetCost(context.Background(), assetID, actualCost)
+	}
+}
+
+func (r *Runner) markImageTaskFailed(imgTaskID, errorCode string) {
+	if r.imageDAO == nil || strings.TrimSpace(imgTaskID) == "" {
+		return
+	}
+	_ = r.imageDAO.MarkFailed(context.Background(), imgTaskID, errorCode)
+}
+
+func (r *Runner) writeImageUsage(userID uint64, m *modelpkg.Model, assetID uint64, imgTaskID string, res *imgpkg.RunResult, expectedCost, actualCost int64, status, errorCode string) {
+	if r.usage == nil || m == nil {
+		return
+	}
+	imageCount := 1
+	accountID := uint64(0)
+	durationMs := 0
+	if res != nil {
+		accountID = res.AccountID
+		durationMs = int(res.DurationMs)
+		if count := actualImageCount(res); count > 0 {
+			imageCount = count
+		}
+	}
+	if status == usage.StatusFailed {
+		imageCount = 0
+		actualCost = 0
+	}
+	r.usage.Write(&usage.Log{
+		UserID:     userID,
+		KeyID:      0,
+		ModelID:    m.ID,
+		AccountID:  accountID,
+		RequestID:  imageBillingRef(assetID, imgTaskID),
+		Type:       usage.TypeImage,
+		ImageCount: imageCount,
+		CreditCost: actualCost,
+		DurationMs: durationMs,
+		Status:     status,
+		ErrorCode:  truncate(errorCode, 64),
+	})
+}
+
+func actualImageCount(res *imgpkg.RunResult) int {
+	if res == nil {
+		return 1
+	}
+	n := len(res.SignedURLs)
+	if n == 0 {
+		n = len(res.FileIDs)
+	}
+	if n == 0 {
+		n = len(res.ImageBytes)
+	}
+	if n == 0 {
+		return 1
+	}
+	return n
+}
+
+func imageBillingRef(assetID uint64, taskID string) string {
+	return truncate(fmt.Sprintf("ecommerce-image:%d:%s", assetID, strings.TrimSpace(taskID)), 64)
+}
+
+func imageBillingErrorCode(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "积分不足"):
+		return "insufficient_balance"
+	case strings.Contains(msg, "计费"):
+		return "billing_error"
+	default:
+		return truncate(msg, 64)
+	}
 }
 
 func (r *Runner) localizeVideoResult(ctx context.Context, assetID uint64, upstreamTaskID, resultURL string) (string, string) {

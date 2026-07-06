@@ -239,6 +239,7 @@ func main() {
 	ecommerceRunner.SetTextGenClient(textGenClient)
 	ecommerceRunner.SetVideoGenClient(videoGenClient)
 	ecommerceRunner.SetAppBaseURL(cfg.App.BaseURL)
+	ecommerceRunner.SetUsageLogger(usageLogger)
 	ecommerceH := ecommerce.NewHandler(ecommerceDAO, ecommerceRunner, auditDAO)
 
 	mailSvc := mailer.New(mailer.Config{
