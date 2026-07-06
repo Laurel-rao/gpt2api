@@ -19,8 +19,8 @@ bash deploy/quick-remote-sync.sh [相关文件...]
 - quick 脚本最后的 `curl` 可能撞上 nginx 重启瞬间而出现一次 connection reset。遇到这种情况,补跑:
 
 ```bash
-curl -fsS http://43.128.120.182:8080/healthz
-ssh root@43.128.120.182 "cd /opt/gpt2api/deploy && docker compose ps"
+curl -fsS http://123.207.53.152:8080/healthz
+ssh root@123.207.53.152 "cd /opt/gpt2api/deploy && docker compose ps"
 ```
 
 只要外部 `/healthz` 正常且 `server/nginx` 运行健康,部署视为成功。
