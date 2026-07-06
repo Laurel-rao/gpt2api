@@ -185,7 +185,7 @@ async function downloadImage() {
 </script>
 
 <template>
-  <el-dialog v-model="visible" :width="width" append-to-body :title="title" class="image-preview-dialog">
+  <el-dialog v-model="visible" :width="width" append-to-body align-center :title="title" class="image-preview-dialog">
     <div class="image-preview-shell">
       <div class="image-preview-toolbar">
         <div class="image-preview-tools">
@@ -229,16 +229,16 @@ async function downloadImage() {
         @pointercancel="stopDrag"
         @dblclick="toggleZoom"
       >
-        <img
-          v-if="activeSrc"
-          class="image-preview-image"
-          :src="activeSrc"
-          :alt="alt || title"
-          :style="imageStyle"
-          draggable="false"
-          @load="onImageLoad"
-          @error="onImageError"
-        >
+        <div v-if="activeSrc" class="image-preview-frame" :style="imageStyle">
+          <img
+            class="image-preview-image"
+            :src="activeSrc"
+            :alt="alt || title"
+            draggable="false"
+            @load="onImageLoad"
+            @error="onImageError"
+          >
+        </div>
         <el-empty v-else-if="!currentLoading" description="暂无图片" />
       </div>
     </div>
@@ -246,13 +246,31 @@ async function downloadImage() {
 </template>
 
 <style scoped lang="scss">
-.image-preview-dialog :deep(.el-dialog__body) {
-  padding-top: 8px;
+.image-preview-dialog {
+  :deep(.el-dialog) {
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100vh - 32px);
+    margin: 0;
+  }
+
+  :deep(.el-dialog__header) {
+    flex: 0 0 auto;
+  }
+
+  :deep(.el-dialog__body) {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+    padding-top: 8px;
+  }
 }
 
 .image-preview-shell {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 12px;
+  min-height: 0;
 }
 
 .image-preview-toolbar {
@@ -304,10 +322,13 @@ async function downloadImage() {
 
 .image-preview-stage {
   position: relative;
-  display: grid;
-  place-items: center;
-  min-height: 420px;
-  height: min(72vh, 760px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-height: 0;
+  height: clamp(320px, calc(100vh - 230px), 680px);
+  padding: 18px;
   overflow: hidden;
   border: 1px solid #d8e0ee;
   border-radius: 8px;
@@ -328,18 +349,29 @@ async function downloadImage() {
   cursor: grabbing;
 }
 
-.image-preview-image {
+.image-preview-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   max-width: 100%;
   max-height: 100%;
-  object-fit: contain;
-  border-radius: 6px;
-  box-shadow: 0 12px 32px rgba(15, 23, 42, .16);
   transform-origin: center center;
   transition: transform .12s ease;
   will-change: transform;
 }
 
-.image-preview-stage.is-dragging .image-preview-image {
+.image-preview-image {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: calc(clamp(320px, calc(100vh - 230px), 680px) - 36px);
+  object-fit: contain;
+  border-radius: 6px;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, .16);
+}
+
+.image-preview-stage.is-dragging .image-preview-frame {
   transition: none;
 }
 
@@ -358,8 +390,12 @@ async function downloadImage() {
   }
 
   .image-preview-stage {
-    min-height: 320px;
-    height: 64vh;
+    height: clamp(280px, calc(100vh - 250px), 62vh);
+    padding: 12px;
+  }
+
+  .image-preview-image {
+    max-height: calc(clamp(280px, calc(100vh - 250px), 62vh) - 24px);
   }
 }
 </style>

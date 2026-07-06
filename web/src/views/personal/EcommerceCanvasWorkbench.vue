@@ -16,6 +16,7 @@ import {
   Refresh,
   RefreshRight,
   Search,
+  VideoPlay,
   View,
   ZoomIn,
   ZoomOut,
@@ -91,6 +92,15 @@ interface CanvasFitInsets {
   left: number
 }
 
+interface MiniMapNode {
+  id: string
+  node: CanvasNode
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
 type CanvasFlowNodeLike = {
   id: string
   data?: CanvasFlowNodeData
@@ -109,6 +119,10 @@ const POLL_INTERVAL = 2500
 const TASK_PAGE_SIZE = 12
 const canvasMinZoom = 0.04
 const canvasMaxZoom = 1.5
+const MINIMAP_WIDTH = 190
+const MINIMAP_HEIGHT = 132
+const MINIMAP_HEADER_HEIGHT = 30
+const MINIMAP_PADDING = 10
 
 const optionsLoading = ref(false)
 const tasksLoading = ref(false)
@@ -138,6 +152,9 @@ const showMiniMap = ref(true)
 const showNodeMedia = ref(true)
 const showInspector = ref(true)
 const extraAssetOptionsExpanded = ref(false)
+const referenceImagesExpanded = ref(false)
+const historyExpanded = ref(false)
+const detailPreviewExpanded = ref(false)
 const initialViewport = { x: 26, y: 72, zoom: 0.86 }
 const { getViewport, setViewport } = useVueFlow({ id: 'ecommerce-canvas-flow' })
 const customNodes = ref<CanvasNode[]>([])
@@ -324,6 +341,29 @@ const selectedExtraAssetLabels = computed(() => ECOMMERCE_EXTRA_ASSET_OPTIONS
   .filter((item) => form.extra_asset_types.includes(item.value))
   .map((item) => item.label))
 const extraAssetSummary = computed(() => selectedExtraAssetLabels.value.length ? selectedExtraAssetLabels.value.join('、') : '默认图片链路')
+const miniMapNodes = computed<MiniMapNode[]>(() => {
+  const layoutNodes = canvasLayoutNodes()
+  const bounds = canvasBounds(layoutNodes)
+  if (!bounds) return []
+  const mapWidth = MINIMAP_WIDTH - MINIMAP_PADDING * 2
+  const mapHeight = MINIMAP_HEIGHT - MINIMAP_HEADER_HEIGHT - MINIMAP_PADDING * 2
+  const scale = Math.min(
+    mapWidth / Math.max(bounds.width, 1),
+    mapHeight / Math.max(bounds.height, 1),
+  )
+  const usedWidth = bounds.width * scale
+  const usedHeight = bounds.height * scale
+  const offsetX = MINIMAP_PADDING + Math.max(0, (mapWidth - usedWidth) / 2)
+  const offsetY = MINIMAP_HEADER_HEIGHT + MINIMAP_PADDING + Math.max(0, (mapHeight - usedHeight) / 2)
+  return layoutNodes.map((item) => ({
+    id: item.id,
+    node: item.node,
+    left: offsetX + (item.position.x - bounds.x) * scale,
+    top: offsetY + (item.position.y - bounds.y) * scale,
+    width: Math.max(8, item.width * scale),
+    height: Math.max(5, item.height * scale),
+  }))
+})
 
 const canvasNodes = computed<CanvasNode[]>(() => {
   const hasTask = !!activeTask.value
@@ -1092,12 +1132,25 @@ function resetDraft() {
   stopPolling()
 }
 
+function fillFormFromTask(task: EcommerceTask) {
+  form.platform_id = task.platform_id || form.platform_id
+  form.prompt_template_id = task.prompt_template_id || form.prompt_template_id
+  form.style_template_id = task.style_template_id || form.style_template_id
+  form.requirement = task.requirement || ''
+  form.reference_images = Array.isArray(task.reference_images) ? [...task.reference_images] : []
+  form.product_asset_id = task.product_asset_id || ''
+  form.model_asset_id = task.model_asset_id || ''
+  form.extra_asset_types = Array.isArray(task.extra_asset_types) ? [...task.extra_asset_types] : []
+  form.language = task.language || platforms.value.find((item) => item.id === form.platform_id)?.language || form.language || 'zh-CN'
+}
+
 async function retryWholeTask() {
   if (!activeTask.value) return
   submitting.value = true
   try {
     const task = await retryEcommerceTask(activeTask.value.task_id)
     activeTask.value = task
+    fillFormFromTask(task)
     selectedNodeID.value = 'copy'
     brokenAssetIDs.value = new Set()
     syncFlowElements(true)
@@ -1135,6 +1188,7 @@ async function submit() {
       extra_asset_types: form.extra_asset_types,
     })
     activeTask.value = task
+    fillFormFromTask(task)
     selectedNodeID.value = 'copy'
     brokenAssetIDs.value = new Set()
     syncFlowElements(true)
@@ -1155,6 +1209,7 @@ async function openTask(task: EcommerceTask) {
   try {
     const fresh = await getEcommerceTask(task.task_id)
     activeTask.value = fresh
+    fillFormFromTask(fresh)
     brokenAssetIDs.value = new Set()
     selectedNodeID.value = 'brief'
     syncFlowElements(true)
@@ -1185,6 +1240,7 @@ async function cancelTask() {
   canceling.value = true
   try {
     activeTask.value = await cancelEcommerceTask(activeTask.value.task_id)
+    fillFormFromTask(activeTask.value)
     stopPolling()
     await loadTasks()
     ElMessage.success('已中断生成')
@@ -1203,6 +1259,7 @@ async function retryAsset(asset: EcommerceAsset) {
     await retryEcommerceAsset(activeTask.value.task_id, asset.id, retryPrompts.value[asset.id] || '')
     const fresh = await getEcommerceTask(activeTask.value.task_id)
     activeTask.value = fresh
+    fillFormFromTask(fresh)
     syncFlowElements()
     retryPrompts.value = { ...retryPrompts.value, [asset.id]: '' }
     const next = new Set(brokenAssetIDs.value)
@@ -1227,6 +1284,7 @@ function startPolling(taskID: string) {
       if (pollingTaskID.value !== taskID) return
       if (activeTask.value?.task_id === taskID) {
         activeTask.value = fresh
+        fillFormFromTask(fresh)
         syncFlowElements()
       }
       if (fresh.status !== 'queued' && fresh.status !== 'running' && !latestAssetsByType(fresh.assets || []).some((asset) => isAssetWorking(asset.status))) {
@@ -1430,7 +1488,9 @@ watch(
   () => form.platform_id,
   (id) => {
     const platform = platforms.value.find((item) => item.id === id)
-    form.language = platform?.language || 'zh-CN'
+    form.language = activeTask.value?.platform_id === id
+      ? activeTask.value.language || platform?.language || 'zh-CN'
+      : platform?.language || 'zh-CN'
   },
 )
 
@@ -1446,7 +1506,9 @@ onBeforeUnmount(() => {
       <header>
         <span>Commerce Canvas</span>
         <h1>电商画布</h1>
-        <p>按运营决策链路组织商品资料、平台策略、素材生成和交付导出。</p>
+        <el-tooltip content="按运营决策链路组织商品资料、平台策略、素材生成和交付导出。" placement="right">
+          <p>商品资料、平台策略、素材生成和交付导出。</p>
+        </el-tooltip>
       </header>
 
       <el-form label-position="top" class="canvas-form">
@@ -1540,27 +1602,34 @@ onBeforeUnmount(() => {
           </el-checkbox-group>
         </el-form-item>
 
-        <el-form-item label="参考图片">
-          <el-upload
-            class="reference-upload"
-            drag
-            multiple
-            accept="image/*"
-            :auto-upload="false"
-            :show-file-list="false"
-            :on-change="onImageChange"
-          >
-            <div class="upload-copy">
-              <b>拖入参考图</b>
-              <span>最多 4 张，每张 20MB 内</span>
+        <el-form-item class="reference-form-item">
+          <button type="button" class="compact-toggle" @click="referenceImagesExpanded = !referenceImagesExpanded">
+            <span>参考图片</span>
+            <small>{{ form.reference_images.length ? `${form.reference_images.length}/${MAX_IMAGES} 张已选` : '未添加，可选' }}</small>
+            <el-icon :class="{ expanded: referenceImagesExpanded }"><ArrowDown /></el-icon>
+          </button>
+          <template v-if="referenceImagesExpanded">
+            <el-upload
+              class="reference-upload"
+              drag
+              multiple
+              accept="image/*"
+              :auto-upload="false"
+              :show-file-list="false"
+              :on-change="onImageChange"
+            >
+              <div class="upload-copy">
+                <b>拖入参考图</b>
+                <span>最多 4 张，每张 20MB 内</span>
+              </div>
+            </el-upload>
+            <div v-if="form.reference_images.length" class="reference-strip">
+              <div v-for="(img, index) in form.reference_images" :key="`${img.slice(0, 32)}-${index}`" class="reference-thumb">
+                <img :src="img" :alt="`参考图 ${index + 1}`" />
+                <button type="button" @click="removeImage(index)">移除</button>
+              </div>
             </div>
-          </el-upload>
-          <div v-if="form.reference_images.length" class="reference-strip">
-            <div v-for="(img, index) in form.reference_images" :key="`${img.slice(0, 32)}-${index}`" class="reference-thumb">
-              <img :src="img" :alt="`参考图 ${index + 1}`" />
-              <button type="button" @click="removeImage(index)">移除</button>
-            </div>
-          </div>
+          </template>
         </el-form-item>
 
         <div class="primary-actions">
@@ -1571,30 +1640,36 @@ onBeforeUnmount(() => {
 
       <section class="history-panel">
         <div class="history-head">
-          <div>
+          <button type="button" class="history-toggle" @click="historyExpanded = !historyExpanded">
             <span>History</span>
             <b>历史任务</b>
-          </div>
+            <small>{{ tasksTotal || tasks.length }} 条</small>
+            <el-icon :class="{ expanded: historyExpanded }"><ArrowDown /></el-icon>
+          </button>
           <el-button :icon="Refresh" :loading="tasksLoading" @click="loadTasks">刷新</el-button>
         </div>
-        <el-input v-model="taskKeyword" placeholder="搜索商品资料" clearable @keyup.enter="loadTasks">
-          <template #prefix><el-icon><Search /></el-icon></template>
-        </el-input>
-        <div class="history-list" v-loading="tasksLoading">
-          <button
-            v-for="task in tasks"
-            :key="task.task_id"
-            type="button"
-            :class="{ active: activeTask?.task_id === task.task_id }"
-            @click="openTask(task)"
-          >
-            <b>{{ compactText(task.output_json?.product_title || task.requirement || '未命名任务', 30) }}</b>
-            <span>{{ task.platform_name || '未知平台' }} · {{ task.language_name || ecommerceLanguageName(task.language) }}</span>
-            <small>{{ formatDateTime(task.created_at) }}</small>
-            <em :class="statusTone[task.status] || 'muted'">{{ statusText[task.status] || task.status }}</em>
-          </button>
-          <el-empty v-if="!tasks.length && !tasksLoading" description="暂无历史任务" :image-size="70" />
-        </div>
+        <template v-if="historyExpanded">
+          <el-input v-model="taskKeyword" placeholder="搜索商品资料" clearable @keyup.enter="loadTasks">
+            <template #prefix><el-icon><Search /></el-icon></template>
+          </el-input>
+          <div class="history-list" v-loading="tasksLoading">
+            <button
+              v-for="task in tasks"
+              :key="task.task_id"
+              type="button"
+              :class="{ active: activeTask?.task_id === task.task_id }"
+              @click="openTask(task)"
+            >
+              <span class="history-copy">
+                <b>{{ compactText(task.output_json?.product_title || task.requirement || '未命名任务', 48) }}</b>
+                <span>{{ task.platform_name || '未知平台' }} · {{ task.language_name || ecommerceLanguageName(task.language) }}</span>
+                <small>{{ formatDateTime(task.created_at) }}</small>
+              </span>
+              <em :class="statusTone[task.status] || 'muted'">{{ statusText[task.status] || task.status }}</em>
+            </button>
+            <el-empty v-if="!tasks.length && !tasksLoading" description="暂无历史任务" :image-size="70" />
+          </div>
+        </template>
       </section>
     </aside>
 
@@ -1602,7 +1677,9 @@ onBeforeUnmount(() => {
       <section class="canvas-topbar">
         <div>
           <span>Open Canvas</span>
-          <h2>{{ activeTask ? heroTitle : '从商品判断开始，而不是从生成按钮开始' }}</h2>
+          <el-tooltip :content="activeTask ? heroTitle : '从商品判断开始，而不是从生成按钮开始'" placement="bottom" :show-after="300">
+            <h2>{{ activeTask ? heroTitle : '从商品判断开始，而不是从生成按钮开始' }}</h2>
+          </el-tooltip>
         </div>
         <div class="task-status">
           <span :class="['status-pill', statusClass]">{{ statusLabel }}</span>
@@ -1753,18 +1830,18 @@ onBeforeUnmount(() => {
             <span>{{ canvasNodes.length }} 节点</span>
           </div>
           <button
-            v-for="node in canvasNodes"
-            :key="`mini-${node.id}`"
+            v-for="item in miniMapNodes"
+            :key="`mini-${item.id}`"
             type="button"
-            :class="['minimap-node', node.status, { active: selectedNodeID === node.id }]"
+            :class="['minimap-node', item.node.status, { active: selectedNodeID === item.node.id }]"
             :style="{
-              left: `${Math.max(8, Math.min(188, 8 + node.x / 11))}px`,
-              top: `${Math.max(36, Math.min(126, 36 + node.y / 6))}px`,
-              width: `${Math.max(18, node.w / 16)}px`,
-              height: `${Math.max(12, node.h / 18)}px`,
+              left: `${item.left}px`,
+              top: `${item.top}px`,
+              width: `${item.width}px`,
+              height: `${item.height}px`,
             }"
-            :title="node.title"
-            @click="selectNode(node.id)"
+            :title="item.node.title"
+            @click="selectNode(item.node.id)"
           />
         </div>
       </section>
@@ -1927,8 +2004,12 @@ onBeforeUnmount(() => {
         </section>
 
         <section v-if="detailDoc" class="inspector-card detail-preview-card">
-          <b>详情页预览</b>
-          <iframe :srcdoc="detailDoc" sandbox="" />
+          <button type="button" class="compact-toggle" @click="detailPreviewExpanded = !detailPreviewExpanded">
+            <span>详情页预览</span>
+            <small>{{ detailPreviewExpanded ? '已展开' : '点击展开 iframe' }}</small>
+            <el-icon :class="{ expanded: detailPreviewExpanded }"><ArrowDown /></el-icon>
+          </button>
+          <iframe v-if="detailPreviewExpanded" :srcdoc="detailDoc" sandbox="" />
         </section>
       </template>
     </aside>
@@ -1964,6 +2045,7 @@ onBeforeUnmount(() => {
       v-model="nodeDetailVisible"
       width="760px"
       append-to-body
+      align-center
       :title="selectedNode ? `${selectedNode.title} · 节点详情` : '节点详情'"
       class="canvas-node-dialog canvas-detail-dialog"
     >
@@ -2058,7 +2140,7 @@ onBeforeUnmount(() => {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="editDialogVisible" width="520px" append-to-body title="编辑画布节点" class="canvas-node-dialog">
+    <el-dialog v-model="editDialogVisible" width="520px" append-to-body align-center title="编辑画布节点" class="canvas-node-dialog">
       <el-form label-position="top">
         <el-form-item label="节点标题">
           <el-input v-model="editingNode.title" maxlength="60" show-word-limit />
@@ -2073,7 +2155,7 @@ onBeforeUnmount(() => {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="downstreamDialogVisible" width="540px" append-to-body title="新增下游节点" class="canvas-node-dialog">
+    <el-dialog v-model="downstreamDialogVisible" width="540px" append-to-body align-center title="新增下游节点" class="canvas-node-dialog">
       <el-form label-position="top">
         <el-form-item label="节点类型">
           <el-radio-group v-model="downstreamForm.kind">
@@ -2128,15 +2210,29 @@ onBeforeUnmount(() => {
   --working-ink: #9a5a00;
   --failed-bg: #fee2e2;
   --failed-ink: #991b1b;
-  --panel-pad: 16px;
-  --control-radius: 10px;
-  height: calc(100vh - 60px);
+  --font-size-xs: 12px;
+  --font-size-sm: 13px;
+  --font-size-md: 14px;
+  --spacing-xs: 4px;
+  --spacing-sm: 6px;
+  --spacing-md: 8px;
+  --spacing-lg: 12px;
+  --card-padding: 8px;
+  --card-radius: 6px;
+  --control-height: 24px;
+  --compact-height: 20px;
+  --panel-pad: 10px;
+  --control-radius: 6px;
+  height: 100%;
+  max-height: 100%;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
+  grid-template-columns: minmax(260px, 300px) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   background: var(--bg);
   color: var(--ink);
+  font-size: var(--font-size-sm);
+  line-height: 1.35;
   overflow: hidden;
   position: relative;
 }
@@ -2176,32 +2272,34 @@ onBeforeUnmount(() => {
 .inspector-panel {
   min-height: 0;
   height: 100%;
+  max-height: 100%;
   background: var(--panel);
   border-right: 1px solid var(--line);
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--panel-pad);
 }
 
 .inspector-panel {
   position: absolute;
   z-index: 12;
-  top: 16px;
-  right: 16px;
-  bottom: 16px;
-  width: min(320px, calc(100vw - 380px));
-  min-width: 280px;
+  top: var(--spacing-md);
+  right: var(--spacing-md);
+  bottom: var(--spacing-md);
+  width: min(300px, calc(100vw - 360px));
+  min-width: 270px;
   min-height: 0;
   border-right: 0;
   border: 1px solid var(--line);
-  border-radius: 16px;
-  box-shadow: 0 24px 70px var(--shadow);
+  border-radius: var(--card-radius);
+  box-shadow: 0 14px 42px var(--shadow);
 }
 
 .inspector-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--spacing-sm);
 }
 
 .inspector-head > div {
@@ -2210,12 +2308,12 @@ onBeforeUnmount(() => {
 
 .inspector-close {
   flex: 0 0 auto;
-  width: 30px;
-  height: 30px;
+  width: var(--control-height);
+  height: var(--control-height);
   display: inline-grid;
   place-items: center;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--card-radius);
   background: var(--button-bg);
   color: var(--ink);
   cursor: pointer;
@@ -2233,46 +2331,67 @@ onBeforeUnmount(() => {
   span {
     display: block;
     color: var(--muted);
-    font-size: 10px;
-    letter-spacing: 0.12em;
+    font-size: 9px;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
   }
 
   h1,
   h2 {
-    margin: 8px 0;
+    margin: var(--spacing-xs) 0;
     color: var(--ink);
-    font-size: 22px;
-    line-height: 1.1;
+    font-size: 17px;
+    line-height: 1.12;
   }
 
   p {
+    max-width: 100%;
     margin: 0;
+    overflow: hidden;
     color: var(--muted);
-    font-size: 13px;
-    line-height: 1.55;
+    font-size: var(--font-size-xs);
+    line-height: var(--compact-height);
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 
 .canvas-form {
-  margin-top: 14px;
+  margin-top: var(--spacing-md);
 }
 
 .form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  gap: var(--spacing-sm);
+}
+
+:deep(.el-button) {
+  min-height: var(--control-height);
+  height: var(--control-height);
+  padding: 0 var(--spacing-md);
+  border-radius: var(--card-radius);
+  font-size: var(--font-size-xs);
+  line-height: var(--control-height);
+}
+
+:deep(.el-button .el-icon) {
+  font-size: 13px;
+}
+
+:deep(.el-button + .el-button) {
+  margin-left: 0;
 }
 
 :deep(.el-form-item__label) {
   color: var(--soft);
-  margin-bottom: 5px;
-  font-size: 13px;
+  margin-bottom: 2px;
+  font-size: var(--font-size-xs);
   line-height: 1.2;
 }
 
 :deep(.el-form-item) {
-  margin-bottom: 12px;
+  margin-bottom: var(--spacing-md);
 }
 
 :deep(.el-textarea__inner),
@@ -2285,23 +2404,24 @@ onBeforeUnmount(() => {
 }
 
 :deep(.el-textarea__inner) {
-  min-height: 92px !important;
-  padding: 9px 10px;
+  min-height: 70px !important;
+  padding: var(--spacing-sm) var(--spacing-md);
   color: var(--ink);
-  font-size: 13px;
-  line-height: 1.45;
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
 }
 
 :deep(.el-input__wrapper),
 :deep(.el-select__wrapper) {
-  min-height: 34px;
-  padding: 0 10px;
+  min-height: var(--control-height);
+  padding: 0 var(--spacing-md);
 }
 
 :deep(.el-input__inner),
 :deep(.el-select__selected-item) {
   color: var(--ink);
-  font-size: 13px;
+  font-size: var(--font-size-xs);
+  line-height: var(--control-height);
 }
 
 :deep(.el-input__inner::placeholder),
@@ -2318,8 +2438,8 @@ onBeforeUnmount(() => {
 
 :deep(.el-input__count),
 :deep(.el-textarea .el-input__count) {
-  right: 10px;
-  bottom: 6px;
+  right: var(--spacing-md);
+  bottom: var(--spacing-xs);
   padding: 1px 6px;
   border-radius: 999px;
   background: var(--field-count-bg);
@@ -2330,24 +2450,28 @@ onBeforeUnmount(() => {
 .extra-asset-form-item {
   :deep(.el-form-item__content) {
     display: grid;
-    gap: 8px;
+    gap: var(--spacing-sm);
   }
 }
 
-.extra-asset-toggle {
+.extra-asset-toggle,
+.compact-toggle,
+.history-toggle {
   width: 100%;
-  min-height: 42px;
+  height: var(--compact-height);
+  min-height: var(--compact-height);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 8px 10px;
+  gap: var(--spacing-sm);
+  padding: 0 var(--spacing-sm);
   border: 1px solid var(--field-border);
-  border-radius: 10px;
+  border-radius: var(--card-radius);
   background: var(--field-bg);
   color: var(--ink);
   text-align: left;
   cursor: pointer;
+  overflow: hidden;
   transition: border-color 0.16s ease, background 0.16s ease;
 
   &:hover {
@@ -2356,27 +2480,41 @@ onBeforeUnmount(() => {
   }
 
   span {
+    flex: 1 1 auto;
     min-width: 0;
-    display: grid;
-    gap: 3px;
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    overflow: hidden;
+  }
+
+  b,
+  > span,
+  > small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   b {
-    font-size: 13px;
-    line-height: 1.1;
+    flex: 0 0 auto;
+    font-size: var(--font-size-xs);
+    line-height: var(--compact-height);
   }
 
   small {
+    flex: 1 1 auto;
     overflow: hidden;
     color: var(--muted);
     font-size: 11px;
-    line-height: 1.2;
+    line-height: var(--compact-height);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .el-icon {
     flex: 0 0 auto;
+    font-size: 12px;
     transition: transform 0.16s ease;
 
     &.expanded {
@@ -2388,7 +2526,7 @@ onBeforeUnmount(() => {
 .canvas-extra-asset-options {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: var(--spacing-xs);
 }
 
 .canvas-extra-asset-options :deep(.el-checkbox-button) {
@@ -2398,9 +2536,9 @@ onBeforeUnmount(() => {
 .canvas-extra-asset-options :deep(.el-checkbox-button__inner) {
   display: block;
   width: 100%;
-  min-height: 38px;
-  padding: 10px 12px;
-  border-radius: 8px;
+  min-height: var(--control-height);
+  padding: 4px var(--spacing-sm);
+  border-radius: var(--card-radius);
   border-left: 1px solid var(--el-border-color);
   text-align: left;
   overflow: hidden;
@@ -2412,7 +2550,7 @@ onBeforeUnmount(() => {
   display: block;
   overflow: hidden;
   color: var(--ink);
-  font-size: 13px;
+  font-size: var(--font-size-xs);
   font-weight: 800;
   line-height: 1.2;
   text-overflow: ellipsis;
@@ -2427,6 +2565,7 @@ onBeforeUnmount(() => {
 
 .reference-upload {
   width: 100%;
+  margin-top: var(--spacing-sm);
 
   :deep(.el-upload),
   :deep(.el-upload-dragger) {
@@ -2436,8 +2575,8 @@ onBeforeUnmount(() => {
   :deep(.el-upload-dragger) {
     background: var(--field-bg);
     border-color: var(--field-border);
-    border-radius: 12px;
-    padding: 14px;
+    border-radius: var(--card-radius);
+    padding: var(--spacing-md);
   }
 
   :deep(.el-upload-dragger:hover) {
@@ -2447,9 +2586,9 @@ onBeforeUnmount(() => {
 
 .upload-copy {
   display: grid;
-  gap: 4px;
+  gap: 2px;
   color: var(--ink);
-  font-size: 13px;
+  font-size: var(--font-size-xs);
 
   span {
     color: var(--muted);
@@ -2460,27 +2599,27 @@ onBeforeUnmount(() => {
 .reference-strip {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 10px;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
 }
 
 .reference-thumb {
-  width: 58px;
+  width: 48px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--card-radius);
   overflow: hidden;
   background: var(--panel-2);
 
   img {
     width: 100%;
-    height: 48px;
+    height: 38px;
     display: block;
     object-fit: cover;
   }
 
   button {
     width: 100%;
-    height: 22px;
+    height: var(--compact-height);
     border: 0;
     color: var(--ink);
     background: var(--button-bg);
@@ -2491,8 +2630,8 @@ onBeforeUnmount(() => {
 .primary-actions,
 .inspector-actions {
   display: flex;
-  gap: 8px;
-  margin-top: 10px;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
 }
 
 .primary-actions .el-button {
@@ -2500,8 +2639,8 @@ onBeforeUnmount(() => {
 }
 
 .history-panel {
-  margin-top: 18px;
-  padding-top: 16px;
+  margin-top: var(--spacing-md);
+  padding-top: var(--spacing-md);
   border-top: 1px solid var(--line);
 }
 
@@ -2509,62 +2648,112 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 10px;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-sm);
 
   span {
     display: block;
     color: var(--muted);
-    font-size: 10px;
-    letter-spacing: 0.12em;
+    font-size: 9px;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
   }
 
   b {
     display: block;
-    margin-top: 3px;
-    font-size: 16px;
+    margin-top: 0;
+    font-size: var(--font-size-xs);
+    line-height: var(--compact-height);
+  }
+}
+
+.history-toggle {
+  flex: 1 1 auto;
+
+  span {
+    flex: 0 0 auto;
   }
 }
 
 .history-list {
   display: grid;
-  gap: 8px;
-  margin-top: 10px;
+  gap: var(--spacing-xs);
+  margin-top: var(--spacing-sm);
 }
 
 .history-list button {
-  position: relative;
-  min-height: 68px;
-  padding: 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--spacing-sm);
+  min-height: 46px;
+  padding: var(--spacing-sm);
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: var(--card-radius);
   background: var(--panel-2);
   color: var(--ink);
   text-align: left;
   cursor: pointer;
 
-  b,
-  span,
-  small {
-    display: block;
+  .history-copy {
+    min-width: 0;
+    display: grid;
+    gap: 2px;
   }
 
-  span,
-  small {
-    margin-top: 4px;
+  .history-copy b,
+  .history-copy span,
+  .history-copy small {
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .history-copy b {
+    padding-right: var(--spacing-xs);
+  }
+
+  .history-copy span,
+  .history-copy small {
     color: var(--muted);
+    font-size: 11px;
   }
 
   em {
-    position: absolute;
-    right: 12px;
-    top: 12px;
-    padding: 3px 8px;
+    justify-self: end;
+    height: var(--compact-height);
+    max-width: 56px;
+    padding: 0 var(--spacing-sm);
     border-radius: 999px;
     background: var(--button-bg);
     color: var(--ink);
     font-style: normal;
     font-size: 11px;
+    line-height: var(--compact-height);
+    text-align: center;
+    white-space: nowrap;
+
+    &.success {
+      background: var(--success-bg);
+      color: var(--success-ink);
+    }
+
+    &.working {
+      background: var(--working-bg);
+      color: var(--working-ink);
+    }
+
+    &.failed {
+      background: var(--failed-bg);
+      color: var(--failed-ink);
+    }
+
+    &.muted {
+      background: var(--button-bg);
+      color: var(--muted);
+    }
   }
 
   &.active {
@@ -2587,45 +2776,76 @@ onBeforeUnmount(() => {
 }
 
 .canvas-topbar {
-  min-height: 104px;
+  height: var(--compact-height);
+  min-height: var(--compact-height);
   display: grid;
-  grid-template-columns: minmax(340px, 1fr) auto;
-  gap: 10px 18px;
+  grid-template-columns: minmax(220px, 1fr) auto auto;
+  gap: var(--spacing-sm);
   align-items: center;
-  padding: 14px 360px 14px 22px;
+  padding: 0 316px 0 var(--spacing-md);
   border-bottom: 1px solid var(--line);
   background: var(--panel);
+  overflow: hidden;
 }
 
 .canvas-topbar > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
   min-width: 0;
 
+  span {
+    flex: 0 0 auto;
+    line-height: var(--compact-height);
+  }
+
   h2 {
-    max-width: 880px;
-    font-size: 26px;
-    overflow-wrap: anywhere;
+    max-width: 100%;
+    margin: 0;
+    overflow: hidden;
+    font-size: var(--font-size-sm);
+    line-height: var(--compact-height);
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 
 .task-status {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 10px;
+  gap: var(--spacing-sm);
   color: var(--muted);
   justify-self: end;
   min-width: 0;
+  height: var(--compact-height);
+  overflow: hidden;
 
   b {
     color: var(--ink);
+    font-size: var(--font-size-sm);
+    line-height: var(--compact-height);
+  }
+
+  small {
+    max-width: 220px;
+    overflow: hidden;
+    font-size: var(--font-size-xs);
+    line-height: var(--compact-height);
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 
 .status-pill {
-  padding: 4px 9px;
+  height: var(--compact-height);
+  padding: 0 var(--spacing-sm);
   border-radius: 999px;
   background: var(--button-bg);
   color: var(--ink);
+  font-size: var(--font-size-xs);
+  line-height: var(--compact-height);
+  white-space: nowrap;
 
   &.success { background: var(--success-bg); color: var(--success-ink); }
   &.working { background: var(--working-bg); color: var(--working-ink); }
@@ -2634,13 +2854,20 @@ onBeforeUnmount(() => {
 
 .topbar-actions {
   display: flex;
-  flex-wrap: wrap;
-  grid-column: 1 / -1;
-  gap: 8px;
+  flex-wrap: nowrap;
+  gap: var(--spacing-xs);
   min-width: 0;
+  height: var(--compact-height);
+  overflow: hidden;
 
   :deep(.el-button) {
+    flex: 0 0 auto;
+    height: var(--compact-height);
+    min-height: var(--compact-height);
+    padding: 0 var(--spacing-sm);
     margin-left: 0;
+    font-size: 11px;
+    line-height: var(--compact-height);
   }
 }
 
@@ -2678,61 +2905,68 @@ onBeforeUnmount(() => {
 .canvas-controls {
   position: absolute;
   z-index: 5;
-  left: 20px;
-  top: 20px;
+  left: var(--spacing-md);
+  top: var(--spacing-md);
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  max-width: calc(100% - 380px);
-  padding: 6px;
+  gap: var(--spacing-xs);
+  max-width: calc(100% - 340px);
+  padding: var(--spacing-xs);
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: var(--card-radius);
   background: var(--control-bg);
   backdrop-filter: blur(14px);
-  box-shadow: 0 18px 50px var(--shadow);
+  box-shadow: 0 12px 32px var(--shadow);
 
   :deep(.el-button) {
+    min-width: var(--control-height);
+    height: var(--control-height);
+    min-height: var(--control-height);
+    padding: 0 var(--spacing-sm);
     border-color: var(--line);
     background: var(--button-bg);
     color: var(--ink);
+    font-size: 11px;
   }
 }
 
 .canvas-hint {
   position: absolute;
   z-index: 5;
-  left: 18px;
-  bottom: 18px;
+  left: var(--spacing-md);
+  bottom: var(--spacing-md);
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  max-width: calc(100% - 380px);
+  gap: var(--spacing-xs);
+  max-width: calc(100% - 340px);
 
   span {
-    padding: 5px 8px;
+    height: var(--compact-height);
+    padding: 0 var(--spacing-sm);
     border: 1px solid var(--line);
     border-radius: 999px;
     background: var(--control-bg);
     color: var(--muted);
     font-size: 11px;
+    line-height: var(--compact-height);
   }
 }
 
 .canvas-node {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--spacing-sm);
   width: 100%;
   height: 100%;
-  padding: 14px;
+  padding: var(--card-padding);
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: var(--card-radius);
   background: linear-gradient(145deg, var(--node-bg), var(--node-bg-2));
   color: var(--ink);
   text-align: left;
   cursor: grab;
-  box-shadow: 0 24px 60px var(--shadow);
+  box-shadow: 0 14px 34px var(--shadow);
   user-select: none;
   box-sizing: border-box;
   transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
@@ -2745,7 +2979,7 @@ onBeforeUnmount(() => {
   header {
     display: flex;
     justify-content: space-between;
-    gap: 12px;
+    gap: var(--spacing-sm);
     color: var(--muted);
     font-size: 10px;
     letter-spacing: 0.08em;
@@ -2753,20 +2987,27 @@ onBeforeUnmount(() => {
   }
 
   strong {
-    font-size: 19px;
-    line-height: 1.1;
+    overflow: hidden;
+    font-size: var(--font-size-md);
+    line-height: 1.15;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   p {
     margin: 0;
+    display: -webkit-box;
+    overflow: hidden;
     color: var(--muted);
     font-size: 12px;
-    line-height: 1.45;
+    line-height: 1.35;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
   }
 
   &.selected {
     border-color: var(--accent);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent), 0 24px 60px var(--shadow);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent), 0 14px 34px var(--shadow);
   }
 
   &.success {
@@ -2800,14 +3041,16 @@ onBeforeUnmount(() => {
 .node-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--spacing-xs);
 
   span {
-    padding: 3px 7px;
+    height: var(--compact-height);
+    padding: 0 var(--spacing-sm);
     border-radius: 999px;
     background: var(--button-bg);
     color: currentColor;
     font-size: 11px;
+    line-height: var(--compact-height);
     opacity: 0.72;
   }
 }
@@ -2880,40 +3123,48 @@ onBeforeUnmount(() => {
 
 .canvas-minimap {
   position: absolute;
-  right: 352px;
-  bottom: 20px;
+  right: 316px;
+  bottom: var(--spacing-md);
   z-index: 6;
-  width: 196px;
-  height: 136px;
+  width: 190px;
+  height: 132px;
+  overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: var(--card-radius);
   background:
     linear-gradient(var(--grid-line) 1px, transparent 1px),
     linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
     var(--control-bg);
   background-size: 18px 18px;
   backdrop-filter: blur(16px);
-  box-shadow: 0 24px 70px var(--shadow);
+  box-shadow: 0 14px 42px var(--shadow);
 }
 
 .minimap-head {
   display: flex;
+  height: 30px;
+  box-sizing: border-box;
+  align-items: center;
   justify-content: space-between;
-  padding: 10px 12px;
+  padding: 0 var(--spacing-md);
   color: var(--muted);
   font-size: 11px;
+  line-height: 16px;
 
   b {
     color: var(--ink);
+    font-size: 12px;
   }
 }
 
 .minimap-node {
   position: absolute;
   border: 1px solid var(--line);
-  border-radius: 5px;
+  border-radius: 4px;
   background: var(--button-bg);
   cursor: pointer;
+  opacity: 0.92;
+  transition: border-color .18s ease, box-shadow .18s ease, opacity .18s ease;
 
   &.success {
     background: var(--success-bg);
@@ -2930,23 +3181,30 @@ onBeforeUnmount(() => {
   &.active {
     border-color: var(--accent);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
+    opacity: 1;
+  }
+
+  &:hover {
+    border-color: var(--accent);
+    opacity: 1;
   }
 }
 
 .node-actions {
   display: flex;
-  gap: 6px;
+  gap: var(--spacing-xs);
   margin-top: auto;
 
   button {
     flex: 1;
-    height: 26px;
+    height: var(--compact-height);
     border: 1px solid currentColor;
     border-radius: 999px;
     background: var(--button-bg);
     color: inherit;
     cursor: pointer;
     font-size: 11px;
+    line-height: var(--compact-height);
 
     &:disabled {
       cursor: not-allowed;
@@ -2957,12 +3215,12 @@ onBeforeUnmount(() => {
 
 .node-quick-actions {
   display: flex;
-  gap: 6px;
-  margin-top: 2px;
+  gap: var(--spacing-xs);
+  margin-top: 0;
 
   button {
-    width: 26px;
-    height: 26px;
+    width: var(--control-height);
+    height: var(--control-height);
     display: grid;
     place-items: center;
     border: 1px solid currentColor;
@@ -2986,10 +3244,10 @@ onBeforeUnmount(() => {
 
 .node-preview {
   flex: 1;
-  min-height: 72px;
+  min-height: 58px;
   display: grid;
   place-items: center;
-  border-radius: 12px;
+  border-radius: var(--card-radius);
   background: var(--canvas-bg);
   overflow: hidden;
 
@@ -3008,13 +3266,15 @@ onBeforeUnmount(() => {
 .mini-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--spacing-xs);
 
   span {
-    padding: 4px 7px;
+    height: var(--compact-height);
+    padding: 0 var(--spacing-sm);
     border: 1px solid currentColor;
     border-radius: 999px;
     font-size: 11px;
+    line-height: var(--compact-height);
     opacity: 0.78;
   }
 }
@@ -3022,18 +3282,18 @@ onBeforeUnmount(() => {
 .node-video-strip,
 .video-script-list {
   display: grid;
-  gap: 6px;
+  gap: var(--spacing-xs);
 }
 
 .node-video-strip {
   grid-template-columns: repeat(3, 1fr);
 
   span {
-    min-height: 28px;
+    min-height: var(--control-height);
     display: grid;
     place-items: center;
     border: 1px solid rgba(120, 190, 255, 0.38);
-    border-radius: 10px;
+    border-radius: var(--card-radius);
     background: rgba(120, 190, 255, 0.08);
     color: #d8ecff;
     font-size: 11px;
@@ -3041,49 +3301,54 @@ onBeforeUnmount(() => {
 }
 
 .video-script-list span {
-  padding: 8px 10px;
+  padding: var(--spacing-sm) var(--spacing-md);
   border: 1px solid rgba(120, 190, 255, 0.24);
-  border-radius: 12px;
+  border-radius: var(--card-radius);
   background: rgba(120, 190, 255, 0.06);
   color: var(--muted);
-  line-height: 1.55;
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
 }
 
 .inspector-card {
-  margin-top: 12px;
-  padding: 12px;
+  margin-top: var(--spacing-sm);
+  padding: var(--card-padding);
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: var(--card-radius);
   background: var(--panel-2);
 
   > b {
     display: block;
-    margin-bottom: 9px;
-    font-size: 14px;
+    margin-bottom: var(--spacing-sm);
+    font-size: var(--font-size-sm);
+    line-height: var(--compact-height);
   }
 
   p {
+    margin: 0;
     color: var(--muted);
-    font-size: 12px;
-    line-height: 1.55;
+    font-size: var(--font-size-xs);
+    line-height: 1.35;
     overflow-wrap: anywhere;
   }
 
   h3 {
-    margin: 0 0 10px;
-    font-size: 17px;
+    margin: 0 0 var(--spacing-sm);
+    font-size: var(--font-size-md);
+    line-height: 1.2;
   }
 
   strong {
     display: block;
-    margin-top: 8px;
+    margin-top: var(--spacing-sm);
   }
 
   dl {
     display: grid;
-    grid-template-columns: 60px 1fr;
-    gap: 6px 10px;
+    grid-template-columns: 44px minmax(0, 1fr);
+    gap: var(--spacing-xs) var(--spacing-sm);
     margin: 0;
+    font-size: var(--font-size-xs);
   }
 
   dt {
@@ -3105,13 +3370,13 @@ onBeforeUnmount(() => {
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
+  gap: var(--spacing-xs);
 
   span {
     display: grid;
-    gap: 4px;
-    padding: 8px 6px;
-    border-radius: 10px;
+    gap: 2px;
+    padding: var(--spacing-xs) var(--spacing-sm);
+    border-radius: var(--card-radius);
     background: var(--button-bg);
     text-align: center;
   }
@@ -3119,7 +3384,7 @@ onBeforeUnmount(() => {
   strong {
     margin: 0;
     color: var(--ink);
-    font-size: 17px;
+    font-size: var(--font-size-md);
   }
 
   small {
@@ -3129,7 +3394,7 @@ onBeforeUnmount(() => {
 
 .relation-list {
   display: grid;
-  gap: 6px;
+  gap: var(--spacing-xs);
 
   span {
     color: var(--soft);
@@ -3139,9 +3404,9 @@ onBeforeUnmount(() => {
   }
 
   p {
-    margin: 0 0 4px;
-    padding: 8px 10px;
-    border-radius: 10px;
+    margin: 0;
+    padding: var(--spacing-xs) var(--spacing-sm);
+    border-radius: var(--card-radius);
     background: var(--button-bg);
     overflow-wrap: anywhere;
   }
@@ -3149,25 +3414,33 @@ onBeforeUnmount(() => {
 
 .detail-list {
   display: grid;
-  gap: 8px;
+  gap: var(--spacing-xs);
 
   article {
-    padding: 10px;
-    border-radius: 12px;
+    padding: var(--spacing-sm);
+    border-radius: var(--card-radius);
     background: var(--button-bg);
+
+    p {
+      display: -webkit-box;
+      overflow: hidden;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+    }
   }
 }
 
 .delivery-list {
   display: grid;
-  gap: 6px;
+  gap: var(--spacing-xs);
   padding: 0;
   margin: 0;
   list-style: none;
 
   li {
-    padding: 7px 9px;
-    border-radius: 10px;
+    min-height: var(--compact-height);
+    padding: 0 var(--spacing-sm);
+    border-radius: var(--card-radius);
     background: var(--button-bg);
     color: var(--muted);
 
@@ -3179,15 +3452,18 @@ onBeforeUnmount(() => {
 }
 
 .prompt-box {
-  margin-top: 12px;
+  margin-top: var(--spacing-sm);
 
   summary {
+    height: var(--compact-height);
     cursor: pointer;
     color: var(--soft);
+    font-size: var(--font-size-xs);
+    line-height: var(--compact-height);
   }
 
   pre {
-    max-height: 220px;
+    max-height: 160px;
     overflow: auto;
     white-space: pre-wrap;
     color: var(--muted);
@@ -3196,14 +3472,14 @@ onBeforeUnmount(() => {
 
 .detail-preview-card iframe {
   width: 100%;
-  height: 320px;
+  height: 240px;
   border: 0;
-  border-radius: 14px;
+  border-radius: var(--card-radius);
   background: #fff;
 }
 
 .preview-dialog {
-  min-height: 360px;
+  min-height: 300px;
   display: grid;
   place-items: center;
   background: var(--canvas-bg);
@@ -3218,59 +3494,59 @@ onBeforeUnmount(() => {
     width: min(100%, 860px);
     max-height: 72vh;
     display: block;
-    border-radius: 14px;
+    border-radius: var(--card-radius);
     background: #000;
   }
 }
 
 .node-detail-dialog {
   display: grid;
-  gap: 10px;
+  gap: var(--spacing-sm);
 
   > header {
     display: grid;
-    gap: 8px;
-    padding: 12px;
+    gap: var(--spacing-sm);
+    padding: var(--card-padding);
     border: 1px solid var(--line);
-    border-radius: 16px;
+    border-radius: var(--card-radius);
     background: linear-gradient(135deg, var(--button-bg), transparent);
 
     p {
       margin: 0;
       color: var(--muted);
-      line-height: 1.65;
+      line-height: 1.4;
     }
   }
 }
 
 .detail-block {
-  padding: 12px;
+  padding: var(--card-padding);
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: var(--card-radius);
   background: var(--panel-2);
 
   > b {
     display: block;
-    margin-bottom: 8px;
+    margin-bottom: var(--spacing-sm);
   }
 
   p {
     margin: 0;
     color: var(--muted);
-    font-size: 12px;
-    line-height: 1.55;
+    font-size: var(--font-size-xs);
+    line-height: 1.4;
   }
 
   h3 {
-    margin: 0 0 10px;
-    font-size: 18px;
+    margin: 0 0 var(--spacing-sm);
+    font-size: var(--font-size-md);
   }
 
   dl {
     display: grid;
-    grid-template-columns: 60px 1fr;
-    gap: 6px 10px;
-    margin: 10px 0 0;
+    grid-template-columns: 44px 1fr;
+    gap: var(--spacing-xs) var(--spacing-sm);
+    margin: var(--spacing-sm) 0 0;
   }
 
   dt {
@@ -3284,11 +3560,11 @@ onBeforeUnmount(() => {
 }
 
 .detail-asset-preview {
-  min-height: 180px;
+  min-height: 140px;
   display: grid;
   place-items: center;
-  margin-top: 12px;
-  border-radius: 16px;
+  margin-top: var(--spacing-sm);
+  border-radius: var(--card-radius);
   background: var(--canvas-bg);
   overflow: hidden;
 
@@ -3308,22 +3584,22 @@ onBeforeUnmount(() => {
 .node-video-preview button {
   display: grid;
   place-items: center;
-  gap: 8px;
+  gap: var(--spacing-sm);
   width: 100%;
-  min-height: 96px;
+  min-height: 70px;
   border: 0;
   background: transparent;
   color: var(--accent);
   cursor: pointer;
 
   .el-icon {
-    width: 36px;
-    height: 36px;
-    padding: 9px;
+    width: 30px;
+    height: 30px;
+    padding: 7px;
     border: 1px solid var(--line);
     border-radius: 999px;
     background: var(--button-bg);
-    font-size: 18px;
+    font-size: 16px;
   }
 
   span {
@@ -3457,26 +3733,44 @@ onBeforeUnmount(() => {
 
 @media (max-width: 1500px) {
   .ecommerce-canvas-page {
-    grid-template-columns: 286px minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-columns: 276px minmax(0, 1fr);
   }
 
   .canvas-topbar {
-    padding-right: 22px;
+    padding-right: 312px;
   }
 
   .inspector-panel {
-    position: static;
-    grid-column: 1 / -1;
-    width: auto;
-    min-width: 0;
-    max-height: 420px;
-    display: block;
-    border-radius: 0;
-    border-left: 0;
-    border-right: 0;
-    border-top: 1px solid var(--line);
-    box-shadow: none;
+    right: 12px;
+    width: min(300px, calc(100vw - 318px));
+  }
+
+  .canvas-controls,
+  .canvas-hint {
+    max-width: calc(100% - 324px);
+  }
+
+  .canvas-minimap {
+    right: 312px;
+  }
+}
+
+@media (max-width: 1180px) {
+  .canvas-topbar {
+    grid-template-columns: minmax(120px, 1fr) auto;
+    padding-right: var(--spacing-md);
+  }
+
+  .task-status {
+    justify-self: start;
+
+    small {
+      display: none;
+    }
+  }
+
+  .topbar-actions {
+    display: none;
   }
 
   .canvas-controls,
@@ -3485,18 +3779,7 @@ onBeforeUnmount(() => {
   }
 
   .canvas-minimap {
-    right: 20px;
-  }
-}
-
-@media (max-width: 1180px) {
-  .canvas-topbar {
-    grid-template-columns: 1fr;
-    align-items: start;
-  }
-
-  .task-status {
-    justify-self: start;
+    right: var(--spacing-md);
   }
 }
 
@@ -3522,6 +3805,15 @@ onBeforeUnmount(() => {
 
   .canvas-topbar {
     grid-template-columns: 1fr;
+    height: auto;
+    min-height: var(--compact-height);
+    padding: var(--spacing-xs) var(--spacing-md);
+  }
+
+  .topbar-actions {
+    display: flex;
+    height: auto;
+    flex-wrap: wrap;
   }
 }
 
@@ -3566,9 +3858,41 @@ onBeforeUnmount(() => {
   --canvas-dialog-field: #ffffff;
   --canvas-dialog-accent: #2563eb;
   --canvas-dialog-shadow: rgba(15, 23, 42, 0.18);
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 36px);
+  margin: auto !important;
   border: 1px solid var(--canvas-dialog-line) !important;
+  border-radius: 18px !important;
   background: var(--canvas-dialog-bg) !important;
   box-shadow: 0 28px 90px var(--canvas-dialog-shadow) !important;
+  overflow: hidden;
+
+  .el-dialog__header {
+    flex: 0 0 auto;
+    margin: 0;
+    padding: 18px 24px 8px;
+  }
+
+  .el-dialog__body {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    overflow-y: auto;
+    padding: 10px 24px 18px;
+    scrollbar-width: thin;
+  }
+
+  .el-dialog__footer {
+    flex: 0 0 auto;
+    padding: 8px 24px 18px;
+    border-top: 1px solid var(--canvas-dialog-line);
+    background: color-mix(in srgb, var(--canvas-dialog-bg) 94%, var(--canvas-dialog-panel));
+  }
+
+  .el-form-item {
+    margin-bottom: 14px;
+  }
 
   .el-dialog__title,
   .el-input__inner,
@@ -3582,14 +3906,74 @@ onBeforeUnmount(() => {
   }
 
   .el-form-item__label {
+    height: auto !important;
+    margin-bottom: 6px;
+    padding: 0 !important;
     color: var(--canvas-dialog-soft) !important;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 18px !important;
+  }
+
+  .el-input,
+  .el-textarea {
+    display: block;
+    width: 100%;
   }
 
   .el-input__wrapper,
-  .el-textarea__inner,
+  .el-textarea__inner {
+    box-sizing: border-box;
+    border: 1px solid var(--canvas-dialog-line) !important;
+    border-radius: 10px !important;
+    background: var(--canvas-dialog-field) !important;
+    box-shadow: none !important;
+  }
+
+  .el-input__wrapper {
+    min-height: 38px;
+    padding: 0 12px !important;
+  }
+
+  .el-input__inner {
+    height: 36px;
+    color: var(--canvas-dialog-ink) !important;
+    font-size: 14px;
+    line-height: 36px;
+  }
+
+  .el-textarea__inner {
+    min-height: 104px !important;
+    padding: 10px 12px 24px !important;
+    color: var(--canvas-dialog-ink) !important;
+    font-size: 14px;
+    line-height: 20px !important;
+    resize: none;
+  }
+
+  .el-input__wrapper.is-focus,
+  .el-textarea__inner:focus {
+    border-color: var(--canvas-dialog-accent) !important;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--canvas-dialog-accent) 12%, transparent) !important;
+  }
+
+  .el-input .el-input__count,
+  .el-textarea .el-input__count {
+    right: 10px;
+    bottom: 6px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: var(--canvas-dialog-field) !important;
+    color: var(--canvas-dialog-muted) !important;
+    font-size: 11px;
+    line-height: 18px;
+  }
+
   .el-radio-button__inner {
     border-color: var(--canvas-dialog-line) !important;
     background: var(--canvas-dialog-field) !important;
+    box-shadow: none !important;
   }
 
   .el-radio-button.is-active .el-radio-button__inner,
@@ -3599,14 +3983,271 @@ onBeforeUnmount(() => {
     color: #ffffff !important;
   }
 
-  .node-detail-dialog > header,
+  .node-detail-dialog {
+    display: grid;
+    gap: 10px;
+  }
+
+  .node-detail-dialog > header {
+    display: grid;
+    gap: 8px;
+    border: 1px solid var(--canvas-dialog-line) !important;
+    border-radius: 10px;
+    padding: 10px;
+    background: linear-gradient(135deg, color-mix(in srgb, var(--canvas-dialog-panel) 86%, #ffffff), var(--canvas-dialog-bg)) !important;
+
+    p {
+      margin: 0;
+      color: var(--canvas-dialog-muted);
+      font-size: 13px;
+      line-height: 19px;
+      overflow-wrap: anywhere;
+    }
+  }
+
   .detail-block {
-    border-color: var(--canvas-dialog-line) !important;
+    border: 1px solid var(--canvas-dialog-line) !important;
+    border-radius: 10px;
+    padding: 10px;
     background: var(--canvas-dialog-panel) !important;
+
+    > b {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--canvas-dialog-ink);
+      font-size: 13px;
+      line-height: 18px;
+    }
+
+    h3 {
+      margin: 0 0 6px;
+      color: var(--canvas-dialog-ink);
+      font-size: 15px;
+      line-height: 21px;
+    }
+
+    strong {
+      display: block;
+      margin-top: 6px;
+      color: var(--canvas-dialog-ink);
+      font-size: 13px;
+      line-height: 19px;
+    }
+
+    p {
+      margin: 0;
+      color: var(--canvas-dialog-soft);
+      font-size: 13px;
+      line-height: 20px;
+      overflow-wrap: anywhere;
+    }
+
+    dl {
+      display: grid;
+      grid-template-columns: 56px minmax(0, 1fr);
+      gap: 6px 10px;
+      margin: 10px 0 0;
+      font-size: 13px;
+      line-height: 18px;
+    }
+
+    dt {
+      color: var(--canvas-dialog-muted);
+      font-weight: 700;
+    }
+
+    dd {
+      min-width: 0;
+      margin: 0;
+      color: var(--canvas-dialog-ink);
+      overflow-wrap: anywhere;
+    }
   }
 
   .detail-asset-preview {
-    background: var(--canvas-dialog-panel) !important;
+    height: clamp(220px, 40vh, 360px);
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 10px;
+    padding: 12px;
+    border: 1px solid var(--canvas-dialog-line);
+    border-radius: 10px;
+    background: var(--canvas-dialog-bg) !important;
+    overflow: hidden;
+
+    img {
+      width: auto;
+      height: auto;
+      max-width: 100%;
+      max-height: 100%;
+      display: block;
+      object-fit: contain;
+    }
+
+    > span {
+      color: var(--canvas-dialog-muted);
+      font-size: 13px;
+    }
+  }
+
+  .asset-video-play {
+    width: 100%;
+    min-height: 118px;
+    display: grid;
+    place-items: center;
+    gap: 8px;
+    border: 0;
+    color: var(--canvas-dialog-accent);
+    background: transparent;
+    cursor: pointer;
+    font-weight: 800;
+
+    .el-icon {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--canvas-dialog-line);
+      border-radius: 999px;
+      background: var(--canvas-dialog-panel);
+      font-size: 16px;
+    }
+  }
+
+  .video-script-list {
+    display: grid;
+    gap: 6px;
+    margin-top: 10px;
+
+    span {
+      display: block;
+      border: 1px solid var(--canvas-dialog-line);
+      border-radius: 8px;
+      padding: 7px 9px;
+      color: var(--canvas-dialog-soft);
+      background: var(--canvas-dialog-bg);
+      font-size: 13px;
+      line-height: 19px;
+      overflow-wrap: anywhere;
+    }
+  }
+
+  .mini-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+
+    span {
+      border: 1px solid color-mix(in srgb, var(--canvas-dialog-accent) 24%, transparent);
+      border-radius: 999px;
+      padding: 3px 8px;
+      color: var(--canvas-dialog-accent);
+      background: color-mix(in srgb, var(--canvas-dialog-accent) 8%, transparent);
+      font-size: 12px;
+      line-height: 17px;
+    }
+  }
+
+  .detail-list {
+    display: grid;
+    gap: 8px;
+
+    article {
+      border: 1px solid var(--canvas-dialog-line);
+      border-radius: 8px;
+      padding: 8px;
+      background: var(--canvas-dialog-bg);
+    }
+  }
+
+  .relation-list {
+    display: grid;
+    grid-template-columns: 52px minmax(0, 1fr);
+    gap: 7px 10px;
+    font-size: 13px;
+    line-height: 19px;
+
+    span {
+      color: var(--canvas-dialog-muted);
+      font-weight: 800;
+    }
+
+    p {
+      color: var(--canvas-dialog-ink);
+    }
+  }
+
+  .status-pill {
+    width: fit-content;
+    min-height: 22px;
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 2px 8px;
+    color: var(--canvas-dialog-muted);
+    background: var(--canvas-dialog-panel);
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 18px;
+  }
+
+  .status-pill.success {
+    color: #166534;
+    background: #dcfce7;
+  }
+
+  .status-pill.working {
+    color: #9a5a00;
+    background: #fff3df;
+  }
+
+  .status-pill.failed {
+    color: #991b1b;
+    background: #fee2e2;
+  }
+}
+
+.canvas-detail-dialog {
+  width: min(760px, calc(100vw - 48px)) !important;
+
+  .el-dialog__body {
+    max-height: calc(100vh - 178px);
+  }
+
+  .node-detail-dialog {
+    padding-bottom: 2px;
+  }
+}
+
+@media (max-width: 720px) {
+  .canvas-node-dialog {
+    width: calc(100vw - 24px) !important;
+    max-height: calc(100vh - 24px);
+    border-radius: 14px !important;
+
+    .el-dialog__header {
+      padding: 14px 16px 6px;
+    }
+
+    .el-dialog__body {
+      padding: 8px 16px 14px;
+    }
+
+    .el-dialog__footer {
+      padding: 8px 16px 14px;
+    }
+
+    .detail-asset-preview {
+      height: clamp(180px, 34vh, 300px);
+      padding: 8px;
+    }
+  }
+
+  .canvas-detail-dialog .el-dialog__body {
+    max-height: calc(100vh - 156px);
   }
 }
 
@@ -3624,6 +4265,21 @@ html.dark .canvas-node-dialog {
   .el-radio-button.is-active .el-radio-button__inner,
   .el-button--primary {
     color: #ffffff !important;
+  }
+
+  .status-pill.success {
+    color: #86efac;
+    background: rgba(34, 197, 94, 0.16);
+  }
+
+  .status-pill.working {
+    color: #fbbf24;
+    background: rgba(245, 158, 11, 0.16);
+  }
+
+  .status-pill.failed {
+    color: #fca5a5;
+    background: rgba(239, 68, 68, 0.16);
   }
 }
 
