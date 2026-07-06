@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -25,6 +26,11 @@ import (
 	"github.com/432539/gpt2api/pkg/logger"
 	"github.com/432539/gpt2api/pkg/resp"
 )
+
+type videoPlaygroundUpload struct {
+	PublicURL string
+	DataURL   string
+}
 
 type VideoGenSettings interface {
 	VideoGenEnabled() bool
@@ -119,16 +125,19 @@ func (h *VideoPlaygroundHandler) Start(c *gin.Context) {
 	}
 	applyVideoPlaygroundOptions(c, &cfg)
 
-	imageURL, err := h.saveOptionalUpload(c, "image", "image")
+	imageUpload, err := h.saveOptionalUpload(c, "image", "image")
 	if err != nil {
 		resp.BadRequest(c, err.Error())
 		return
 	}
-	videoURL, err := h.saveOptionalUpload(c, "video", "video")
+	videoUpload, err := h.saveOptionalUpload(c, "video", "video")
 	if err != nil {
 		resp.BadRequest(c, err.Error())
 		return
 	}
+	imageURL := imageUpload.PublicURL
+	imagePayloadURL := videoPlaygroundImagePayloadURL(cfg.ChannelType, imageUpload)
+	videoURL := videoUpload.PublicURL
 	if videoURL != "" && cfg.ChannelType != videogen.ChannelAPIYIWan27 && cfg.ChannelType != videogen.ChannelAPIYIHappyHorse {
 		resp.BadRequest(c, "参考视频仅支持 API易 Wan2.7 / HappyHorse 渠道")
 		return
@@ -163,7 +172,7 @@ func (h *VideoPlaygroundHandler) Start(c *gin.Context) {
 		ExpectedCost: expectedCost,
 	}
 	h.tasks.Store(id, state)
-	go h.run(id, uid, ak.ID, cfg, prompt, imageURL, videoURL, expectedCost)
+	go h.run(id, uid, ak.ID, cfg, prompt, imagePayloadURL, videoURL, expectedCost)
 	resp.OK(c, state)
 }
 
@@ -271,38 +280,41 @@ func (h *VideoPlaygroundHandler) update(id string, mutate func(*videoPlaygroundS
 	h.tasks.Store(id, &copyState)
 }
 
-func (h *VideoPlaygroundHandler) saveOptionalUpload(c *gin.Context, field string, kind string) (string, error) {
+func (h *VideoPlaygroundHandler) saveOptionalUpload(c *gin.Context, field string, kind string) (videoPlaygroundUpload, error) {
 	fh, err := c.FormFile(field)
 	if err != nil {
 		if errors.Is(err, http.ErrMissingFile) {
-			return "", nil
+			return videoPlaygroundUpload{}, nil
 		}
-		return "", err
+		return videoPlaygroundUpload{}, err
 	}
 	if fh == nil {
-		return "", nil
+		return videoPlaygroundUpload{}, nil
 	}
 	limit := int64(10 * 1024 * 1024)
 	if kind == "video" {
 		limit = 200 * 1024 * 1024
 	}
 	if fh.Size <= 0 {
-		return "", fmt.Errorf("%s 文件为空", uploadKindText(kind))
+		return videoPlaygroundUpload{}, fmt.Errorf("%s 文件为空", uploadKindText(kind))
 	}
 	if fh.Size > limit {
-		return "", fmt.Errorf("%s 文件过大: 最大 %dMB", uploadKindText(kind), limit/1024/1024)
+		return videoPlaygroundUpload{}, fmt.Errorf("%s 文件过大: 最大 %dMB", uploadKindText(kind), limit/1024/1024)
 	}
-	publicPath, err := saveVideoPlaygroundUpload(fh, kind)
+	publicPath, dataURL, err := saveVideoPlaygroundUpload(fh, kind)
 	if err != nil {
-		return "", err
+		return videoPlaygroundUpload{}, err
 	}
-	return videoPlaygroundAbsoluteURL(c, h.settings, publicPath), nil
+	return videoPlaygroundUpload{
+		PublicURL: videoPlaygroundAbsoluteURL(c, h.settings, publicPath),
+		DataURL:   dataURL,
+	}, nil
 }
 
-func saveVideoPlaygroundUpload(fh *multipart.FileHeader, kind string) (string, error) {
+func saveVideoPlaygroundUpload(fh *multipart.FileHeader, kind string) (string, string, error) {
 	src, err := fh.Open()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer src.Close()
 	head := make([]byte, 512)
@@ -311,26 +323,72 @@ func saveVideoPlaygroundUpload(fh *multipart.FileHeader, kind string) (string, e
 	contentType := http.DetectContentType(head)
 	ext, ok := videoPlaygroundExt(contentType, fh.Filename, kind)
 	if !ok {
-		return "", fmt.Errorf("不支持的%s文件类型", uploadKindText(kind))
+		return "", "", fmt.Errorf("不支持的%s文件类型", uploadKindText(kind))
 	}
 	if _, err := src.Seek(0, io.SeekStart); err != nil {
-		return "", err
+		return "", "", err
 	}
 	dir := settings.SiteAssetDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
+		return "", "", err
 	}
 	filename := "videogen-play-" + kind + "-" + time.Now().Format("20060102150405") + "-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:8] + ext
 	dstPath := filepath.Join(dir, filename)
 	dst, err := os.Create(dstPath)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer dst.Close()
-	if _, err := io.Copy(dst, src); err != nil {
-		return "", err
+	dataURL := ""
+	if kind == "image" {
+		data, err := io.ReadAll(src)
+		if err != nil {
+			return "", "", err
+		}
+		if n, err := dst.Write(data); err != nil {
+			return "", "", err
+		} else if n != len(data) {
+			return "", "", io.ErrShortWrite
+		}
+		dataURL = videoPlaygroundImageDataURL(contentType, fh.Filename, data)
+	} else if _, err := io.Copy(dst, src); err != nil {
+		return "", "", err
 	}
-	return "/site-assets/" + filename, nil
+	return "/site-assets/" + filename, dataURL, nil
+}
+
+func videoPlaygroundImagePayloadURL(channelType string, upload videoPlaygroundUpload) string {
+	switch normalizeVideoPlaygroundChannel(channelType) {
+	case videogen.ChannelAPIYISeedance, videogen.ChannelAPIYIWan27, videogen.ChannelAPIYIHappyHorse:
+		return firstNonEmpty(upload.DataURL, upload.PublicURL)
+	default:
+		return firstNonEmpty(upload.PublicURL, upload.DataURL)
+	}
+}
+
+func videoPlaygroundImageDataURL(contentType, filename string, data []byte) string {
+	contentType = videoPlaygroundImageContentType(contentType, filename)
+	if contentType == "" {
+		contentType = "image/png"
+	}
+	return "data:" + contentType + ";base64," + base64.StdEncoding.EncodeToString(data)
+}
+
+func videoPlaygroundImageContentType(contentType, filename string) string {
+	contentType = strings.ToLower(strings.TrimSpace(contentType))
+	if strings.HasPrefix(contentType, "image/") {
+		return contentType
+	}
+	switch strings.ToLower(filepath.Ext(strings.TrimSpace(filename))) {
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".png":
+		return "image/png"
+	case ".webp":
+		return "image/webp"
+	default:
+		return ""
+	}
 }
 
 func videoPlaygroundExt(contentType, filename, kind string) (string, bool) {
