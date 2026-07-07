@@ -3,6 +3,7 @@ package gateway
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -130,6 +131,61 @@ func TestVideoPlaygroundSupportsReferenceVideoIncludesSeedance(t *testing.T) {
 	}
 }
 
+func TestVideoPlaygroundGetRecoversCompletedTaskFromUpstream(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/tasks/wan-recover" {
+			t.Fatalf("unexpected upstream path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"task_id":"wan-recover",
+			"status":"succeeded",
+			"result_url":"https://example.com/recovered.mp4"
+		}`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	h := NewVideoPlaygroundHandler(
+		videogen.NewClient(videogen.Config{}),
+		nil,
+		videoPlaygroundTestSettings{
+			"base_url": upstream.URL,
+			"api_key":  "test-key",
+		},
+	)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Params = gin.Params{{Key: "id", Value: "vplay_recover"}}
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/me/playground/video/vplay_recover?task_id=wan-recover&channel_type=apiyi_wan27", nil)
+
+	h.Get(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	var body struct {
+		Code int                  `json:"code"`
+		Data videoPlaygroundState `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Code != 0 {
+		t.Fatalf("response code = %d body=%s", body.Code, w.Body.String())
+	}
+	if body.Data.Status != "completed" || body.Data.ResultURL != "https://example.com/recovered.mp4" || !body.Data.ProgressKnown {
+		t.Fatalf("unexpected recovered state: %+v", body.Data)
+	}
+	v, ok := h.tasks.Load("vplay_recover")
+	if !ok {
+		t.Fatal("terminal recovered state should be cached")
+	}
+	cached := v.(*videoPlaygroundState)
+	if cached.Status != "completed" || cached.ResultURL == "" {
+		t.Fatalf("unexpected cached state: %+v", cached)
+	}
+}
+
 func videoPlaygroundTestFileHeader(t *testing.T, field, filename string, data []byte) *multipart.FileHeader {
 	t.Helper()
 	body := &bytes.Buffer{}
@@ -175,7 +231,14 @@ func (s videoPlaygroundTestSettings) VideoGenEnabled() bool { return true }
 func (s videoPlaygroundTestSettings) VideoGenChannelType() string { return videogen.ChannelAPIYIWan27 }
 
 func (s videoPlaygroundTestSettings) VideoGenConfigForChannel(channelType string) videogen.Config {
-	return videogen.Config{ChannelType: channelType}
+	cfg := videogen.Config{ChannelType: channelType}
+	if v := strings.TrimSpace(s["base_url"]); v != "" {
+		cfg.BaseURL = v
+	}
+	if v := strings.TrimSpace(s["api_key"]); v != "" {
+		cfg.APIKey = v
+	}
+	return cfg
 }
 
 func (s videoPlaygroundTestSettings) VideoGenBillingRatio() float64 { return 10 }

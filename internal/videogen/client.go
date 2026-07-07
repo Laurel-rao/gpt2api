@@ -501,7 +501,21 @@ func (c *Client) GetTask(ctx context.Context, taskID string) (*Result, error) {
 	if c == nil {
 		return nil, errors.New("videogen client not configured")
 	}
-	cfg := c.runtimeConfig()
+	return c.getTask(ctx, c.runtimeConfig(), taskID)
+}
+
+func (c *Client) GetTaskForConfig(ctx context.Context, cfg Config, taskID string) (*Result, error) {
+	if c == nil {
+		return nil, errors.New("videogen client not configured")
+	}
+	return c.getTask(ctx, c.normalizedRuntimeConfig(cfg), taskID)
+}
+
+func (c *Client) getTask(ctx context.Context, cfg Config, taskID string) (*Result, error) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return nil, errors.New("videogen task_id required")
+	}
 	if strings.TrimSpace(cfg.APIKey) == "" {
 		return nil, errors.New("videogen is disabled or api key is empty")
 	}

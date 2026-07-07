@@ -871,6 +871,34 @@ func TestAPIYIWanGetTaskReadsResultURL(t *testing.T) {
 	}
 }
 
+func TestGetTaskForConfigUsesSpecifiedChannel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != apiyiWanQueryPath+"/wan-recover" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"task_id":"wan-recover",
+			"status":"succeeded",
+			"result_url":"https://example.com/recovered.mp4"
+		}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	client := NewClient(Config{ChannelType: ChannelAPIYISeedance, BaseURL: "https://seedance.example", APIKey: "seedance-key"})
+	got, err := client.GetTaskForConfig(context.Background(), Config{
+		ChannelType: ChannelAPIYIWan27,
+		BaseURL:     srv.URL,
+		APIKey:      "wan-key",
+	}, "wan-recover")
+	if err != nil {
+		t.Fatalf("GetTaskForConfig error: %v", err)
+	}
+	if got.TaskID != "wan-recover" || got.Status != "completed" || got.ResultURL != "https://example.com/recovered.mp4" {
+		t.Fatalf("unexpected task: %+v", got)
+	}
+}
+
 func TestTaskCostDetailPriceParsesNumberAndString(t *testing.T) {
 	for name, raw := range map[string]string{
 		"number": `{"price":1.25,"model_name":"Seedance"}`,

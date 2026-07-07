@@ -406,6 +406,9 @@ export async function startPlayVideo(payload: {
   return (body?.data || body) as PlayVideoState
 }
 
-export function getPlayVideo(id: string): Promise<PlayVideoState> {
-  return http.get(`/api/me/playground/video/${encodeURIComponent(id)}`, { silent: true } as any)
+export function getPlayVideo(id: string, params?: { task_id?: string; channel_type?: string }): Promise<PlayVideoState> {
+  return http.get(`/api/me/playground/video/${encodeURIComponent(id)}`, {
+    params,
+    silent: true,
+  } as any)
 }

@@ -186,13 +186,70 @@ func (h *VideoPlaygroundHandler) Get(c *gin.Context) {
 	}
 	v, ok := h.tasks.Load(id)
 	if !ok {
-		resp.BadRequest(c, "视频生成任务不存在或已过期")
+		h.getRecovered(c, id)
 		return
 	}
 	state, ok := v.(*videoPlaygroundState)
 	if !ok || state == nil {
 		resp.BadRequest(c, "视频生成任务状态异常")
 		return
+	}
+	resp.OK(c, state)
+}
+
+func (h *VideoPlaygroundHandler) getRecovered(c *gin.Context, id string) {
+	if h == nil || h.videoGen == nil || h.settings == nil {
+		resp.Internal(c, "视频网关未初始化")
+		return
+	}
+	taskID := strings.TrimSpace(c.Query("task_id"))
+	if taskID == "" {
+		resp.BadRequest(c, "视频生成任务不存在或已过期")
+		return
+	}
+	channelType := normalizeVideoPlaygroundChannel(c.Query("channel_type"))
+	if channelType == "" {
+		resp.BadRequest(c, "缺少视频任务渠道，无法恢复查询")
+		return
+	}
+	cfg := h.settings.VideoGenConfigForChannel(channelType)
+	if strings.TrimSpace(cfg.APIKey) == "" {
+		resp.BadRequest(c, "请先配置视频网关密钥")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+	result, err := h.videoGen.GetTaskForConfig(ctx, cfg, taskID)
+	if err != nil {
+		resp.Fail(c, resp.CodeUpstream, "恢复查询视频任务失败: "+err.Error())
+		return
+	}
+	now := time.Now()
+	state := &videoPlaygroundState{
+		ID:            id,
+		ChannelType:   cfg.ChannelType,
+		Status:        strings.TrimSpace(result.Status),
+		Progress:      clampPercent(result.Progress),
+		ProgressKnown: result.ProgressKnown,
+		TaskID:        firstNonEmpty(result.TaskID, taskID),
+		ModelID:       strings.TrimSpace(result.ModelID),
+		ResultURL:     strings.TrimSpace(result.ResultURL),
+		Error:         strings.TrimSpace(result.ErrorMessage),
+		CreatedAt:     now,
+		UpdatedAt:     now,
+		DurationMs:    result.DurationMs,
+		CostDetail:    result.CostDetail,
+	}
+	if state.Status == "" {
+		state.Status = "running"
+	}
+	terminal := strings.EqualFold(state.Status, "completed") || strings.EqualFold(state.Status, "failed")
+	if terminal {
+		state.Progress = 100
+		state.ProgressKnown = true
+	}
+	if terminal {
+		h.tasks.Store(id, state)
 	}
 	resp.OK(c, state)
 }

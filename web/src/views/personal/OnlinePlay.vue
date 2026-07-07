@@ -432,7 +432,7 @@ function useT2iExample(p: string) {
 async function sendText2Img() {
   const prompt = t2iPrompt.value.trim()
   if (!prompt) {
-    ElMessage.warning('请输入描述词 prompt')
+    ElMessage.warning('请输入描述词')
     return
   }
   if (!selectedImageModel.value) {
@@ -624,6 +624,7 @@ const VIDEO_HISTORY_STORAGE_KEY = 'gpt2api.online-play.video-history.v1'
 const VIDEO_HISTORY_LIMIT = 20
 const videoHistory = ref<VideoHistoryItem[]>([])
 const videoHistoryVisible = ref(false)
+const videoHistoryRefreshing = ref(false)
 
 const videoRatios = ['16:9', '9:16', '1:1', '4:3', '3:4']
 const videoResolutions = ['720p', '1080p']
@@ -667,6 +668,11 @@ function videoHistoryStatusText(item: VideoHistoryItem) {
   if (item.status === 'failed') return '失败'
   if (!isVideoProgressKnown(item)) return '生成中'
   return `${videoProgressPercent(item)}%`
+}
+
+function isVideoTerminal(state?: Pick<PlayVideoState, 'status'> | null) {
+  const status = String(state?.status || '').toLowerCase()
+  return status === 'completed' || status === 'failed'
 }
 
 const videoCanUseReferenceVideo = computed(() =>
@@ -738,7 +744,43 @@ function upsertVideoHistory(item: VideoHistoryItem) {
 function syncVideoHistoryState(state: PlayVideoState) {
   const old = videoHistory.value.find((item) => item.id === state.id)
   if (!old) return
-  upsertVideoHistory({ ...old, ...state })
+  upsertVideoHistory({
+    ...old,
+    ...state,
+    created_at: old.created_at || state.created_at,
+    image_url: state.image_url || old.image_url,
+    video_url: state.video_url || old.video_url,
+  })
+}
+
+function videoRecoverParams(id: string) {
+  const source =
+    videoTask.value?.id === id ? videoTask.value : videoHistory.value.find((item) => item.id === id)
+  return {
+    task_id: source?.task_id || undefined,
+    channel_type: source?.channel_type || undefined,
+  }
+}
+
+async function refreshVideoHistoryStatus() {
+  const pending = videoHistory.value.filter((item) => !isVideoTerminal(item) && item.task_id && item.channel_type)
+  if (pending.length === 0 || videoHistoryRefreshing.value) return
+  videoHistoryRefreshing.value = true
+  try {
+    await Promise.allSettled(
+      pending.map(async (item) => {
+        const state = await getPlayVideo(item.id, videoRecoverParams(item.id))
+        syncVideoHistoryState(state)
+        if (videoTask.value?.id === state.id) {
+          videoTask.value = { ...videoTask.value, ...state }
+          videoError.value = state.error || ''
+          if (isVideoTerminal(state)) videoSending.value = false
+        }
+      }),
+    )
+  } finally {
+    videoHistoryRefreshing.value = false
+  }
 }
 
 function openVideoHistoryItem(item: VideoHistoryItem) {
@@ -753,7 +795,7 @@ function openVideoHistoryItem(item: VideoHistoryItem) {
   videoTask.value = item
   videoError.value = item.error || ''
   const status = String(item.status || '').toLowerCase()
-  videoSending.value = status !== 'completed' && status !== 'failed'
+  videoSending.value = !isVideoTerminal(item)
   if (videoSending.value) pollVideo(item.id)
 }
 
@@ -840,11 +882,11 @@ function pollVideo(id: string) {
   if (videoPollTimer) window.clearTimeout(videoPollTimer)
   const tick = async () => {
     try {
-      const state = await getPlayVideo(id)
+      const state = await getPlayVideo(id, videoRecoverParams(id))
       videoTask.value = state
       syncVideoHistoryState(state)
       const status = String(state.status || '').toLowerCase()
-      if (status === 'completed' || status === 'failed') {
+      if (isVideoTerminal(state)) {
         videoSending.value = false
         if (status === 'completed') {
           ElMessage.success('视频生成完成')
@@ -933,7 +975,7 @@ watch(activeTab, (v) => {
             </div>
 
             <div class="side-row">
-              <label class="side-lbl">System Prompt</label>
+              <label class="side-lbl">系统提示词</label>
               <el-input
                 v-model="systemPrompt"
                 type="textarea"
@@ -1094,7 +1136,7 @@ watch(activeTab, (v) => {
               </div>
               <div class="side-hint">
                 选中后会把 <code class="hint-code">Make the aspect ratio {{ t2iRatio }} ,</code>
-                作为 prompt 第一行传给上游
+                作为提示词第一行传给上游
               </div>
             </div>
 
@@ -1125,7 +1167,7 @@ watch(activeTab, (v) => {
             </div>
 
             <div class="side-row">
-              <label class="side-lbl">Prompt</label>
+              <label class="side-lbl">提示词</label>
               <el-input
                 v-model="t2iPrompt"
                 type="textarea"
@@ -1223,7 +1265,7 @@ watch(activeTab, (v) => {
             <div v-else-if="t2iResult.length === 0" class="stage">
               <div class="stage-art">🖼️</div>
               <div class="stage-title">还没有图片</div>
-              <div class="stage-sub">在左侧填好 prompt 和参数,点击「生成图片」</div>
+              <div class="stage-sub">在左侧填好提示词和参数,点击「生成图片」</div>
             </div>
             <div v-else class="result-wrap">
               <div class="result-grid">
@@ -1300,7 +1342,7 @@ watch(activeTab, (v) => {
               </div>
               <div class="side-hint">
                 切换后会把 <code class="hint-code">Make the aspect ratio {{ i2iRatio }} ,</code>
-                作为 prompt 第一行
+                作为提示词第一行
               </div>
             </div>
 
@@ -1524,7 +1566,7 @@ watch(activeTab, (v) => {
             </div>
 
             <div class="side-row">
-              <label class="side-lbl">Prompt</label>
+              <label class="side-lbl">提示词</label>
               <el-input
                 v-model="videoPrompt"
                 type="textarea"
@@ -1562,9 +1604,10 @@ watch(activeTab, (v) => {
                 trigger="click"
                 popper-class="play-history-popover"
                 :width="420"
+                @show="refreshVideoHistoryStatus"
               >
                 <template #reference>
-                  <el-button :icon="Clock" aria-label="视频生成历史">生成历史</el-button>
+                  <el-button :icon="Clock" :loading="videoHistoryRefreshing" aria-label="视频生成历史">生成历史</el-button>
                 </template>
                 <div class="play-history-panel">
                   <div class="play-history-head">
@@ -1641,7 +1684,7 @@ watch(activeTab, (v) => {
             <div v-else class="stage">
               <div class="stage-art video-empty-art"><el-icon><VideoPlay /></el-icon></div>
               <div class="stage-title">还没有视频</div>
-              <div class="stage-sub">选择渠道和生成方式，在左侧输入 prompt 后开始生成。</div>
+              <div class="stage-sub">选择渠道和生成方式，在左侧输入提示词后开始生成。</div>
             </div>
           </section>
         </div>
