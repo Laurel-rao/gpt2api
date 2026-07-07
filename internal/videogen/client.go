@@ -187,29 +187,59 @@ type taskResp struct {
 }
 
 type apiyiTaskResp struct {
-	ID       string `json:"id"`
-	TaskID   string `json:"task_id"`
-	Model    string `json:"model"`
-	Status   string `json:"status"`
-	Progress any    `json:"progress"`
-	Content  struct {
+	ID              string `json:"id"`
+	TaskID          string `json:"task_id"`
+	Model           string `json:"model"`
+	ModelName       string `json:"model_name"`
+	Status          string `json:"status"`
+	TaskStatus      string `json:"task_status"`
+	Progress        any    `json:"progress"`
+	TaskProgress    any    `json:"task_progress"`
+	ProgressPercent any    `json:"progress_percent"`
+	Percent         any    `json:"percent"`
+	ResultURL       string `json:"result_url"`
+	Content         struct {
 		VideoURL string `json:"video_url"`
 	} `json:"content"`
 	Data struct {
-		ID       string `json:"id"`
-		Model    string `json:"model"`
-		Status   string `json:"status"`
-		Progress any    `json:"progress"`
-		Content  struct {
+		ID              string `json:"id"`
+		Model           string `json:"model"`
+		ModelName       string `json:"model_name"`
+		Status          string `json:"status"`
+		TaskStatus      string `json:"task_status"`
+		Progress        any    `json:"progress"`
+		TaskProgress    any    `json:"task_progress"`
+		ProgressPercent any    `json:"progress_percent"`
+		Percent         any    `json:"percent"`
+		ResultURL       string `json:"result_url"`
+		Content         struct {
 			VideoURL string `json:"video_url"`
 		} `json:"content"`
 	} `json:"data"`
+	Output struct {
+		ID              string `json:"id"`
+		TaskID          string `json:"task_id"`
+		Model           string `json:"model"`
+		ModelName       string `json:"model_name"`
+		Status          string `json:"status"`
+		TaskStatus      string `json:"task_status"`
+		Progress        any    `json:"progress"`
+		TaskProgress    any    `json:"task_progress"`
+		ProgressPercent any    `json:"progress_percent"`
+		Percent         any    `json:"percent"`
+		ResultURL       string `json:"result_url"`
+		VideoURL        string `json:"video_url"`
+		Content         struct {
+			VideoURL string `json:"video_url"`
+		} `json:"content"`
+	} `json:"output"`
 	Usage         json.RawMessage `json:"usage"`
 	Error         any             `json:"error"`
 	Resolution    string          `json:"resolution"`
 	Ratio         string          `json:"ratio"`
 	Duration      int             `json:"duration"`
 	GenerateAudio bool            `json:"generate_audio"`
+	raw           map[string]any
 }
 
 type apiyiWanCreateResp struct {
@@ -223,21 +253,57 @@ type apiyiWanCreateResp struct {
 }
 
 type apiyiWanTaskResp struct {
-	ID        string `json:"id"`
-	TaskID    string `json:"task_id"`
-	Status    string `json:"status"`
-	Progress  any    `json:"progress"`
-	ResultURL string `json:"result_url"`
-	Output    struct {
-		TaskID     string `json:"task_id"`
-		TaskStatus string `json:"task_status"`
-		ResultURL  string `json:"result_url"`
-		VideoURL   string `json:"video_url"`
+	ID              string `json:"id"`
+	TaskID          string `json:"task_id"`
+	Model           string `json:"model"`
+	ModelName       string `json:"model_name"`
+	Status          string `json:"status"`
+	TaskStatus      string `json:"task_status"`
+	Progress        any    `json:"progress"`
+	TaskProgress    any    `json:"task_progress"`
+	ProgressPercent any    `json:"progress_percent"`
+	Percent         any    `json:"percent"`
+	ResultURL       string `json:"result_url"`
+	Output          struct {
+		TaskID          string `json:"task_id"`
+		Model           string `json:"model"`
+		ModelName       string `json:"model_name"`
+		Status          string `json:"status"`
+		TaskStatus      string `json:"task_status"`
+		ResultURL       string `json:"result_url"`
+		VideoURL        string `json:"video_url"`
+		Progress        any    `json:"progress"`
+		TaskProgress    any    `json:"task_progress"`
+		ProgressPercent any    `json:"progress_percent"`
+		Percent         any    `json:"percent"`
 	} `json:"output"`
 	Error      any             `json:"error"`
 	FailReason string          `json:"fail_reason"`
 	Message    string          `json:"message"`
 	Usage      json.RawMessage `json:"usage"`
+	raw        map[string]any
+}
+
+func (t *apiyiTaskResp) UnmarshalJSON(data []byte) error {
+	type alias apiyiTaskResp
+	var parsed alias
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return err
+	}
+	*t = apiyiTaskResp(parsed)
+	_ = json.Unmarshal(data, &t.raw)
+	return nil
+}
+
+func (t *apiyiWanTaskResp) UnmarshalJSON(data []byte) error {
+	type alias apiyiWanTaskResp
+	var parsed alias
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return err
+	}
+	*t = apiyiWanTaskResp(parsed)
+	_ = json.Unmarshal(data, &t.raw)
+	return nil
 }
 
 func NewClient(cfg Config) *Client {
@@ -573,6 +639,13 @@ func (c *Client) apiyiPayload(cfg Config, opt Options, model string) map[string]
 			"role":      "reference_image",
 		})
 	}
+	if url := strings.TrimSpace(opt.ReferenceVideoURL); url != "" {
+		content = append(content, map[string]any{
+			"type":      "video_url",
+			"video_url": map[string]any{"url": url},
+			"role":      "reference_video",
+		})
+	}
 	payload := map[string]any{}
 	for k, v := range opt.ExtraParams {
 		payload[k] = v
@@ -783,12 +856,14 @@ func (c *Client) getAPIYIWanTask(ctx context.Context, cfg Config, taskID string)
 func (c *Client) pollAPIYITask(ctx context.Context, cfg Config, taskID string, onProgress func(Result)) (*Result, error) {
 	ticker := time.NewTicker(defaultPollInterval)
 	defer ticker.Stop()
+	start := time.Now()
 	for {
 		var task apiyiTaskResp
 		if err := c.doJSONAPIYI(ctx, http.MethodGet, cfg.BaseURL+apiyiTaskPath+"/"+taskID, cfg.APIKey, nil, &task); err != nil {
 			return nil, err
 		}
 		progressResult := task.toResult(taskID)
+		progressResult.Progress = normalizedAPIYIProgress(progressResult.Progress, progressResult.Status, time.Since(start), cfg.TimeoutSec, task.progressValue() != nil)
 		logAPIYITaskProgress("videogen apiyi task poll", taskID, task, progressResult)
 		if onProgress != nil {
 			onProgress(*progressResult)
@@ -818,12 +893,14 @@ func (c *Client) pollAPIYITask(ctx context.Context, cfg Config, taskID string, o
 func (c *Client) pollAPIYIWanTask(ctx context.Context, cfg Config, taskID string, model string, onProgress func(Result)) (*Result, error) {
 	ticker := time.NewTicker(defaultPollInterval)
 	defer ticker.Stop()
+	start := time.Now()
 	for {
 		var task apiyiWanTaskResp
 		if err := c.doJSONAPIYI(ctx, http.MethodGet, cfg.BaseURL+apiyiWanQueryPath+"/"+taskID, cfg.APIKey, nil, &task); err != nil {
 			return nil, err
 		}
 		progressResult := task.toResult(taskID, model)
+		progressResult.Progress = normalizedAPIYIProgress(progressResult.Progress, progressResult.Status, time.Since(start), cfg.TimeoutSec, task.progressValue() != nil)
 		logAPIYIWanTaskProgress("videogen apiyi wan task poll", taskID, task, progressResult)
 		if onProgress != nil {
 			onProgress(*progressResult)
@@ -851,21 +928,18 @@ func (c *Client) pollAPIYIWanTask(ctx context.Context, cfg Config, taskID string
 }
 
 func (t apiyiTaskResp) toResult(fallbackID string) *Result {
-	upstreamStatus := firstNonEmpty(t.Data.Status, t.Status)
+	upstreamStatus := firstNonEmpty(t.Output.TaskStatus, t.Output.Status, t.Data.TaskStatus, t.Data.Status, t.TaskStatus, t.Status)
 	status := mapAPIYIStatus(upstreamStatus)
-	progressRaw := t.Progress
-	if progressRaw == nil {
-		progressRaw = t.Data.Progress
-	}
+	progressRaw := t.progressValue()
 	progress := parseAPIYIProgress(progressRaw, status)
-	model := firstNonEmpty(t.Data.Model, t.Model)
-	videoURL := firstNonEmpty(t.Data.Content.VideoURL, t.Content.VideoURL)
+	model := firstNonEmpty(t.Output.ModelName, t.Output.Model, t.Data.ModelName, t.Data.Model, t.ModelName, t.Model)
+	videoURL := firstNonEmpty(t.ResultURL, t.Data.ResultURL, t.Output.ResultURL, t.Output.VideoURL, t.Output.Content.VideoURL, t.Data.Content.VideoURL, t.Content.VideoURL)
 	priceRaw := json.RawMessage(`1`)
 	if len(t.Usage) > 0 && string(t.Usage) != "null" {
 		priceRaw = append(json.RawMessage(nil), t.Usage...)
 	}
 	return &Result{
-		TaskID:       firstNonEmpty(t.Data.ID, t.ID, t.TaskID, fallbackID),
+		TaskID:       firstNonEmpty(t.Output.TaskID, t.Output.ID, t.Data.ID, t.ID, t.TaskID, fallbackID),
 		ModelID:      strings.TrimSpace(model),
 		Status:       status,
 		Progress:     progress,
@@ -877,23 +951,56 @@ func (t apiyiTaskResp) toResult(fallbackID string) *Result {
 }
 
 func (t apiyiWanTaskResp) toResult(fallbackID string, fallbackModel string) *Result {
-	status := mapAPIYIWanStatus(firstNonEmpty(t.Status, t.Output.TaskStatus))
-	progress := parseAPIYIProgress(t.Progress, status)
+	status := mapAPIYIWanStatus(firstNonEmpty(t.Output.TaskStatus, t.Output.Status, t.TaskStatus, t.Status))
+	progress := parseAPIYIProgress(t.progressValue(), status)
 	videoURL := firstNonEmpty(t.ResultURL, t.Output.ResultURL, t.Output.VideoURL)
+	model := firstNonEmpty(t.Output.ModelName, t.Output.Model, t.ModelName, t.Model, fallbackModel)
 	priceRaw := json.RawMessage(`1`)
 	if len(t.Usage) > 0 && string(t.Usage) != "null" {
 		priceRaw = append(json.RawMessage(nil), t.Usage...)
 	}
 	return &Result{
 		TaskID:       firstNonEmpty(t.TaskID, t.Output.TaskID, t.ID, fallbackID),
-		ModelID:      strings.TrimSpace(fallbackModel),
+		ModelID:      strings.TrimSpace(model),
 		Status:       status,
 		Progress:     progress,
 		ResultURL:    strings.TrimSpace(videoURL),
 		CostType:     "credits",
-		CostDetail:   CostDetail{ModelName: strings.TrimSpace(fallbackModel), Price: 1, Raw: priceRaw},
+		CostDetail:   CostDetail{ModelName: strings.TrimSpace(model), Price: 1, Raw: priceRaw},
 		ErrorMessage: t.errorMessage(),
 	}
+}
+
+func (t apiyiTaskResp) progressValue() any {
+	return firstAPIYIProgressValue(
+		t.Progress,
+		t.TaskProgress,
+		t.ProgressPercent,
+		t.Percent,
+		t.Data.Progress,
+		t.Data.TaskProgress,
+		t.Data.ProgressPercent,
+		t.Data.Percent,
+		t.Output.Progress,
+		t.Output.TaskProgress,
+		t.Output.ProgressPercent,
+		t.Output.Percent,
+		progressFromRawMap(t.raw),
+	)
+}
+
+func (t apiyiWanTaskResp) progressValue() any {
+	return firstAPIYIProgressValue(
+		t.Progress,
+		t.TaskProgress,
+		t.ProgressPercent,
+		t.Percent,
+		t.Output.Progress,
+		t.Output.TaskProgress,
+		t.Output.ProgressPercent,
+		t.Output.Percent,
+		progressFromRawMap(t.raw),
+	)
 }
 
 func (t apiyiWanTaskResp) errorMessage() string {
@@ -940,16 +1047,13 @@ func logAPIYITaskProgress(message, fallbackID string, task apiyiTaskResp, result
 	if result == nil {
 		return
 	}
-	taskID := firstNonEmpty(result.TaskID, task.Data.ID, task.ID, task.TaskID, fallbackID)
-	progressRaw := task.Progress
-	if progressRaw == nil {
-		progressRaw = task.Data.Progress
-	}
+	taskID := firstNonEmpty(result.TaskID, task.Output.TaskID, task.Output.ID, task.Data.ID, task.ID, task.TaskID, fallbackID)
 	logger.L().Info(message,
 		zap.String("task_id", taskID),
 		zap.String("upstream_status", strings.TrimSpace(task.Status)),
 		zap.String("data_status", strings.TrimSpace(task.Data.Status)),
-		zap.String("raw_progress", progressLogValue(progressRaw)),
+		zap.String("output_status", strings.TrimSpace(firstNonEmpty(task.Output.TaskStatus, task.Output.Status))),
+		zap.String("raw_progress", progressLogValue(task.progressValue())),
 		zap.String("mapped_status", result.Status),
 		zap.Int("mapped_progress", result.Progress),
 		zap.Bool("has_result_url", strings.TrimSpace(result.ResultURL) != ""))
@@ -964,7 +1068,7 @@ func logAPIYIWanTaskProgress(message, fallbackID string, task apiyiWanTaskResp, 
 		zap.String("task_id", taskID),
 		zap.String("upstream_status", strings.TrimSpace(task.Status)),
 		zap.String("output_status", strings.TrimSpace(task.Output.TaskStatus)),
-		zap.String("raw_progress", progressLogValue(task.Progress)),
+		zap.String("raw_progress", progressLogValue(task.progressValue())),
 		zap.String("mapped_status", result.Status),
 		zap.Int("mapped_progress", result.Progress),
 		zap.Bool("has_result_url", strings.TrimSpace(result.ResultURL) != ""))
@@ -1503,8 +1607,25 @@ func parseAPIYIProgress(progress any, status string) int {
 	switch v := progress.(type) {
 	case nil:
 		return apiyiProgress(status)
+	case int:
+		return clampProgress(v)
+	case int64:
+		return clampProgress(int(v))
+	case int32:
+		return clampProgress(int(v))
+	case uint:
+		return clampProgress(int(v))
+	case uint64:
+		if v > 100 {
+			return 100
+		}
+		return int(v)
+	case uint32:
+		return clampProgress(int(v))
 	case float64:
 		return clampProgress(int(math.Round(v)))
+	case float32:
+		return clampProgress(int(math.Round(float64(v))))
 	case string:
 		s := strings.TrimSpace(strings.TrimSuffix(v, "%"))
 		if s == "" {
@@ -1523,6 +1644,111 @@ func parseAPIYIProgress(progress any, status string) int {
 		return clampProgress(int(math.Round(f)))
 	default:
 		return apiyiProgress(status)
+	}
+}
+
+func firstAPIYIProgressValue(values ...any) any {
+	for _, v := range values {
+		switch value := v.(type) {
+		case nil:
+			continue
+		case string:
+			if strings.TrimSpace(value) == "" {
+				continue
+			}
+		case json.Number:
+			if strings.TrimSpace(value.String()) == "" {
+				continue
+			}
+		}
+		return v
+	}
+	return nil
+}
+
+func progressFromRawMap(raw map[string]any) any {
+	return progressFromRawMapDepth(raw, 0)
+}
+
+func progressFromRawMapDepth(raw map[string]any, depth int) any {
+	if len(raw) == 0 || depth > 3 {
+		return nil
+	}
+	for _, key := range []string{"progress", "task_progress", "progress_percent", "percent"} {
+		if v, ok := raw[key]; ok {
+			if progress := firstAPIYIProgressValue(v); progress != nil {
+				return progress
+			}
+		}
+	}
+	for _, key := range []string{"data", "output", "result", "task", "body"} {
+		child, ok := raw[key].(map[string]any)
+		if !ok {
+			continue
+		}
+		if progress := progressFromRawMapDepth(child, depth+1); progress != nil {
+			return progress
+		}
+	}
+	return nil
+}
+
+func estimatedAPIYIProgress(progress int, status string, elapsed time.Duration, timeoutSec int) int {
+	return normalizedAPIYIProgress(progress, status, elapsed, timeoutSec, false)
+}
+
+func normalizedAPIYIProgress(progress int, status string, elapsed time.Duration, timeoutSec int, hasUpstreamProgress bool) int {
+	progress = clampProgress(progress)
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "completed", "failed":
+		return 100
+	case "queued":
+		if hasUpstreamProgress {
+			return progress
+		}
+		if progress > apiyiProgress("queued") {
+			return progress
+		}
+		if elapsed >= 30*time.Second {
+			return 8
+		}
+		if elapsed >= 10*time.Second {
+			return 6
+		}
+		return progress
+	case "running":
+		if hasUpstreamProgress {
+			if progress > 95 {
+				return 95
+			}
+			return progress
+		}
+		if progress > apiyiProgress("running") {
+			if progress > 95 {
+				return 95
+			}
+			return progress
+		}
+		if progress != apiyiProgress("running") && progress != apiyiProgress("queued") {
+			return progress
+		}
+		window := 180 * time.Second
+		if timeoutSec > 0 && timeoutSec < 180 {
+			window = time.Duration(timeoutSec) * time.Second
+			if window < 30*time.Second {
+				window = 30 * time.Second
+			}
+		}
+		estimated := 10 + int(math.Round(elapsed.Seconds()/window.Seconds()*85))
+		if estimated < progress {
+			return progress
+		}
+		if estimated > 95 {
+			return 95
+		}
+		return estimated
+	default:
+		return progress
 	}
 }
 

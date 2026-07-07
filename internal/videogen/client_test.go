@@ -280,6 +280,51 @@ func TestAPIYIGeneratePayloadTextAndReferenceImages(t *testing.T) {
 	}
 }
 
+func TestAPIYIGeneratePayloadReferenceVideo(t *testing.T) {
+	var createBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == apiyiTaskPath:
+			data, _ := io.ReadAll(r.Body)
+			if err := json.Unmarshal(data, &createBody); err != nil {
+				t.Fatalf("decode create body: %v", err)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"cgt-video-ref"}`))
+		case r.Method == http.MethodGet && r.URL.Path == apiyiTaskPath+"/cgt-video-ref":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"id":"cgt-video-ref",
+				"status":"succeeded",
+				"content":{"video_url":"https://example.com/out.mp4"}
+			}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	client := NewClient(Config{ChannelType: ChannelAPIYISeedance, BaseURL: srv.URL, APIKey: "test-key"})
+	if _, err := client.Generate(context.Background(), Options{
+		Prompt:            "参考视频生成新视频",
+		ReferenceVideoURL: "https://example.com/ref.mp4",
+	}); err != nil {
+		t.Fatalf("Generate error: %v", err)
+	}
+	content, ok := createBody["content"].([]any)
+	if !ok || len(content) != 2 {
+		t.Fatalf("unexpected content: %#v", createBody["content"])
+	}
+	video, _ := content[1].(map[string]any)
+	if video["type"] != "video_url" || video["role"] != "reference_video" {
+		t.Fatalf("unexpected video content: %#v", video)
+	}
+	videoURL, _ := video["video_url"].(map[string]any)
+	if videoURL["url"] != "https://example.com/ref.mp4" {
+		t.Fatalf("unexpected video_url content: %#v", videoURL)
+	}
+}
+
 func TestAPIYIWanGeneratePayloadReferenceImage(t *testing.T) {
 	var createBody map[string]any
 	var sawAsyncHeader bool
@@ -672,6 +717,65 @@ func TestAPIYIWrappedTaskReadsDataContentVideoURL(t *testing.T) {
 	}
 	if got.ResultURL != "https://example.com/wrapped.mp4" || got.ModelID != apiyiDefaultFastModel {
 		t.Fatalf("unexpected result fields: %+v", got)
+	}
+}
+
+func TestAPIYITaskReadsTopLevelAPIYIResponse(t *testing.T) {
+	var task apiyiTaskResp
+	if err := json.Unmarshal([]byte(`{
+		"id":"cgt-20260706152411-gnqbn",
+		"task_id":"cgt-20260706152411-gnqbn",
+		"status":"completed",
+		"progress":"100%",
+		"model_name":"doubao-seedance-2-0-fast-260128",
+		"result_url":"https://example.com/top-level.mp4",
+		"data":{
+			"id":"cgt-20260706152411-gnqbn",
+			"model":"doubao-seedance-2-0-fast-260128",
+			"status":"succeeded",
+			"content":{"video_url":"https://example.com/data.mp4"}
+		}
+	}`), &task); err != nil {
+		t.Fatalf("decode task: %v", err)
+	}
+	got := task.toResult("")
+	if got.TaskID != "cgt-20260706152411-gnqbn" || got.Status != "completed" || got.Progress != 100 {
+		t.Fatalf("unexpected result: %+v", got)
+	}
+	if got.ResultURL != "https://example.com/top-level.mp4" {
+		t.Fatalf("result_url should prefer top-level field, got %+v", got)
+	}
+	if got.ModelID != apiyiDefaultFastModel || got.CostDetail.ModelName != apiyiDefaultFastModel {
+		t.Fatalf("unexpected model fields: %+v", got)
+	}
+}
+
+func TestAPIYIProgressReadsAlternateFields(t *testing.T) {
+	for name, raw := range map[string]string{
+		"top_level_progress_percent": `{"id":"cgt-progress","status":"running","progress_percent":42}`,
+		"output_progress":            `{"id":"cgt-progress","status":"running","output":{"progress":"55%"}}`,
+		"nested_raw_task_progress":   `{"id":"cgt-progress","status":"running","result":{"task_progress":67}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var task apiyiTaskResp
+			if err := json.Unmarshal([]byte(raw), &task); err != nil {
+				t.Fatalf("decode task: %v", err)
+			}
+			got := task.toResult("cgt-progress")
+			if got.Status != "running" || got.Progress <= 10 {
+				t.Fatalf("progress was not parsed: %+v", got)
+			}
+		})
+	}
+}
+
+func TestAPIYIRunningProgressCanBeEstimatedWhenMissing(t *testing.T) {
+	got := estimatedAPIYIProgress(10, "running", 90*time.Second, 1800)
+	if got <= 10 || got > 95 {
+		t.Fatalf("estimated progress = %d", got)
+	}
+	if completed := estimatedAPIYIProgress(30, "completed", time.Second, 1800); completed != 100 {
+		t.Fatalf("completed progress = %d", completed)
 	}
 }
 
