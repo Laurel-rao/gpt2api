@@ -649,7 +649,7 @@ const videoProgressStatus = computed(() => {
 })
 
 const videoCanUseReferenceVideo = computed(() =>
-  selectedVideoChannel.value === 'apiyi_wan27' || selectedVideoChannel.value === 'apiyi_happyhorse',
+  selectedVideoChannel.value === 'apiyi_seedance2' || selectedVideoChannel.value === 'apiyi_wan27' || selectedVideoChannel.value === 'apiyi_happyhorse',
 )
 
 watch(videoMode, (mode) => {
@@ -1445,7 +1445,7 @@ watch(activeTab, (v) => {
                 <el-radio-button label="video" :disabled="!videoCanUseReferenceVideo">参考视频</el-radio-button>
               </el-radio-group>
               <div v-if="!videoCanUseReferenceVideo" class="side-hint">
-                参考视频目前仅支持 API易 Wan2.7 / HappyHorse 渠道。
+                参考视频目前仅支持 API易 Seedance 2.0 / Wan2.7 / HappyHorse 渠道。
               </div>
             </div>
 

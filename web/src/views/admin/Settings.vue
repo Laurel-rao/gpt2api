@@ -424,7 +424,7 @@ function clearVideoGenerateVideo() {
 }
 
 function videoGenerateSupportsReferenceVideo(row: VideoChannelRow | null) {
-  return row?.type === 'apiyi_wan27' || row?.type === 'apiyi_happyhorse'
+  return row?.type === 'apiyi_seedance2' || row?.type === 'apiyi_wan27' || row?.type === 'apiyi_happyhorse'
 }
 
 async function submitVideoGenerateTest() {
@@ -1031,7 +1031,7 @@ onUnmounted(() => {
             <el-radio-button label="video" :disabled="!videoGenerateSupportsReferenceVideo(videoGenerateRow)">参考视频</el-radio-button>
           </el-radio-group>
           <div v-if="!videoGenerateSupportsReferenceVideo(videoGenerateRow)" class="hint">
-            参考视频仅支持 API易 Wan2.7 / HappyHorse。
+            参考视频仅支持 API易 Seedance 2.0 / Wan2.7 / HappyHorse。
           </div>
         </el-form-item>
         <el-form-item label="提示词">
@@ -1084,7 +1084,7 @@ onUnmounted(() => {
               :icon="Delete"
               @click="clearVideoGenerateVideo"
             >清空</el-button>
-            <span class="hint">用于 Wan2.7 / HappyHorse 参考视频链路，最大 200MB。</span>
+            <span class="hint">用于 Seedance 2.0 / Wan2.7 / HappyHorse 参考视频链路，最大 200MB。</span>
             <div v-if="videoGenerateVideoPreview" class="video-test-preview video-test-preview--video">
               <video :src="videoGenerateVideoPreview" controls muted playsinline />
             </div>
