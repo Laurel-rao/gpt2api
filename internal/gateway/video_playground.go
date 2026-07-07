@@ -48,22 +48,23 @@ type VideoPlaygroundHandler struct {
 }
 
 type videoPlaygroundState struct {
-	ID           string              `json:"id"`
-	ChannelType  string              `json:"channel_type"`
-	Status       string              `json:"status"`
-	Progress     int                 `json:"progress"`
-	TaskID       string              `json:"task_id,omitempty"`
-	ModelID      string              `json:"model_id,omitempty"`
-	ImageURL     string              `json:"image_url,omitempty"`
-	VideoURL     string              `json:"video_url,omitempty"`
-	ResultURL    string              `json:"result_url,omitempty"`
-	Error        string              `json:"error,omitempty"`
-	CreatedAt    time.Time           `json:"created_at"`
-	UpdatedAt    time.Time           `json:"updated_at"`
-	DurationMs   int64               `json:"duration_ms,omitempty"`
-	CostDetail   videogen.CostDetail `json:"cost_detail,omitempty"`
-	CreditCost   int64               `json:"credit_cost,omitempty"`
-	ExpectedCost int64               `json:"expected_cost,omitempty"`
+	ID            string              `json:"id"`
+	ChannelType   string              `json:"channel_type"`
+	Status        string              `json:"status"`
+	Progress      int                 `json:"progress"`
+	ProgressKnown bool                `json:"progress_known"`
+	TaskID        string              `json:"task_id,omitempty"`
+	ModelID       string              `json:"model_id,omitempty"`
+	ImageURL      string              `json:"image_url,omitempty"`
+	VideoURL      string              `json:"video_url,omitempty"`
+	ResultURL     string              `json:"result_url,omitempty"`
+	Error         string              `json:"error,omitempty"`
+	CreatedAt     time.Time           `json:"created_at"`
+	UpdatedAt     time.Time           `json:"updated_at"`
+	DurationMs    int64               `json:"duration_ms,omitempty"`
+	CostDetail    videogen.CostDetail `json:"cost_detail,omitempty"`
+	CreditCost    int64               `json:"credit_cost,omitempty"`
+	ExpectedCost  int64               `json:"expected_cost,omitempty"`
 }
 
 func NewVideoPlaygroundHandler(videoGen *videogen.Client, bill *billing.Engine, settingsSvc VideoGenSettings) *VideoPlaygroundHandler {
@@ -208,7 +209,12 @@ func (h *VideoPlaygroundHandler) run(id string, userID uint64, keyID uint64, cfg
 				if state.Status == "" {
 					state.Status = "running"
 				}
-				state.Progress = result.Progress
+				if result.ProgressKnown || !state.ProgressKnown {
+					state.Progress = result.Progress
+				}
+				if result.ProgressKnown {
+					state.ProgressKnown = true
+				}
 				state.TaskID = firstNonEmpty(result.TaskID, state.TaskID)
 				state.ModelID = firstNonEmpty(result.ModelID, state.ModelID)
 			})
@@ -230,6 +236,7 @@ func (h *VideoPlaygroundHandler) run(id string, userID uint64, keyID uint64, cfg
 		h.update(id, func(state *videoPlaygroundState) {
 			state.Status = "failed"
 			state.Progress = 100
+			state.ProgressKnown = true
 			state.Error = err.Error()
 			state.DurationMs = time.Since(start).Milliseconds()
 		})
@@ -247,9 +254,15 @@ func (h *VideoPlaygroundHandler) run(id string, userID uint64, keyID uint64, cfg
 		if state.Status == "" {
 			state.Status = "completed"
 		}
-		state.Progress = result.Progress
+		if result.ProgressKnown || !state.ProgressKnown {
+			state.Progress = result.Progress
+		}
+		if result.ProgressKnown {
+			state.ProgressKnown = true
+		}
 		if strings.EqualFold(state.Status, "completed") {
 			state.Progress = 100
+			state.ProgressKnown = true
 		}
 		state.TaskID = firstNonEmpty(result.TaskID, state.TaskID)
 		state.ModelID = firstNonEmpty(result.ModelID, state.ModelID)

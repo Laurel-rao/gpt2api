@@ -664,7 +664,7 @@ func TestAPIYIWanStatusMapping(t *testing.T) {
 func TestAPIYIProgressParsesUpstreamPercent(t *testing.T) {
 	task := apiyiTaskResp{Status: "running", Progress: "30%"}
 	got := task.toResult("cgt-progress")
-	if got.Status != "running" || got.Progress != 30 {
+	if got.Status != "running" || got.Progress != 30 || !got.ProgressKnown {
 		t.Fatalf("unexpected result: %+v", got)
 	}
 	if got.TaskID != "cgt-progress" {
@@ -682,7 +682,7 @@ func TestAPIYIProgressParsesWrappedDataPercent(t *testing.T) {
 		t.Fatalf("decode task: %v", err)
 	}
 	got := task.toResult("")
-	if got.TaskID != "cgt-progress" || got.Status != "running" || got.Progress != 30 {
+	if got.TaskID != "cgt-progress" || got.Status != "running" || got.Progress != 30 || !got.ProgressKnown {
 		t.Fatalf("unexpected result: %+v", got)
 	}
 }
@@ -690,7 +690,7 @@ func TestAPIYIProgressParsesWrappedDataPercent(t *testing.T) {
 func TestAPIYIRunningWithoutProgressUsesConservativeFallback(t *testing.T) {
 	task := apiyiTaskResp{Status: "running"}
 	got := task.toResult("cgt-no-progress")
-	if got.Status != "running" || got.Progress != 10 {
+	if got.Status != "running" || got.Progress != 10 || got.ProgressKnown {
 		t.Fatalf("unexpected result: %+v", got)
 	}
 }
@@ -762,20 +762,18 @@ func TestAPIYIProgressReadsAlternateFields(t *testing.T) {
 				t.Fatalf("decode task: %v", err)
 			}
 			got := task.toResult("cgt-progress")
-			if got.Status != "running" || got.Progress <= 10 {
+			if got.Status != "running" || got.Progress <= 10 || !got.ProgressKnown {
 				t.Fatalf("progress was not parsed: %+v", got)
 			}
 		})
 	}
 }
 
-func TestAPIYIRunningProgressCanBeEstimatedWhenMissing(t *testing.T) {
-	got := estimatedAPIYIProgress(10, "running", 90*time.Second, 1800)
-	if got <= 10 || got > 95 {
-		t.Fatalf("estimated progress = %d", got)
-	}
-	if completed := estimatedAPIYIProgress(30, "completed", time.Second, 1800); completed != 100 {
-		t.Fatalf("completed progress = %d", completed)
+func TestAPIYICompletedWithoutProgressIsKnown(t *testing.T) {
+	task := apiyiTaskResp{Status: "completed"}
+	got := task.toResult("cgt-completed")
+	if got.Status != "completed" || got.Progress != 100 || !got.ProgressKnown {
+		t.Fatalf("unexpected result: %+v", got)
 	}
 }
 

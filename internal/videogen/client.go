@@ -115,15 +115,16 @@ type ImageInput struct {
 }
 
 type Result struct {
-	TaskID       string
-	ModelID      string
-	Status       string
-	Progress     int
-	ResultURL    string
-	CostType     string
-	CostDetail   CostDetail
-	ErrorMessage string
-	DurationMs   int64
+	TaskID        string
+	ModelID       string
+	Status        string
+	Progress      int
+	ProgressKnown bool
+	ResultURL     string
+	CostType      string
+	CostDetail    CostDetail
+	ErrorMessage  string
+	DurationMs    int64
 }
 
 type Model struct {
@@ -476,10 +477,11 @@ func (c *Client) generateWithConfig(ctx context.Context, cfg Config, opt Options
 	}
 	if opt.OnProgress != nil {
 		opt.OnProgress(Result{
-			TaskID:   taskID,
-			ModelID:  modelID,
-			Status:   "queued",
-			Progress: 0,
+			TaskID:        taskID,
+			ModelID:       modelID,
+			Status:        "queued",
+			Progress:      0,
+			ProgressKnown: false,
 		})
 	}
 	task, err := c.pollTask(ctx, cfg, taskID, opt.OnProgress)
@@ -514,14 +516,15 @@ func (c *Client) GetTask(ctx context.Context, taskID string) (*Result, error) {
 		return nil, err
 	}
 	return &Result{
-		TaskID:       firstNonEmpty(task.ID, taskID),
-		ModelID:      task.ModelID,
-		Status:       task.Status,
-		Progress:     clampProgress(task.Progress),
-		ResultURL:    strings.TrimSpace(task.ResultURL),
-		CostType:     strings.TrimSpace(task.CostType),
-		CostDetail:   task.costDetail(),
-		ErrorMessage: task.ErrorMessage,
+		TaskID:        firstNonEmpty(task.ID, taskID),
+		ModelID:       task.ModelID,
+		Status:        task.Status,
+		Progress:      clampProgress(task.Progress),
+		ProgressKnown: true,
+		ResultURL:     strings.TrimSpace(task.ResultURL),
+		CostType:      strings.TrimSpace(task.CostType),
+		CostDetail:    task.costDetail(),
+		ErrorMessage:  task.ErrorMessage,
 	}, nil
 }
 
@@ -602,10 +605,11 @@ func (c *Client) generateAPIYI(ctx context.Context, cfg Config, opt Options, sta
 	}
 	if opt.OnProgress != nil {
 		opt.OnProgress(Result{
-			TaskID:   taskID,
-			ModelID:  model,
-			Status:   "queued",
-			Progress: 0,
+			TaskID:        taskID,
+			ModelID:       model,
+			Status:        "queued",
+			Progress:      0,
+			ProgressKnown: false,
 		})
 	}
 	task, err := c.pollAPIYITask(ctx, cfg, taskID, opt.OnProgress)
@@ -676,10 +680,11 @@ func (c *Client) generateAPIYIWan(ctx context.Context, cfg Config, opt Options, 
 	}
 	if opt.OnProgress != nil {
 		opt.OnProgress(Result{
-			TaskID:   taskID,
-			ModelID:  model,
-			Status:   "queued",
-			Progress: 0,
+			TaskID:        taskID,
+			ModelID:       model,
+			Status:        "queued",
+			Progress:      0,
+			ProgressKnown: false,
 		})
 	}
 	task, err := c.pollAPIYIWanTask(ctx, cfg, taskID, model, opt.OnProgress)
@@ -856,14 +861,12 @@ func (c *Client) getAPIYIWanTask(ctx context.Context, cfg Config, taskID string)
 func (c *Client) pollAPIYITask(ctx context.Context, cfg Config, taskID string, onProgress func(Result)) (*Result, error) {
 	ticker := time.NewTicker(defaultPollInterval)
 	defer ticker.Stop()
-	start := time.Now()
 	for {
 		var task apiyiTaskResp
 		if err := c.doJSONAPIYI(ctx, http.MethodGet, cfg.BaseURL+apiyiTaskPath+"/"+taskID, cfg.APIKey, nil, &task); err != nil {
 			return nil, err
 		}
 		progressResult := task.toResult(taskID)
-		progressResult.Progress = normalizedAPIYIProgress(progressResult.Progress, progressResult.Status, time.Since(start), cfg.TimeoutSec, task.progressValue() != nil)
 		logAPIYITaskProgress("videogen apiyi task poll", taskID, task, progressResult)
 		if onProgress != nil {
 			onProgress(*progressResult)
@@ -874,6 +877,7 @@ func (c *Client) pollAPIYITask(ctx context.Context, cfg Config, taskID string, o
 				return nil, errors.New("videogen completed without result_url")
 			}
 			progressResult.Progress = 100
+			progressResult.ProgressKnown = true
 			return progressResult, nil
 		case "failed":
 			msg := task.errorMessage()
@@ -893,14 +897,12 @@ func (c *Client) pollAPIYITask(ctx context.Context, cfg Config, taskID string, o
 func (c *Client) pollAPIYIWanTask(ctx context.Context, cfg Config, taskID string, model string, onProgress func(Result)) (*Result, error) {
 	ticker := time.NewTicker(defaultPollInterval)
 	defer ticker.Stop()
-	start := time.Now()
 	for {
 		var task apiyiWanTaskResp
 		if err := c.doJSONAPIYI(ctx, http.MethodGet, cfg.BaseURL+apiyiWanQueryPath+"/"+taskID, cfg.APIKey, nil, &task); err != nil {
 			return nil, err
 		}
 		progressResult := task.toResult(taskID, model)
-		progressResult.Progress = normalizedAPIYIProgress(progressResult.Progress, progressResult.Status, time.Since(start), cfg.TimeoutSec, task.progressValue() != nil)
 		logAPIYIWanTaskProgress("videogen apiyi wan task poll", taskID, task, progressResult)
 		if onProgress != nil {
 			onProgress(*progressResult)
@@ -911,6 +913,7 @@ func (c *Client) pollAPIYIWanTask(ctx context.Context, cfg Config, taskID string
 				return nil, errors.New("videogen completed without result_url")
 			}
 			progressResult.Progress = 100
+			progressResult.ProgressKnown = true
 			return progressResult, nil
 		case "failed":
 			msg := task.errorMessage()
@@ -939,20 +942,22 @@ func (t apiyiTaskResp) toResult(fallbackID string) *Result {
 		priceRaw = append(json.RawMessage(nil), t.Usage...)
 	}
 	return &Result{
-		TaskID:       firstNonEmpty(t.Output.TaskID, t.Output.ID, t.Data.ID, t.ID, t.TaskID, fallbackID),
-		ModelID:      strings.TrimSpace(model),
-		Status:       status,
-		Progress:     progress,
-		ResultURL:    strings.TrimSpace(videoURL),
-		CostType:     "credits",
-		CostDetail:   CostDetail{ModelName: strings.TrimSpace(model), Price: 1, Raw: priceRaw},
-		ErrorMessage: t.errorMessage(),
+		TaskID:        firstNonEmpty(t.Output.TaskID, t.Output.ID, t.Data.ID, t.ID, t.TaskID, fallbackID),
+		ModelID:       strings.TrimSpace(model),
+		Status:        status,
+		Progress:      progress,
+		ProgressKnown: progressKnown(progressRaw, status),
+		ResultURL:     strings.TrimSpace(videoURL),
+		CostType:      "credits",
+		CostDetail:    CostDetail{ModelName: strings.TrimSpace(model), Price: 1, Raw: priceRaw},
+		ErrorMessage:  t.errorMessage(),
 	}
 }
 
 func (t apiyiWanTaskResp) toResult(fallbackID string, fallbackModel string) *Result {
 	status := mapAPIYIWanStatus(firstNonEmpty(t.Output.TaskStatus, t.Output.Status, t.TaskStatus, t.Status))
-	progress := parseAPIYIProgress(t.progressValue(), status)
+	progressRaw := t.progressValue()
+	progress := parseAPIYIProgress(progressRaw, status)
 	videoURL := firstNonEmpty(t.ResultURL, t.Output.ResultURL, t.Output.VideoURL)
 	model := firstNonEmpty(t.Output.ModelName, t.Output.Model, t.ModelName, t.Model, fallbackModel)
 	priceRaw := json.RawMessage(`1`)
@@ -960,14 +965,15 @@ func (t apiyiWanTaskResp) toResult(fallbackID string, fallbackModel string) *Res
 		priceRaw = append(json.RawMessage(nil), t.Usage...)
 	}
 	return &Result{
-		TaskID:       firstNonEmpty(t.TaskID, t.Output.TaskID, t.ID, fallbackID),
-		ModelID:      strings.TrimSpace(model),
-		Status:       status,
-		Progress:     progress,
-		ResultURL:    strings.TrimSpace(videoURL),
-		CostType:     "credits",
-		CostDetail:   CostDetail{ModelName: strings.TrimSpace(model), Price: 1, Raw: priceRaw},
-		ErrorMessage: t.errorMessage(),
+		TaskID:        firstNonEmpty(t.TaskID, t.Output.TaskID, t.ID, fallbackID),
+		ModelID:       strings.TrimSpace(model),
+		Status:        status,
+		Progress:      progress,
+		ProgressKnown: progressKnown(progressRaw, status),
+		ResultURL:     strings.TrimSpace(videoURL),
+		CostType:      "credits",
+		CostDetail:    CostDetail{ModelName: strings.TrimSpace(model), Price: 1, Raw: priceRaw},
+		ErrorMessage:  t.errorMessage(),
 	}
 }
 
@@ -1085,14 +1091,15 @@ func (c *Client) pollTask(ctx context.Context, cfg Config, taskID string, onProg
 		status := strings.ToLower(strings.TrimSpace(task.Status))
 		progress := clampProgress(task.Progress)
 		progressResult := Result{
-			TaskID:       firstNonEmpty(task.ID, taskID),
-			ModelID:      task.ModelID,
-			Status:       task.Status,
-			Progress:     progress,
-			ResultURL:    strings.TrimSpace(task.ResultURL),
-			CostType:     strings.TrimSpace(task.CostType),
-			CostDetail:   task.costDetail(),
-			ErrorMessage: task.ErrorMessage,
+			TaskID:        firstNonEmpty(task.ID, taskID),
+			ModelID:       task.ModelID,
+			Status:        task.Status,
+			Progress:      progress,
+			ProgressKnown: true,
+			ResultURL:     strings.TrimSpace(task.ResultURL),
+			CostType:      strings.TrimSpace(task.CostType),
+			CostDetail:    task.costDetail(),
+			ErrorMessage:  task.ErrorMessage,
 		}
 		if onProgress != nil {
 			onProgress(progressResult)
@@ -1103,6 +1110,7 @@ func (c *Client) pollTask(ctx context.Context, cfg Config, taskID string, onProg
 				return nil, errors.New("videogen completed without result_url")
 			}
 			progressResult.Progress = 100
+			progressResult.ProgressKnown = true
 			return &progressResult, nil
 		case "failed":
 			msg := strings.TrimSpace(task.ErrorMessage)
@@ -1647,6 +1655,18 @@ func parseAPIYIProgress(progress any, status string) int {
 	}
 }
 
+func progressKnown(progress any, status string) bool {
+	if progress != nil {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "completed", "failed":
+		return true
+	default:
+		return false
+	}
+}
+
 func firstAPIYIProgressValue(values ...any) any {
 	for _, v := range values {
 		switch value := v.(type) {
@@ -1691,65 +1711,6 @@ func progressFromRawMapDepth(raw map[string]any, depth int) any {
 		}
 	}
 	return nil
-}
-
-func estimatedAPIYIProgress(progress int, status string, elapsed time.Duration, timeoutSec int) int {
-	return normalizedAPIYIProgress(progress, status, elapsed, timeoutSec, false)
-}
-
-func normalizedAPIYIProgress(progress int, status string, elapsed time.Duration, timeoutSec int, hasUpstreamProgress bool) int {
-	progress = clampProgress(progress)
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "completed", "failed":
-		return 100
-	case "queued":
-		if hasUpstreamProgress {
-			return progress
-		}
-		if progress > apiyiProgress("queued") {
-			return progress
-		}
-		if elapsed >= 30*time.Second {
-			return 8
-		}
-		if elapsed >= 10*time.Second {
-			return 6
-		}
-		return progress
-	case "running":
-		if hasUpstreamProgress {
-			if progress > 95 {
-				return 95
-			}
-			return progress
-		}
-		if progress > apiyiProgress("running") {
-			if progress > 95 {
-				return 95
-			}
-			return progress
-		}
-		if progress != apiyiProgress("running") && progress != apiyiProgress("queued") {
-			return progress
-		}
-		window := 180 * time.Second
-		if timeoutSec > 0 && timeoutSec < 180 {
-			window = time.Duration(timeoutSec) * time.Second
-			if window < 30*time.Second {
-				window = 30 * time.Second
-			}
-		}
-		estimated := 10 + int(math.Round(elapsed.Seconds()/window.Seconds()*85))
-		if estimated < progress {
-			return progress
-		}
-		if estimated > 95 {
-			return 95
-		}
-		return estimated
-	default:
-		return progress
-	}
 }
 
 func progressLogValue(progress any) string {

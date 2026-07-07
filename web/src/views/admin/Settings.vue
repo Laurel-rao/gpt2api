@@ -489,9 +489,10 @@ function pollVideoGenerateTest(channelType: string, id: string) {
 function videoGenerateStatusText(row: VideoChannelRow) {
   const state = videoGenerateTestStates[row.type]
   if (!state) return '未测试'
-  const progress = Number(state.progress || 0)
+  const progress = videoGenerateProgress(row)
   if (state.status === 'completed') return `测试完成 ${progress || 100}%`
   if (state.status === 'failed') return `测试失败`
+  if (!videoGenerateProgressKnown(row)) return '测试中'
   return `测试中 ${progress}%`
 }
 
@@ -499,7 +500,16 @@ function videoGenerateProgress(row: VideoChannelRow) {
   const state = videoGenerateTestStates[row.type]
   if (!state) return 0
   if (state.status === 'completed') return 100
+  if (state.status === 'failed') return 100
+  if (!videoGenerateProgressKnown(row)) return 0
   return Number(state.progress || 0)
+}
+
+function videoGenerateProgressKnown(row: VideoChannelRow) {
+  const state = videoGenerateTestStates[row.type]
+  if (!state) return false
+  const status = String(state.status || '').toLowerCase()
+  return Boolean(state.progress_known) || status === 'completed' || status === 'failed'
 }
 
 function videoGenerateProgressStatus(row: VideoChannelRow) {
@@ -812,7 +822,7 @@ onUnmounted(() => {
                           >查看结果</el-link>
                         </div>
                         <el-progress
-                          v-if="videoGenerateTestStates[row.type]"
+                          v-if="videoGenerateTestStates[row.type] && videoGenerateProgressKnown(row)"
                           :percentage="videoGenerateProgress(row)"
                           :status="videoGenerateProgressStatus(row)"
                           :stroke-width="6"

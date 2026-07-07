@@ -345,6 +345,7 @@ export interface PlayVideoState {
   channel_type: string
   status: string
   progress: number
+  progress_known?: boolean
   task_id?: string
   model_id?: string
   image_url?: string

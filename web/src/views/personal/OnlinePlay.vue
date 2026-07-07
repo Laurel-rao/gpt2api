@@ -648,6 +648,27 @@ const videoProgressStatus = computed(() => {
   return undefined
 })
 
+const videoProgressKnown = computed(() => isVideoProgressKnown(videoTask.value))
+
+function isVideoProgressKnown(state?: Pick<PlayVideoState, 'status' | 'progress_known'> | null) {
+  const status = String(state?.status || '').toLowerCase()
+  return Boolean(state?.progress_known) || status === 'completed' || status === 'failed'
+}
+
+function videoProgressPercent(state?: Pick<PlayVideoState, 'status' | 'progress' | 'progress_known'> | null) {
+  const status = String(state?.status || '').toLowerCase()
+  if (status === 'completed' || status === 'failed') return 100
+  if (!isVideoProgressKnown(state)) return 0
+  return Number(state?.progress || 0)
+}
+
+function videoHistoryStatusText(item: VideoHistoryItem) {
+  if (item.status === 'completed') return '完成'
+  if (item.status === 'failed') return '失败'
+  if (!isVideoProgressKnown(item)) return '生成中'
+  return `${videoProgressPercent(item)}%`
+}
+
 const videoCanUseReferenceVideo = computed(() =>
   selectedVideoChannel.value === 'apiyi_seedance2' || selectedVideoChannel.value === 'apiyi_wan27' || selectedVideoChannel.value === 'apiyi_happyhorse',
 )
@@ -1570,7 +1591,7 @@ watch(activeTab, (v) => {
                         <small>{{ item.channel_name || item.channel_type }} · {{ item.mode === 'image' ? '图生视频' : item.mode === 'video' ? '参考视频' : '文生视频' }} · {{ formatDateShort(item.created_at) }}</small>
                       </span>
                       <em :class="['play-history-status', item.status === 'completed' ? 'success' : item.status === 'failed' ? 'danger' : 'muted']">
-                        {{ item.status === 'completed' ? '完成' : item.status === 'failed' ? '失败' : `${item.progress || 0}%` }}
+                        {{ videoHistoryStatusText(item) }}
                       </em>
                     </button>
                   </div>
@@ -1602,10 +1623,12 @@ watch(activeTab, (v) => {
                 {{ videoTask.task_id ? `上游任务 ${videoTask.task_id}` : '任务已提交，正在等待上游返回进度' }}
               </div>
               <el-progress
+                v-if="videoProgressKnown"
                 class="video-progress"
-                :percentage="videoTask.status === 'completed' ? 100 : (videoTask.progress || 0)"
+                :percentage="videoProgressPercent(videoTask)"
                 :status="videoProgressStatus"
               />
+              <div v-else class="stage-sub">等待上游返回真实进度</div>
               <div v-if="videoTask.error" class="err-block video-error">
                 <el-icon><WarningFilled /></el-icon>
                 {{ videoTask.error }}
