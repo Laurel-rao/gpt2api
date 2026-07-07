@@ -10,7 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/432539/gpt2api/internal/settings"
 	"github.com/432539/gpt2api/internal/videogen"
+	"github.com/gin-gonic/gin"
 )
 
 func TestSaveVideoPlaygroundUploadImageReturnsDataURL(t *testing.T) {
@@ -75,6 +77,59 @@ func TestVideoPlaygroundImagePayloadURLPrefersDataURLForAPIYI(t *testing.T) {
 	}
 }
 
+func TestVideoPlaygroundAbsoluteURLKeepsForwardedHostPort(t *testing.T) {
+	c := videoPlaygroundTestContext(t, map[string]string{
+		"X-Forwarded-Proto": "http",
+		"X-Forwarded-Host":  "123.207.53.152:8080",
+	})
+	got := videoPlaygroundAbsoluteURL(c, nil, "/site-assets/ref.mp4")
+	want := "http://123.207.53.152:8080/site-assets/ref.mp4"
+	if got != want {
+		t.Fatalf("absolute url = %q, want %q", got, want)
+	}
+}
+
+func TestVideoPlaygroundAbsoluteURLAddsForwardedPort(t *testing.T) {
+	c := videoPlaygroundTestContext(t, map[string]string{
+		"X-Forwarded-Proto": "http",
+		"X-Forwarded-Host":  "123.207.53.152",
+		"X-Forwarded-Port":  "8080",
+	})
+	got := videoPlaygroundAbsoluteURL(c, nil, "/site-assets/ref.mp4")
+	want := "http://123.207.53.152:8080/site-assets/ref.mp4"
+	if got != want {
+		t.Fatalf("absolute url = %q, want %q", got, want)
+	}
+}
+
+func TestVideoPlaygroundAbsoluteURLUsesConfiguredBase(t *testing.T) {
+	c := videoPlaygroundTestContext(t, map[string]string{
+		"X-Forwarded-Host": "123.207.53.152:8080",
+	})
+	got := videoPlaygroundAbsoluteURL(c, videoPlaygroundTestSettings{
+		settings.SiteAPIBaseURL: "https://cdn.example.com",
+	}, "/site-assets/ref.mp4")
+	want := "https://cdn.example.com/site-assets/ref.mp4"
+	if got != want {
+		t.Fatalf("absolute url = %q, want %q", got, want)
+	}
+}
+
+func TestVideoPlaygroundSupportsReferenceVideoIncludesSeedance(t *testing.T) {
+	for _, channelType := range []string{
+		videogen.ChannelAPIYISeedance,
+		videogen.ChannelAPIYIWan27,
+		videogen.ChannelAPIYIHappyHorse,
+	} {
+		if !videoPlaygroundSupportsReferenceVideo(channelType) {
+			t.Fatalf("channel %q should support reference video", channelType)
+		}
+	}
+	if videoPlaygroundSupportsReferenceVideo(videogen.ChannelEchoon) {
+		t.Fatal("echoon should not support reference video")
+	}
+}
+
 func videoPlaygroundTestFileHeader(t *testing.T, field, filename string, data []byte) *multipart.FileHeader {
 	t.Helper()
 	body := &bytes.Buffer{}
@@ -100,3 +155,29 @@ func videoPlaygroundTestFileHeader(t *testing.T, field, filename string, data []
 	}
 	return files[0]
 }
+
+func videoPlaygroundTestContext(t *testing.T, headers map[string]string) *gin.Context {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	req := httptest.NewRequest(http.MethodPost, "http://server/api/me/playground/video", nil)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = req
+	return c
+}
+
+type videoPlaygroundTestSettings map[string]string
+
+func (s videoPlaygroundTestSettings) VideoGenEnabled() bool { return true }
+
+func (s videoPlaygroundTestSettings) VideoGenChannelType() string { return videogen.ChannelAPIYIWan27 }
+
+func (s videoPlaygroundTestSettings) VideoGenConfigForChannel(channelType string) videogen.Config {
+	return videogen.Config{ChannelType: channelType}
+}
+
+func (s videoPlaygroundTestSettings) VideoGenBillingRatio() float64 { return 10 }
+
+func (s videoPlaygroundTestSettings) GetString(key string) string { return s[key] }

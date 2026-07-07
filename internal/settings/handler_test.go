@@ -25,3 +25,18 @@ func TestVideoGenRequestChannelReadsMultipartForm(t *testing.T) {
 		t.Fatalf("channel type = %q, want %q", got, videogen.ChannelAPIYIWan27)
 	}
 }
+
+func TestVideoGenSupportsReferenceVideoIncludesSeedance(t *testing.T) {
+	for _, channelType := range []string{
+		videogen.ChannelAPIYISeedance,
+		videogen.ChannelAPIYIWan27,
+		videogen.ChannelAPIYIHappyHorse,
+	} {
+		if !videoGenSupportsReferenceVideo(channelType) {
+			t.Fatalf("channel %q should support reference video", channelType)
+		}
+	}
+	if videoGenSupportsReferenceVideo(videogen.ChannelEchoon) {
+		t.Fatal("echoon should not support reference video")
+	}
+}

@@ -406,8 +406,8 @@ func (h *Handler) StartVideoGenGenerateTest(c *gin.Context) {
 	}
 	videoURL := ""
 	if fh, err := c.FormFile("video"); err == nil && fh != nil {
-		if cfg.ChannelType != videogen.ChannelAPIYIWan27 && cfg.ChannelType != videogen.ChannelAPIYIHappyHorse {
-			resp.BadRequest(c, "参考视频仅支持 API易 Wan2.7 / HappyHorse 渠道")
+		if !videoGenSupportsReferenceVideo(cfg.ChannelType) {
+			resp.BadRequest(c, "参考视频仅支持 API易 Seedance 2.0 / Wan2.7 / HappyHorse 渠道")
 			return
 		}
 		if fh.Size <= 0 {
@@ -567,6 +567,15 @@ func isAPIYIUnsupportedBalanceChannel(channelType string) bool {
 	}
 }
 
+func videoGenSupportsReferenceVideo(channelType string) bool {
+	switch strings.ToLower(strings.TrimSpace(channelType)) {
+	case videogen.ChannelAPIYISeedance, videogen.ChannelAPIYIWan27, videogen.ChannelAPIYIHappyHorse:
+		return true
+	default:
+		return false
+	}
+}
+
 func saveVideoGenTestImage(fh *multipart.FileHeader) (string, error) {
 	return saveVideoGenTestMedia(fh, "image")
 }
@@ -629,35 +638,15 @@ func videoGenTestMediaExt(contentType, filename, kind string) (string, bool) {
 }
 
 func absolutePublicURL(c *gin.Context, svc *Service, publicPath string) string {
-	publicPath = strings.TrimSpace(publicPath)
-	if publicPath == "" {
-		return ""
-	}
-	if strings.HasPrefix(publicPath, "http://") || strings.HasPrefix(publicPath, "https://") {
-		return publicPath
-	}
 	base := ""
 	if svc != nil {
 		base = strings.TrimRight(strings.TrimSpace(svc.GetString(SiteAPIBaseURL)), "/")
 	}
-	if base == "" {
-		scheme := "http"
-		if c.Request.TLS != nil {
-			scheme = "https"
-		}
-		if forwarded := strings.TrimSpace(c.GetHeader("X-Forwarded-Proto")); forwarded != "" {
-			scheme = strings.Split(forwarded, ",")[0]
-		}
-		host := c.Request.Host
-		if forwardedHost := strings.TrimSpace(c.GetHeader("X-Forwarded-Host")); forwardedHost != "" {
-			host = strings.Split(forwardedHost, ",")[0]
-		}
-		base = scheme + "://" + strings.TrimSpace(host)
+	var req *http.Request
+	if c != nil {
+		req = c.Request
 	}
-	if !strings.HasPrefix(publicPath, "/") {
-		publicPath = "/" + publicPath
-	}
-	return base + publicPath
+	return PublicURLFromRequest(req, base, publicPath)
 }
 
 func clampProgress(progress int) int {
