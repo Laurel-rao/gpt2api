@@ -53,6 +53,8 @@
 /web/dist/
 /web/.cache/
 /web/.vite/
+/web/coverage/
+/deploy/backups/
 
 # =============================================================================
 # Python(仅 legacy 参考)

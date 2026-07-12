@@ -51,7 +51,7 @@ ls -lh deploy/bin/gpt2api deploy/bin/goose web/dist/index.html
 
 ```bash
 cd deploy
-cp .env.example .env           # 修改 JWT_SECRET / CRYPTO_AES_KEY / MySQL 密码
+cp .env.example .env           # 填写下文列出的 5 类生产必配项；留空时 Compose 会拒绝启动
 docker compose build server    # 把刚才的产物 COPY 进镜像
 docker compose up -d
 docker compose logs -f server  # 观察迁移 + 启动日志
@@ -74,12 +74,12 @@ docker compose logs -f server  # 观察迁移 + 启动日志
 
 `quick-remote-sync.sh` 默认读取 `deploy/remote-release.env`,并会执行:
 
-1. 本地 `npm run build`
-2. 本地 `go test ./internal/ecommerce ./internal/videogen ./internal/settings ./cmd/server`
-3. `rsync` 指定源码文件和 `web/dist` 到远端
-4. 远端 `go test`、`CGO_ENABLED=0 go build`
-5. `docker compose build server && docker compose up -d server nginx`
-6. `/healthz` 检查
+1. 用本次新 Compose 配置预检远端 `deploy/.env`，缺项时在同步源码前停止
+2. 本地 Vitest、视频画布 E2E 契约测试、`npm run build`、相关 Go 测试与 Linux/amd64 交叉编译
+3. `rsync` 指定源码、`web/dist` 与 `deploy/bin/gpt2api` 到远端
+4. 远端安装 Go 时追加 `go test` 与静态编译；未安装时使用已验证的本地交叉编译产物
+5. `docker compose --env-file deploy/.env build server && docker compose --env-file deploy/.env up -d --wait --wait-timeout 120 server nginx`，再重启 nginx 刷新 server 容器地址
+6. `/healthz`、`/readyz` 与 `docker compose ps` 检查
 
 新增文件、SQL 迁移、路由、菜单、前端页面等不在默认清单里时,要追加到命令末尾。例如:
 
@@ -108,20 +108,37 @@ bash deploy/quick-remote-sync.sh \
 - `mysql_data`:MySQL 物理数据
 - `redis_data`:Redis AOF
 - `backups`:`/app/data/backups` —— 数据库备份文件(.sql.gz)落盘目录
-- `./logs`:宿主机 `deploy/logs` —— server 日志
+- `video_workflow_assets`:`/app/data/video-workflow-assets` —— 图片、视频和成片的不可变版本
+- `server_logs`:`/app/logs` —— server 日志
 
 数据库备份和宿主机数据是两条独立路径:
 
 - 管理员在后台"数据备份"里点"立即备份"会把 `mysqldump` 压缩写入 `backups` 卷;
 - `backups` 卷也可以挂回宿主机目录来做 rsync 异地冷备。
 
+视频画布使用数据库与素材卷配对的一致性快照；创建时会短暂停止 server/nginx，并对归档、数据库、素材卷及每条 ready 素材的 `storage_key/sha256/size` 清单逐项校验：
+
+```bash
+bash deploy/video-workflow-assets-backup.sh create
+bash deploy/video-workflow-assets-backup.sh list
+bash deploy/video-workflow-assets-backup.sh verify deploy/backups/video-workflow-assets/<archive>.tar.gz
+```
+
+恢复必须显式确认并会短暂停止 server/nginx：
+
+```bash
+VIDEO_WORKFLOW_RESTORE_CONFIRM=YES bash deploy/video-workflow-assets-backup.sh restore <archive>.tar.gz
+```
+
 ## 安全红线
 
-以下必须在 **.env** 中显式覆盖(生产禁用默认值):
+以下 5 类配置必须在 **.env** 中填写真实值；空值会被 Docker Compose 的 `:?` 校验拒绝，仓库默认值、placeholder 和示例域名也会被生产配置校验拒绝：
 
-- `JWT_SECRET`:至少 32 字符随机串
-- `CRYPTO_AES_KEY`:**严格** 64 位 hex(32 字节 AES-256 key)
-- `MYSQL_ROOT_PASSWORD` / `MYSQL_PASSWORD`
+1. `MYSQL_ROOT_PASSWORD` 与 `MYSQL_PASSWORD`：均至少 16 字节，不得使用占位或常见默认值，且两者必须不同。
+2. `JWT_SECRET`：至少 32 字节随机串。
+3. `CRYPTO_AES_KEY`：严格 64 位十六进制字符，即 32 字节 AES-256 key。
+4. `VIDEO_WORKFLOW_SIGNING_SECRET`：至少 32 字节独立随机串，用于媒体链接与费用确认令牌，禁止复用 JWT 密钥。
+5. `VIDEO_WORKFLOW_PUBLIC_BASE_URL`：上游可访问的真实公网 http(s) origin，禁止 `example.com`、localhost、内网地址、路径、查询参数和片段。
 
 后端对高危操作的保护:
 

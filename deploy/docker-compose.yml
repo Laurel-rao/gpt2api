@@ -1,13 +1,33 @@
 services:
+  volume-init:
+    image: gpt2api/server:latest
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        chown -R 10001:10001
+        /writable/backups
+        /writable/site-assets
+        /writable/ecommerce-assets
+        /writable/video-workflow-assets
+        /writable/logs
+    volumes:
+      - backups:/writable/backups
+      - site_assets:/writable/site-assets
+      - ecommerce_assets:/writable/ecommerce-assets
+      - video_workflow_assets:/writable/video-workflow-assets
+      - server_logs:/writable/logs
+    restart: "no"
+
   mysql:
     image: mysql:8.0
     container_name: gpt2api-mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-gpt2api}
       MYSQL_USER: ${MYSQL_USER:-gpt2api}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-gpt2api}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
       TZ: Asia/Shanghai
     command:
       - --character-set-server=utf8mb4
@@ -23,7 +43,7 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-root}"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -52,6 +72,8 @@ services:
     container_name: gpt2api-server
     restart: unless-stopped
     depends_on:
+      volume-init:
+        condition: service_completed_successfully
       mysql:
         condition: service_healthy
       redis:
@@ -62,21 +84,41 @@ services:
       MYSQL_HOST: mysql
       MYSQL_PORT: 3306
       MYSQL_USER: ${MYSQL_USER:-gpt2api}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-gpt2api}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-gpt2api}
       # 通过 GPT2API_* 覆盖 config.yaml 中的任一字段
-      GPT2API_MYSQL_DSN: "${MYSQL_USER:-gpt2api}:${MYSQL_PASSWORD:-gpt2api}@tcp(mysql:3306)/${MYSQL_DATABASE:-gpt2api}?parseTime=true&loc=Local&charset=utf8mb4&collation=utf8mb4_unicode_ci"
+      GPT2API_APP_ENV: "prod"
+      GPT2API_MYSQL_DSN: "${MYSQL_USER:-gpt2api}:${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}@tcp(mysql:3306)/${MYSQL_DATABASE:-gpt2api}?parseTime=true&loc=Local&charset=utf8mb4&collation=utf8mb4_unicode_ci"
       GPT2API_REDIS_ADDR: "redis:6379"
       GPT2API_BACKUP_DIR: /app/data/backups
       GPT2API_ECOMMERCE_ASSET_DIR: /app/data/ecommerce-assets
+      GPT2API_VIDEO_WORKFLOW_ASSET_DIR: /app/data/video-workflow-assets
+      GPT2API_VIDEO_WORKFLOW_ENABLED: "true"
+      GPT2API_VIDEO_WORKFLOW_ACCEPT_NEW_RUNS: "true"
+      GPT2API_VIDEO_WORKFLOW_SIGNING_SECRET: ${VIDEO_WORKFLOW_SIGNING_SECRET:?VIDEO_WORKFLOW_SIGNING_SECRET is required}
+      GPT2API_VIDEO_WORKFLOW_PUBLIC_BASE_URL: ${VIDEO_WORKFLOW_PUBLIC_BASE_URL:?VIDEO_WORKFLOW_PUBLIC_BASE_URL is required}
+      GPT2API_VIDEO_WORKFLOW_WORKER_CONCURRENCY: "4"
+      GPT2API_VIDEO_WORKFLOW_IMAGE_CONCURRENCY: "2"
+      GPT2API_VIDEO_WORKFLOW_VIDEO_CONCURRENCY: "2"
+      GPT2API_VIDEO_WORKFLOW_COMPOSE_CONCURRENCY: "1"
+      GPT2API_VIDEO_WORKFLOW_HEARTBEAT_SEC: "10"
+      GPT2API_VIDEO_WORKFLOW_LEASE_TTL_SEC: "60"
+      GPT2API_VIDEO_WORKFLOW_RECOVERY_SCAN_SEC: "30"
       GPT2API_BACKUP_RETENTION: ${BACKUP_RETENTION:-30}
       GPT2API_BACKUP_ALLOW_RESTORE: ${BACKUP_ALLOW_RESTORE:-false}
       AZT_API_KEY: ${AZT_API_KEY:-}
-      # 强烈建议在 .env 中覆盖下列两项
-      GPT2API_JWT_SECRET: ${JWT_SECRET:-dev_secret_change_me_in_production_please_32b}
-      GPT2API_CRYPTO_AES_KEY: ${CRYPTO_AES_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      AI_GEN_API_KEY: ${AI_GEN_API_KEY:-}
+      GPT2API_JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      GPT2API_CRYPTO_AES_KEY: ${CRYPTO_AES_KEY:?CRYPTO_AES_KEY is required}
     expose:
       - "8080"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 2g
+    pids_limit: 512
+    stop_grace_period: 90s
     # 给容器指定独立公共 DNS,避免宿主 Clash/V2Ray 等梯子劫持了
     # 代理供应商(如 *.arxlabs.io / *.luminati.io 等)的域名解析,
     # 同时 chatgpt.com 也由外部 DNS 统一解析,确保路径一致。
@@ -88,7 +130,8 @@ services:
       - backups:/app/data/backups
       - site_assets:/app/data/site-assets
       - ecommerce_assets:/app/data/ecommerce-assets
-      - ./logs:/app/logs
+      - video_workflow_assets:/app/data/video-workflow-assets
+      - server_logs:/app/logs
     command: ["/app/gpt2api", "-c", "/app/configs/config.yaml"]
 
   nginx:
@@ -111,3 +154,5 @@ volumes:
   backups:
   site_assets:
   ecommerce_assets:
+  video_workflow_assets:
+  server_logs:

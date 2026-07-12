@@ -12,17 +12,19 @@
 
 FROM alpine:3.20
 
-# 走 ustc HTTP 源,规避企业 HTTPS 代理 MITM 导致的证书校验失败
-RUN sed -i 's@https\?://dl-cdn.alpinelinux.org@http://mirrors.ustc.edu.cn@g' /etc/apk/repositories \
-    && apk add --no-cache ca-certificates tzdata curl bash mariadb-client \
+# 远端实测阿里云 Alpine 镜像下载稳定，保留 HTTPS 校验。
+RUN sed -i 's@https\?://dl-cdn.alpinelinux.org@https://mirrors.aliyun.com@g' /etc/apk/repositories \
+    && apk add --no-cache ca-certificates tzdata curl bash mariadb-client ffmpeg \
     && update-ca-certificates \
     && ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
-    && echo "Asia/Shanghai" > /etc/timezone
+    && echo "Asia/Shanghai" > /etc/timezone \
+    && addgroup -S -g 10001 app \
+    && adduser -S -D -H -u 10001 -G app app
 
 WORKDIR /app
 
 # 后端 + goose 二进制(宿主交叉编译产物)
-COPY deploy/bin/gpt2api /app/gpt2api
+COPY --chown=app:app deploy/bin/gpt2api /app/gpt2api
 COPY deploy/bin/goose   /usr/local/bin/goose
 RUN chmod +x /app/gpt2api /usr/local/bin/goose
 
@@ -32,12 +34,15 @@ COPY configs /app/configs
 COPY deploy/entrypoint.sh /app/entrypoint.sh
 RUN sed -i 's/\r$//' /app/entrypoint.sh \
     && chmod +x /app/entrypoint.sh \
-    && mkdir -p /app/data/backups /app/data/site-assets /app/logs
+    && mkdir -p /app/data/backups /app/data/site-assets /app/data/video-workflow-assets /app/logs \
+    && chown -R app:app /app/data /app/logs
 
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS http://localhost:8080/healthz || exit 1
+
+USER 10001:10001
 
 ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["/app/gpt2api", "-c", "/app/configs/config.yaml"]

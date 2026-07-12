@@ -23,12 +23,51 @@ RUN_LOCAL_BUILD="${GPT2API_RUN_LOCAL_BUILD:-1}"
 RUN_REMOTE_TESTS="${GPT2API_RUN_REMOTE_TESTS:-1}"
 
 FILES=(
-  "internal/ecommerce/dao.go"
-  "internal/ecommerce/handler.go"
-  "internal/ecommerce/runner.go"
+  ".gitignore"
+  "deploy/quick-remote-sync.sh"
+  "deploy/README.md"
+  "cmd/server/main.go"
+  "cmd/server/video_workflow_adapters.go"
+  "cmd/server/video_workflow_adapters_test.go"
+  "configs/config.example.yaml"
+  "deploy/Dockerfile"
+  "deploy/.env.example"
+  "deploy/docker-compose.yml"
+  "deploy/nginx.conf"
+  "deploy/video-workflow-assets-backup.sh"
+  "internal/billing/engine.go"
+  "internal/config/config.go"
+  "internal/config/deploy_security_test.go"
+  "internal/config/video_workflow_test.go"
+  "internal/middleware/logger.go"
+  "internal/middleware/logger_test.go"
+  "internal/videogen/client.go"
+  "internal/videogen/client_test.go"
+  "internal/videoworkflow"
+  "internal/rbac/menu.go"
+  "internal/rbac/permission.go"
   "internal/server/router.go"
-  "web/src/api/ecommerce.ts"
-  "web/src/views/personal/EcommerceWorkbench.vue"
+  "internal/server/readiness_test.go"
+  "internal/settings/service.go"
+  "sql/migrations/20260711000100_video_workflow.sql"
+  "sql/migrations/20260712000100_video_workflow_runtime_fencing.sql"
+  "web/package.json"
+  "web/package-lock.json"
+  "web/vitest.config.ts"
+  "web/e2e/video-canvas"
+  "web/src/api/videoWorkflow.spec.ts"
+  "web/src/api/videoWorkflow.ts"
+  "web/src/components/video-workflow"
+  "web/src/router/index.ts"
+  "web/src/test"
+  "web/src/utils/videoWorkflowAsync.ts"
+  "web/src/utils/videoWorkflowAsync.spec.ts"
+  "web/src/utils/videoWorkflowGraph.ts"
+  "web/src/utils/videoWorkflowGraph.spec.ts"
+  "web/src/views/personal/VideoWorkflows.vue"
+  "docs/plans/video-workflow-requirements.md"
+  "docs/plans/video-workflow-verification.md"
+  "docs/ui-prototypes/video-workflow"
 )
 
 usage() {
@@ -37,13 +76,13 @@ usage() {
   bash deploy/quick-remote-sync.sh [选项] [文件...]
 
 默认动作:
-  1. 本地 npm run build
-  2. 本地 go test ./internal/ecommerce ./internal/videogen ./internal/settings ./cmd/server
-  3. 同步默认 FILES 与 web/dist 到远端
-  4. 远端 go test
-  5. 远端 CGO_ENABLED=0 go build -buildvcs=false
-  6. 远端 docker compose build/up/restart
-  7. 健康检查 /healthz
+  1. 用新 Compose 配置预检远端 deploy/.env
+  2. 本地前端单元测试、E2E 契约测试与 npm run build
+  3. 本地测试视频画布、视频渠道恢复、配置、日志、路由与服务启动包
+  4. 同步默认 FILES 与 web/dist 到远端
+  5. 本地交叉编译 Linux/amd64；远端有 Go 时追加远端测试与静态编译
+  6. 远端 docker compose build/up --wait
+  7. 检查 /healthz、/readyz 与容器状态
 
 选项:
   --host <host>          远端主机，默认读取 deploy/remote-release.env
@@ -60,7 +99,7 @@ usage() {
 
 示例:
   bash deploy/quick-remote-sync.sh
-  bash deploy/quick-remote-sync.sh web/src/views/personal/EcommerceMobileWorkbench.vue
+  bash deploy/quick-remote-sync.sh docs/ui-prototypes/video-workflow/video-canvas-main-v1.png
   GPT2API_REMOTE_HOST=1.2.3.4 bash deploy/quick-remote-sync.sh --skip-local-build
 EOF
 }
@@ -79,11 +118,11 @@ require_cmd() {
 }
 
 ssh_remote() {
-  ssh -p "$REMOTE_PORT" -o BatchMode=yes -o StrictHostKeyChecking=no "${REMOTE_USER}@${REMOTE_HOST}" "$@"
+  ssh -p "$REMOTE_PORT" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=10 "${REMOTE_USER}@${REMOTE_HOST}" "$@"
 }
 
 rsync_remote() {
-  rsync -az --partial -e "ssh -p $REMOTE_PORT -o BatchMode=yes -o StrictHostKeyChecking=no" "$@"
+  rsync -az --partial -e "ssh -p $REMOTE_PORT -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=10" "$@"
 }
 
 parse_args() {
@@ -157,9 +196,76 @@ run_local_checks() {
     return
   fi
   log "本地前端构建"
-  (cd "$ROOT/web" && npm run build)
+  (cd "$ROOT/web" && npm run test:unit -- --run && npm run e2e:video-canvas:contract && npm run build)
   log "本地 Go 测试"
-  (cd "$ROOT" && go test ./internal/ecommerce ./internal/videogen ./internal/settings ./cmd/server)
+  (cd "$ROOT" && go test ./internal/videoworkflow ./internal/videogen ./internal/config ./internal/middleware ./internal/server ./internal/settings ./internal/rbac ./cmd/server)
+  log "本地交叉编译 Linux/amd64 服务端"
+  mkdir -p "$ROOT/deploy/bin"
+  (cd "$ROOT" && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags "-s -w" -o deploy/bin/gpt2api ./cmd/server)
+}
+
+preflight_remote_configuration() {
+  log "预检远端 deploy/.env 与新 Compose 配置"
+  ssh_remote "cd '$REMOTE_DIR' && bash -s" <<'REMOTE_SCRIPT'
+set -euo pipefail
+
+env_file="deploy/.env"
+test -f "$env_file" || {
+  echo '[quick-sync] ERROR: 缺少远端 deploy/.env' >&2
+  exit 1
+}
+
+mysql_root_password=''
+mysql_password=''
+while IFS='=' read -r name value; do
+  case "$name" in
+    MYSQL_ROOT_PASSWORD) mysql_root_password="$value" ;;
+    MYSQL_PASSWORD) mysql_password="$value" ;;
+  esac
+done < <(
+  docker compose --env-file "$env_file" -f - config --environment <<'COMPOSE_YAML'
+services:
+  production-secret-preflight:
+    image: scratch
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD-}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD-}
+COMPOSE_YAML
+)
+
+is_unsafe_mysql_password() {
+  local value normalized byte_length
+  byte_length="$(printf '%s' "$1" | wc -c | tr -d '[:space:]')"
+  if [ "$byte_length" -lt 16 ]; then
+    return 0
+  fi
+  value="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  normalized="${value//-/_}"
+  normalized="${normalized// /_}"
+  case "$normalized" in
+    ''|root|gpt2api|mysql|password|admin|administrator|123456|12345678|123456789|qwerty|letmein|default|\
+    *change_me*|*changeme*|*please_change*|*placeholder*|*replace_me*|*your_password*|*example*|*default_password*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+if is_unsafe_mysql_password "$mysql_root_password"; then
+  echo '[quick-sync] ERROR: MYSQL_ROOT_PASSWORD 必须至少 16 字节且不得使用常见占位/默认值' >&2
+  exit 1
+fi
+if is_unsafe_mysql_password "$mysql_password"; then
+  echo '[quick-sync] ERROR: MYSQL_PASSWORD 必须至少 16 字节且不得使用常见占位/默认值' >&2
+  exit 1
+fi
+if [ "$mysql_root_password" = "$mysql_password" ]; then
+  echo '[quick-sync] ERROR: MYSQL_ROOT_PASSWORD 与 MYSQL_PASSWORD 必须使用不同值' >&2
+  exit 1
+fi
+REMOTE_SCRIPT
+  ssh_remote "cd '$REMOTE_DIR' && test -f deploy/.env && docker compose --env-file deploy/.env -f - config --quiet" \
+    < "$ROOT/deploy/docker-compose.yml"
 }
 
 sync_sources() {
@@ -168,6 +274,9 @@ sync_sources() {
   (cd "$ROOT" && rsync_remote --relative "${FILES[@]}" "$target")
   log "同步 web/dist 到远端"
   rsync_remote --delete "$ROOT/web/dist/" "${REMOTE_USER}@${REMOTE_HOST}:$REMOTE_DIR/web/dist/"
+  [ -x "$ROOT/deploy/bin/gpt2api" ] || die "缺少本地 Linux 服务端产物: deploy/bin/gpt2api"
+  log "同步 Linux/amd64 服务端产物"
+  rsync_remote "$ROOT/deploy/bin/gpt2api" "${REMOTE_USER}@${REMOTE_HOST}:$REMOTE_DIR/deploy/bin/gpt2api"
 }
 
 remote_deploy() {
@@ -175,15 +284,32 @@ remote_deploy() {
   ssh_remote "bash -s" <<EOF
 set -euo pipefail
 cd '$REMOTE_DIR'
-if [ '$RUN_REMOTE_TESTS' = '1' ]; then
-  go test ./internal/ecommerce ./internal/videogen ./internal/settings ./cmd/server
+test -f deploy/.env || { echo '[quick-sync] ERROR: 缺少远端 deploy/.env' >&2; exit 1; }
+if command -v go >/dev/null 2>&1 && [ '$RUN_REMOTE_TESTS' = '1' ]; then
+  go test ./internal/videoworkflow ./internal/videogen ./internal/config ./internal/middleware ./internal/server ./internal/settings ./internal/rbac ./cmd/server
 fi
-CGO_ENABLED=0 go build -buildvcs=false -o deploy/bin/gpt2api ./cmd/server
+if command -v go >/dev/null 2>&1; then
+  CGO_ENABLED=0 go build -buildvcs=false -o deploy/bin/gpt2api ./cmd/server
+else
+  echo '[quick-sync] 远端未安装 Go，使用已通过本地测试的 Linux/amd64 交叉编译产物'
+fi
+test -x deploy/bin/gpt2api
 file deploy/bin/gpt2api
-docker compose -f deploy/docker-compose.yml build server
-docker compose -f deploy/docker-compose.yml up -d server nginx
-docker compose -f deploy/docker-compose.yml restart nginx
-curl -fsS "http://127.0.0.1:$HTTP_PORT/healthz"
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml build server
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d --wait --wait-timeout 120 server nginx
+# server 容器重建后 nginx 可能仍缓存旧容器 IP；重启以刷新 Docker DNS。
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml restart nginx
+healthy=0
+for attempt in 1 2 3 4 5; do
+  if curl -fsS "http://127.0.0.1:$HTTP_PORT/healthz" \
+    && curl -fsS "http://127.0.0.1:$HTTP_PORT/readyz"; then
+    healthy=1
+    break
+  fi
+  sleep 2
+done
+[ "\$healthy" = '1' ] || { docker compose --env-file deploy/.env -f deploy/docker-compose.yml ps; exit 1; }
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml ps
 EOF
 }
 
@@ -191,10 +317,13 @@ main() {
   parse_args "$@"
   require_cmd ssh
   require_cmd rsync
-  require_cmd npm
-  require_cmd go
+  if [ "$RUN_LOCAL_BUILD" = "1" ]; then
+    require_cmd npm
+    require_cmd go
+  fi
   dedupe_files
   log "目标: ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_DIR}"
+  preflight_remote_configuration
   run_local_checks
   sync_sources
   remote_deploy
