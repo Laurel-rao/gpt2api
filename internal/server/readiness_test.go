@@ -5,10 +5,13 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/432539/gpt2api/internal/config"
+	"github.com/432539/gpt2api/internal/rbac"
 	"github.com/432539/gpt2api/internal/videoworkflow"
+	pkgjwt "github.com/432539/gpt2api/pkg/jwt"
 )
 
 func TestReadinessEndpoint(t *testing.T) {
@@ -57,6 +60,68 @@ func TestVideoWorkflowRoutes(t *testing.T) {
 	for route, found := range want {
 		if !found {
 			t.Errorf("missing route %s", route)
+		}
+	}
+}
+
+func TestVideoWorkflowRoutesRejectNonAdmin(t *testing.T) {
+	manager := pkgjwt.NewManager(pkgjwt.Config{
+		Secret:        "video-workflow-admin-only-test-secret",
+		Issuer:        "test",
+		AccessTTLSec:  3600,
+		RefreshTTLSec: 7200,
+	})
+	tokens, err := manager.Issue(1001, rbac.RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := videoworkflow.NewHandler(videoworkflow.NewService(nil))
+	router := New(&Deps{
+		Config: &config.Config{}, JWT: manager, VideoWorkflowH: handler,
+		CurrentUserRole: func(context.Context, uint64) (string, error) { return rbac.RoleUser, nil },
+	})
+	for _, path := range []string{
+		"/api/me/video-workflows",
+		"/api/me/video-workflow-runs/run-1",
+		"/api/me/video-assets",
+	} {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request.Header.Set("Authorization", "Bearer "+tokens.AccessToken)
+		router.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusForbidden || !strings.Contains(recorder.Body.String(), "admin only") {
+			t.Fatalf("%s: status = %d, want 403 admin only; body=%s", path, recorder.Code, recorder.Body.String())
+		}
+	}
+}
+
+func TestVideoWorkflowRoutesRejectDemotedAdmin(t *testing.T) {
+	manager := pkgjwt.NewManager(pkgjwt.Config{
+		Secret:        "video-workflow-demoted-admin-test-secret",
+		Issuer:        "test",
+		AccessTTLSec:  3600,
+		RefreshTTLSec: 7200,
+	})
+	tokens, err := manager.Issue(1001, rbac.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := videoworkflow.NewHandler(videoworkflow.NewService(nil))
+	router := New(&Deps{
+		Config: &config.Config{}, JWT: manager, VideoWorkflowH: handler,
+		CurrentUserRole: func(context.Context, uint64) (string, error) { return rbac.RoleUser, nil },
+	})
+	for _, path := range []string{
+		"/api/me/video-workflows",
+		"/api/me/video-workflow-runs/run-1",
+		"/api/me/video-assets",
+	} {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request.Header.Set("Authorization", "Bearer "+tokens.AccessToken)
+		router.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusForbidden || !strings.Contains(recorder.Body.String(), "admin only") {
+			t.Fatalf("%s: status = %d, want 403 admin only; body=%s", path, recorder.Code, recorder.Body.String())
 		}
 	}
 }

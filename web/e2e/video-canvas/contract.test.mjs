@@ -34,6 +34,7 @@ test('视频画布浏览器 Mock API 契约', async (t) => {
 
     const me = await request('/api/me')
     assert.equal(me.data.user.email, 'demo@lingjing.test')
+    assert.equal(me.data.role, 'admin')
     assert.ok(me.data.permissions.includes('self:video_workflow'))
 
     const templates = await request('/api/me/video-workflows/templates')

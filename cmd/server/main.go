@@ -409,6 +409,13 @@ func main() {
 	deps := &server.Deps{
 		Config: cfg,
 		JWT:    jm,
+		CurrentUserRole: func(ctx context.Context, userID uint64) (string, error) {
+			current, err := userDAO.GetByID(ctx, userID)
+			if err != nil {
+				return "", err
+			}
+			return current.Role, nil
+		},
 		ReadyCheck: func(ctx context.Context) error {
 			if err := sqldb.PingContext(ctx); err != nil {
 				return err

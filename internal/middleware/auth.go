@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -9,6 +10,9 @@ import (
 	pkgjwt "github.com/432539/gpt2api/pkg/jwt"
 	"github.com/432539/gpt2api/pkg/resp"
 )
+
+// UserRoleResolver 返回数据库中的当前用户角色，用于需要即时响应角色变更的接口。
+type UserRoleResolver func(context.Context, uint64) (string, error)
 
 const (
 	CtxUserID = "user_id"
@@ -42,6 +46,32 @@ func RequireAdmin() gin.HandlerFunc {
 			resp.Forbidden(c, "admin only")
 			return
 		}
+		c.Next()
+	}
+}
+
+// RequireCurrentAdmin 使用已验证 JWT 的 user_id 查询数据库当前角色，并即时响应升降权。
+func RequireCurrentAdmin(resolve UserRoleResolver) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		uid := UserID(c)
+		if uid == 0 {
+			resp.Unauthorized(c, "not authenticated")
+			return
+		}
+		if resolve == nil {
+			resp.Internal(c, "admin role verification unavailable")
+			return
+		}
+		role, err := resolve(c.Request.Context(), uid)
+		if err != nil {
+			resp.Internal(c, "failed to verify current admin role")
+			return
+		}
+		if !rbac.IsAdmin(role) {
+			resp.Forbidden(c, "admin only")
+			return
+		}
+		c.Set(CtxRole, role)
 		c.Next()
 	}
 }

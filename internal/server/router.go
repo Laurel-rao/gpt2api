@@ -35,6 +35,8 @@ import (
 type Deps struct {
 	Config *config.Config
 	JWT    *pkgjwt.Manager
+	// CurrentUserRole 从数据库读取当前角色，供需要即时撤销管理员权限的接口使用。
+	CurrentUserRole middleware.UserRoleResolver
 	// ReadyCheck 检查数据库和视频执行器是否可接收流量；nil 表示只检查进程存活。
 	ReadyCheck func(context.Context) error
 
@@ -192,7 +194,7 @@ func New(d *Deps) *gin.Engine {
 				}
 			}
 			if d.VideoWorkflowH != nil {
-				vg := authed.Group("/me/video-workflows", middleware.RequirePerm(rbac.PermSelfVideoWorkflow))
+				vg := authed.Group("/me/video-workflows", middleware.RequireCurrentAdmin(d.CurrentUserRole), middleware.RequirePerm(rbac.PermSelfVideoWorkflow))
 				{
 					vg.GET("/templates", d.VideoWorkflowH.ListTemplates)
 					vg.POST("", d.VideoWorkflowH.CreateWorkflow)
@@ -205,7 +207,7 @@ func New(d *Deps) *gin.Engine {
 					vg.GET("/:id/runs", d.VideoWorkflowH.ListRuns)
 					vg.POST("/:id/runs", d.VideoWorkflowH.StartRun)
 				}
-				rg := authed.Group("/me/video-workflow-runs", middleware.RequirePerm(rbac.PermSelfVideoWorkflow))
+				rg := authed.Group("/me/video-workflow-runs", middleware.RequireCurrentAdmin(d.CurrentUserRole), middleware.RequirePerm(rbac.PermSelfVideoWorkflow))
 				{
 					rg.GET("/:run_id", d.VideoWorkflowH.GetRun)
 					rg.POST("/:run_id/cancel", d.VideoWorkflowH.CancelRun)
@@ -213,7 +215,7 @@ func New(d *Deps) *gin.Engine {
 					rg.POST("/:run_id/approve-characters", d.VideoWorkflowH.ApproveCharacters)
 					rg.POST("/:run_id/approve-storyboard", d.VideoWorkflowH.ApproveStoryboard)
 				}
-				ag := authed.Group("/me/video-assets", middleware.RequirePerm(rbac.PermSelfVideoWorkflow))
+				ag := authed.Group("/me/video-assets", middleware.RequireCurrentAdmin(d.CurrentUserRole), middleware.RequirePerm(rbac.PermSelfVideoWorkflow))
 				{
 					ag.GET("", d.VideoWorkflowH.ListAssets)
 					ag.POST("", d.VideoWorkflowH.UploadAsset)

@@ -8,6 +8,7 @@ import { useUserStore } from '@/stores/user'
  *
  *   meta.public    true  不需要登录
  *   meta.perm      string | string[]  需要任一权限
+ *   meta.adminOnly true  必须刷新当前身份并确认为管理员
  *   meta.title     浏览器标签标题
  *
  * 这是前端静态路由表。后端 /api/me/menu 返回的是 UI 菜单,两者并不强绑定:
@@ -34,7 +35,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/personal/video-workflows',
     component: () => import('@/views/personal/VideoWorkflows.vue'),
-    meta: { title: '视频画布', perm: 'self:video_workflow' },
+    meta: { title: '视频画布', perm: 'self:video_workflow', adminOnly: true },
   },
   {
     path: '/personal',
@@ -164,13 +165,17 @@ router.beforeEach(async (to) => {
     return { path: '/login', query: { redirect: to.fullPath } }
   }
 
-  // 还没拉过 me,先补一次(可能来自刷新)
-  if (!store.user || store.permissions.length === 0) {
+  // 管理员专属页面始终刷新身份，避免持久化的旧 role/permissions 绕过前端守卫。
+  if (to.meta.adminOnly || !store.user || store.permissions.length === 0) {
     try {
       await store.fetchMe()
     } catch {
       return { path: '/login', query: { redirect: to.fullPath } }
     }
+  }
+
+  if (to.meta.adminOnly && !store.isAdmin) {
+    return { path: '/403' }
   }
 
   const perm = to.meta.perm as string | string[] | undefined

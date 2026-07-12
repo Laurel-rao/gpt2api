@@ -16,7 +16,7 @@ const USER = {
   id: 1001,
   email: DEMO_EMAIL,
   nickname: '画布验收员',
-  role: 'user',
+  role: 'admin',
   status: 'active',
   group_id: 1,
   credit_balance: 20000,
@@ -305,10 +305,10 @@ async function handleAPI(req, res, context, url) {
   }
   if (!requireAuth(req, res)) return
   if (pathname === '/api/auth/logout' && req.method === 'POST') return sendJSON(res, 200, { ok: true })
-  if (pathname === '/api/me' && req.method === 'GET') return sendJSON(res, 200, { user: USER, role: 'user', permissions: PERMISSIONS })
+  if (pathname === '/api/me' && req.method === 'GET') return sendJSON(res, 200, { user: USER, role: 'admin', permissions: PERMISSIONS })
   if (pathname === '/api/me/menu' && req.method === 'GET') {
     return sendJSON(res, 200, {
-      role: 'user', permissions: PERMISSIONS,
+      role: 'admin', permissions: PERMISSIONS,
       menu: [{ key: 'personal.video-workflows', title: '视频工作流', icon: 'VideoPlay', path: '/personal/video-workflows' }],
     })
   }
