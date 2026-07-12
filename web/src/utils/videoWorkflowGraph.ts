@@ -702,7 +702,10 @@ export function validateVideoWorkflowGraph(
 
   const timeline = graph.nodes.find((node) => node.type === 'timeline')
   const clips = Array.isArray(timeline?.config.clips) ? timeline!.config.clips as VideoWorkflowTimelineClip[] : []
-  if (graph.schema_version >= 2 && (clips.length < 1 || clips.length > VIDEO_WORKFLOW_MAX_TIMELINE_CLIPS)) {
+  if (graph.schema_version >= 2 && clips.length > VIDEO_WORKFLOW_MAX_TIMELINE_CLIPS) {
+    add('timeline_clip_count', `时间线片段不能超过 ${VIDEO_WORKFLOW_MAX_TIMELINE_CLIPS} 个`, { node_id: timeline?.id })
+  }
+  if (graph.schema_version >= 2 && options.requireComplete && clips.length < 1) {
     add('timeline_clip_count', `时间线必须包含 1–${VIDEO_WORKFLOW_MAX_TIMELINE_CLIPS} 个片段`, { node_id: timeline?.id })
   }
   const clipIDs = new Set<string>()

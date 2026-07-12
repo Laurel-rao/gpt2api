@@ -17,12 +17,15 @@ import {
   ArrowUp,
   Check,
   Clock,
+  Download,
   EditPen,
   Grid,
   Menu,
+  MoreFilled,
   Plus,
   RefreshLeft,
   RefreshRight,
+  Upload,
   VideoPause,
   VideoPlay,
 } from '@element-plus/icons-vue'
@@ -90,10 +93,17 @@ import {
   videoWorkflowNodeRunOutputVersionID,
 } from '@/utils/videoWorkflowGraph'
 import { SerialVideoWorkflowOperationQueue, runConfirmedVideoWorkflowMutation } from '@/utils/videoWorkflowAsync'
+import {
+  VIDEO_WORKFLOW_TRANSFER_MAX_BYTES,
+  parseVideoWorkflowTransfer,
+  serializeVideoWorkflowTransfer,
+  videoWorkflowTransferFilename,
+} from '@/utils/videoWorkflowTransfer'
 
 type PanelTab = 'nodes' | 'assets'
 type CanvasTool = 'select' | 'pan' | 'connect'
 type FlowData = { node?: VideoWorkflowNode; zone?: { title: string; subtitle: string; enabled?: boolean } }
+type WorkspaceMenuCommand = 'outline' | 'import_json' | 'export_json'
 
 const POLL_INTERVAL = 2500
 const AUTO_SAVE_DELAY = 800
@@ -158,6 +168,8 @@ const runHistoryItems = ref<VideoWorkflowRun[]>([])
 const runHistoryTotal = ref(0)
 const runHistoryActionID = ref('')
 const runHistoryDetail = ref<VideoWorkflowRun | null>(null)
+const jsonFileInput = ref<HTMLInputElement | null>(null)
+const jsonTransferBusy = ref(false)
 const panelLayout = reactive({ left: 248, right: 320, timeline: 196, inspectorOpen: true, timelineOpen: true })
 const canvasViewport = reactive({ x: 0, y: 0, zoom: 1 })
 
@@ -613,6 +625,111 @@ async function reloadWorkflow() {
   if (!activeWorkflow.value) return
   await loadWorkspace(await getVideoWorkflow(activeWorkflow.value.id))
   ElMessage.success('已载入服务器版本')
+}
+
+function handleWorkspaceMenu(command: WorkspaceMenuCommand) {
+  if (command === 'outline') {
+    outlineVisible.value = true
+    return
+  }
+  if (command === 'export_json') {
+    exportWorkflowJSON()
+    return
+  }
+  openWorkflowJSONImport()
+}
+
+function exportWorkflowJSON() {
+  if (!activeWorkflow.value) return ElMessage.warning('请先创建或选择工作流')
+  try {
+    const content = serializeVideoWorkflowTransfer(activeWorkflow.value.name, graph.value)
+    const blob = new Blob([content], { type: 'application/json;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = videoWorkflowTransferFilename(activeWorkflow.value.name, activeWorkflow.value.revision)
+    link.style.display = 'none'
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 0)
+    ElMessage.success(`已导出 ${graph.value.nodes.length} 个节点`)
+  } catch (error: any) {
+    ElMessage.error(error?.message || '导出 JSON 失败')
+  }
+}
+
+function openWorkflowJSONImport() {
+  if (!activeWorkflow.value) return ElMessage.warning('请先创建或选择工作流')
+  if (revisionConflict.value) return ElMessage.warning('请先处理当前修订冲突')
+  if (isRunActive.value || runningAction.value) return ElMessage.warning('请先停止当前运行再导入')
+  if (!jsonFileInput.value) return
+  jsonFileInput.value.value = ''
+  jsonFileInput.value.click()
+}
+
+async function importWorkflowJSON(event: Event) {
+  const input = event.currentTarget as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file || jsonTransferBusy.value) return
+  if (!activeWorkflow.value) return ElMessage.warning('请先创建或选择工作流')
+  if (file.size > VIDEO_WORKFLOW_TRANSFER_MAX_BYTES) return ElMessage.error('JSON 文件不能超过 1 MiB')
+  if (isRunActive.value || runningAction.value) return ElMessage.warning('请先停止当前运行再导入')
+  if (revisionConflict.value) return ElMessage.warning('请先处理当前修订冲突')
+
+  const context = { workflowID: activeWorkflow.value.id, generation: workspaceGeneration }
+  jsonTransferBusy.value = true
+  try {
+    const imported = parseVideoWorkflowTransfer(await file.text())
+    if (activeWorkflow.value?.id !== context.workflowID || workspaceGeneration !== context.generation) {
+      throw new Error('读取文件期间工作流已切换，请重新导入')
+    }
+    if (dirty.value && !await flushSave()) throw new Error('当前草稿尚未保存，已取消导入')
+    if (activeWorkflow.value?.id !== context.workflowID || workspaceGeneration !== context.generation) {
+      throw new Error('保存草稿期间工作流已切换，请重新导入')
+    }
+    const sequence = changeSequence.value
+    const clipCount = imported.graph.nodes.find((node) => node.type === 'timeline')?.config.clips?.length || 0
+    const sourceName = imported.name ? `“${imported.name}”` : '该 JSON'
+    const assetNotice = imported.asset_reference_count
+      ? `\n检测到 ${imported.asset_reference_count} 个素材引用；JSON 不包含媒体文件，跨账号导入后需重新选择素材。`
+      : ''
+    await ElMessageBox.confirm(
+      `${sourceName}包含 ${imported.graph.nodes.length} 个节点、${imported.graph.edges.length} 条连线和 ${clipCount} 个片段。导入将替换当前画布，可通过撤销恢复。${assetNotice}`,
+      '确认导入视频工作流',
+      { type: 'warning', confirmButtonText: '替换画布', cancelButtonText: '取消' },
+    )
+    if (
+      activeWorkflow.value?.id !== context.workflowID
+      || workspaceGeneration !== context.generation
+      || changeSequence.value !== sequence
+      || isRunActive.value
+      || runningAction.value
+      || revisionConflict.value
+    ) throw new Error('确认期间画布已发生变化，请重新导入')
+
+    invalidateImageTransformContext()
+    pushUndo()
+    graph.value = cloneWorkflowGraph(imported.graph)
+    const preferred = graph.value.nodes.find((node) => node.id === 'background_2') || graph.value.nodes[0]
+    selectedNodeID.value = preferred?.id || ''
+    selectedNodeIDs.value = preferred ? [preferred.id] : []
+    selectedEdgeIDs.value = []
+    selectedClipID.value = timelineClips.value[0]?.id || ''
+    markDirty()
+    syncFlow()
+    await nextTick()
+    fitView({ padding: .14, duration: 280 })
+
+    const saved = await flushSave()
+    if (saved) ElMessage.success(`已导入并保存为 R${activeWorkflow.value?.revision || 0}`)
+    else if (!revisionConflict.value) ElMessage.warning('已导入本地草稿，尚未同步到服务器')
+  } catch (error: any) {
+    if (error !== 'cancel' && error !== 'close') ElMessage.error(error?.message || '导入 JSON 失败')
+  } finally {
+    jsonTransferBusy.value = false
+  }
 }
 
 async function createFromTemplate() {
@@ -1694,7 +1811,26 @@ onBeforeUnmount(() => {
           <template #dropdown><el-dropdown-menu><el-dropdown-item command="node_only">运行当前节点</el-dropdown-item><el-dropdown-item command="downstream">运行当前及下游</el-dropdown-item><el-dropdown-item divided command="full">完整运行</el-dropdown-item></el-dropdown-menu></template>
         </el-dropdown>
         <button v-else class="stop-button" :disabled="runningAction" @click="stopRun"><VideoPause />停止</button>
-        <button class="icon-button" title="结构大纲" @click="outlineVisible = true"><Menu /></button>
+        <el-dropdown
+          class="workspace-actions"
+          trigger="click"
+          :disabled="jsonTransferBusy"
+          @command="(command: WorkspaceMenuCommand) => handleWorkspaceMenu(command)"
+        >
+          <button class="icon-button" title="更多操作" aria-label="更多操作" :aria-busy="jsonTransferBusy"><MoreFilled /></button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="outline"><span class="workspace-menu-item"><Menu />结构大纲</span></el-dropdown-item>
+              <el-dropdown-item command="import_json" divided :disabled="!activeWorkflow || isRunActive || runningAction || revisionConflict">
+                <span class="workspace-menu-item"><Upload />导入 JSON</span>
+              </el-dropdown-item>
+              <el-dropdown-item command="export_json" :disabled="!activeWorkflow">
+                <span class="workspace-menu-item"><Download />导出 JSON</span>
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+        <input ref="jsonFileInput" class="json-file-input" type="file" accept=".json,application/json" @change="importWorkflowJSON" />
         <button class="icon-button" title="新建工作流" @click="createDialogVisible = true"><Plus /></button>
       </header>
 
@@ -1878,6 +2014,7 @@ onBeforeUnmount(() => {
 .workspace-header { height: 64px; display: grid; grid-template-columns: 138px 40px minmax(180px, 340px) 142px minmax(0, 1fr) auto 32px 32px 78px 86px 78px 92px auto 32px 32px; align-items: center; gap: 6px; box-sizing: border-box; padding: 0 16px; background: #fff; border-bottom: 1px solid var(--border); }
 .brand-block { display: flex; align-items: center; gap: 8px; }.brand-block strong { font-size: 19px; letter-spacing: -.5px; white-space: nowrap; }.brand-mark { width: 28px; height: 28px; display: grid; place-items: center; color: #fff; background: #2563eb; clip-path: polygon(50% 0, 100% 100%, 50% 75%, 0 100%); }.brand-mark svg { width: 17px; }
 .back-button, .icon-button { width: 32px; height: 32px; display: grid; place-items: center; color: #475569; background: #fff; border: 1px solid #dbe2ea; border-radius: 5px; cursor: pointer; }.back-button svg, .icon-button svg { width: 15px; }.icon-button:disabled { opacity: .35; cursor: default; }.back-button:hover, .icon-button:not(:disabled):hover { color: #2563eb; background: #eff6ff; border-color: #93c5fd; }
+.workspace-actions { width: 32px; height: 32px; }.workspace-actions .icon-button[aria-busy="true"] { color: #2563eb; background: #eff6ff; }.workspace-menu-item { min-width: 104px; display: flex; align-items: center; gap: 8px; }.workspace-menu-item svg { width: 14px; color: #64748b; }.json-file-input { display: none; }
 .workflow-name { min-width: 0; display: flex; align-items: center; gap: 6px; }.workflow-name strong { overflow: hidden; font-size: 16px; text-overflow: ellipsis; white-space: nowrap; }.workflow-name > svg { width: 14px; color: #64748b; }.workflow-name :deep(.el-select) { width: 100%; }.workflow-name :deep(.el-select__wrapper) { box-shadow: none; font-size: 16px; font-weight: 650; }
 .save-state, .run-state { display: flex; align-items: center; gap: 6px; color: #475569; white-space: nowrap; font-size: 11px; }.save-state i, .run-state i { width: 8px; height: 8px; background: #22c55e; border-radius: 50%; }.save-state.dirty i { background: #f59e0b; }.save-state.offline i { background: #ef4444; }.run-state i { background: #38bdf8; }.run-state i.failed { background: #ef4444; }.run-state i.succeeded { background: #22c55e; }.run-state b { color: #2563eb; }
 .header-select { height: 32px; padding: 0 8px; color: #334155; background: #fff; border: 1px solid #dbe2ea; border-radius: 5px; outline: none; font-size: 11px; }.header-select.resolution { width: 86px; }

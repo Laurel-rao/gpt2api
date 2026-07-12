@@ -305,6 +305,20 @@ describe('video timeline', () => {
     timeline.config.clips![0].trim_out_ms = 500
     expect(validateVideoWorkflowGraph(graph).map((issue) => issue.code)).toContain('invalid_timeline_trim')
   })
+
+  it('allows an empty timeline draft but requires a clip for a complete run', () => {
+    const graph = createStarterVideoWorkflowGraph()
+    const timeline = graph.nodes.find((node) => node.type === 'timeline')!
+    timeline.config.clips = []
+    timeline.config.clip_node_ids = []
+    timeline.inputs = []
+    graph.edges = graph.edges.filter((edge) => edge.target !== timeline.id)
+
+    expect(validateVideoWorkflowGraph(graph, { requireComplete: false }).map((issue) => issue.code))
+      .not.toContain('timeline_clip_count')
+    expect(validateVideoWorkflowGraph(graph, { requireComplete: true }).map((issue) => issue.code))
+      .toContain('timeline_clip_count')
+  })
 })
 
 describe('mobile workspace compatibility', () => {
