@@ -26,4 +26,51 @@ describe('VideoWorkflowNodeCard image preview', () => {
     const wrapper = mount(VideoWorkflowNodeCard, { props: { node: imageNode() } })
     expect(wrapper.find('.node-media img').attributes('style')).toBeUndefined()
   })
+
+  it('opens an accessible full-screen preview without bubbling canvas gestures', async () => {
+    const node = imageNode()
+    const wrapper = mount(VideoWorkflowNodeCard, { props: { node } })
+    const button = wrapper.find('.node-preview-button')
+    let pointerdowns = 0
+    let clicks = 0
+    wrapper.element.addEventListener('pointerdown', () => { pointerdowns += 1 })
+    wrapper.element.addEventListener('click', () => { clicks += 1 })
+
+    expect(button.classes()).toEqual(expect.arrayContaining(['nodrag', 'nopan', 'nowheel']))
+    expect(button.attributes('aria-label')).toBe('全屏预览：S02 图片')
+    await button.trigger('pointerdown')
+    await button.trigger('click')
+
+    expect(pointerdowns).toBe(0)
+    expect(clicks).toBe(0)
+    expect(wrapper.emitted('preview-media')?.[0]).toEqual([node])
+  })
+
+  it('uses generated video output as the playable preview source', async () => {
+    const node: VideoWorkflowNode = {
+      id: 'video_1',
+      type: 'video',
+      title: 'S01 视频',
+      position: { x: 0, y: 0 },
+      config: { preview_url: '/poster.jpg' },
+      output: { preview_url: '/generated.mp4' },
+    }
+    const wrapper = mount(VideoWorkflowNodeCard, { props: { node } })
+    expect(wrapper.find('.node-media video').attributes('src')).toBe('/generated.mp4')
+    expect(wrapper.find('.node-preview-button').classes()).toContain('video')
+    await wrapper.find('.node-preview-button').trigger('click')
+    expect(wrapper.emitted('preview-media')?.[0]).toEqual([node])
+  })
+
+  it('can request a freshly signed preview when the thumbnail URL is missing', async () => {
+    const node = imageNode()
+    delete node.config.preview_url
+    node.asset_id = 'asset_1'
+    node.asset_version_id = 'version_1'
+    const wrapper = mount(VideoWorkflowNodeCard, { props: { node } })
+
+    expect(wrapper.find('.media-placeholder').exists()).toBe(true)
+    await wrapper.find('.node-preview-button').trigger('click')
+    expect(wrapper.emitted('preview-media')?.[0]).toEqual([node])
+  })
 })

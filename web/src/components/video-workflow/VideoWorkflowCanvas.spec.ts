@@ -1,7 +1,9 @@
 import { shallowMount } from '@vue/test-utils'
+import { defineComponent, h } from 'vue'
 import { describe, expect, it } from 'vitest'
 import type { VideoWorkflowNode } from '@/api/videoWorkflow'
 import VideoWorkflowCanvas from './VideoWorkflowCanvas.vue'
+import VideoWorkflowNodeCard from './VideoWorkflowNodeCard.vue'
 
 const graphNodes: VideoWorkflowNode[] = [{
   id: 'video_1',
@@ -27,6 +29,16 @@ const baseProps = {
   zoom: 1,
   viewport: { x: 0, y: 0, zoom: 1 },
 }
+
+const VueFlowWithNodeSlot = defineComponent({
+  props: { nodes: { type: Array, default: () => [] } },
+  setup(props, { slots }) {
+    return () => h('div', { class: 'vue-flow-slot-stub' }, slots['node-workflow']?.({
+      data: (props.nodes[0] as any)?.data,
+      selected: true,
+    }))
+  },
+})
 
 describe('VideoWorkflowCanvas', () => {
   it('renders canvas navigation and relays toolbar actions', async () => {
@@ -84,5 +96,27 @@ describe('VideoWorkflowCanvas', () => {
     expect((navigation[2][0] as { x: number }).x).toBeCloseTo(36.8)
     expect((navigation[2][0] as { y: number }).y).toBe(0)
     expect(navigation[3][0]).toMatchObject({ x: 504, y: 236 })
+  })
+
+  it('relays media preview requests from node cards', async () => {
+    const previewNode: VideoWorkflowNode = {
+      ...graphNodes[0],
+      output: { preview_url: '/generated.mp4' },
+    }
+    const wrapper = shallowMount(VideoWorkflowCanvas, {
+      props: {
+        ...baseProps,
+        nodes: [{
+          id: previewNode.id,
+          type: 'workflow',
+          position: previewNode.position,
+          data: { node: previewNode },
+        }],
+      },
+      global: { stubs: { VueFlow: VueFlowWithNodeSlot } },
+    })
+
+    wrapper.findComponent(VideoWorkflowNodeCard).vm.$emit('preview-media', previewNode)
+    expect(wrapper.emitted('preview-media')?.[0]).toEqual([previewNode])
   })
 })

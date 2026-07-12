@@ -103,6 +103,59 @@ describe('VideoWorkflowInspector', () => {
     expect(wrapper.find('.image-preview img').attributes('style')).toBeUndefined()
   })
 
+  it('opens the selected image in the full-screen media preview', async () => {
+    const previewNode: VideoWorkflowNode = {
+      ...node,
+      config: { ...node.config, preview_url: '/p/vwf/version_2' },
+    }
+    const wrapper = mount(VideoWorkflowInspector, { props: { node: previewNode, assets } })
+    const button = wrapper.find('.inspector-preview-button')
+    expect(button.attributes('aria-label')).toBe('全屏预览：S02 图片')
+    await button.trigger('click')
+    expect(wrapper.emitted('preview-media')?.[0]).toEqual([previewNode])
+  })
+
+  it('keeps preview-button keyboard events away from canvas shortcuts', async () => {
+    const previewNode: VideoWorkflowNode = {
+      ...node,
+      config: { ...node.config, preview_url: '/p/vwf/version_2' },
+    }
+    const wrapper = mount(VideoWorkflowInspector, { props: { node: previewNode, assets } })
+    let keydowns = 0
+    let keyups = 0
+    wrapper.element.addEventListener('keydown', () => { keydowns += 1 })
+    wrapper.element.addEventListener('keyup', () => { keyups += 1 })
+
+    const button = wrapper.find('.inspector-preview-button')
+    await button.trigger('keydown', { key: ' ' })
+    await button.trigger('keyup', { key: ' ' })
+    expect(keydowns).toBe(0)
+    expect(keyups).toBe(0)
+  })
+
+  it('can request a signed preview for an asset without a cached thumbnail URL', async () => {
+    const wrapper = mount(VideoWorkflowInspector, { props: { node, assets } })
+    expect(wrapper.find('.image-preview img').exists()).toBe(false)
+    await wrapper.find('.inspector-preview-button').trigger('click')
+    expect(wrapper.emitted('preview-media')?.[0]).toEqual([node])
+  })
+
+  it('shows a playable video thumbnail and relays its full-screen preview request', async () => {
+    const videoNode: VideoWorkflowNode = {
+      id: 'video_1',
+      type: 'video',
+      title: 'S01 视频',
+      position: { x: 0, y: 0 },
+      config: { model: 'wan2.7-r2v', preview_url: '/poster.jpg' },
+      output: { preview_url: '/generated.mp4' },
+    }
+    const wrapper = mount(VideoWorkflowInspector, { props: { node: videoNode, assets: [] } })
+    expect(wrapper.find('.image-preview video').attributes('src')).toBe('/generated.mp4')
+    expect(wrapper.find('.inspector-preview-button').classes()).toContain('video')
+    await wrapper.find('.inspector-preview-button').trigger('click')
+    expect(wrapper.emitted('preview-media')?.[0]).toEqual([videoNode])
+  })
+
   it('keeps regeneration separate from running an already-bound image node', async () => {
     const wrapper = mount(VideoWorkflowInspector, { props: { node, assets } })
     await wrapper.find('.action-grid button').trigger('click')

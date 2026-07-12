@@ -25,6 +25,7 @@ import {
   updateTimelineClipTrim,
   validateVideoWorkflowGraph,
   videoWorkflowImageVersionTransformState,
+  videoWorkflowNodePreviewURL,
   videoWorkflowNodeRunOutputVersionID,
   videoWorkflowModelLabel,
 } from './videoWorkflowGraph'
@@ -38,6 +39,19 @@ describe('video workflow graph v2', () => {
   it('uses the backend run-mode contract', () => {
     const modes: VideoWorkflowRunMode[] = ['full', 'node_only', 'downstream']
     expect(modes).toEqual(['full', 'node_only', 'downstream'])
+  })
+
+  it('prefers baked image previews and generated video outputs', () => {
+    const image = makeVideoWorkflowNode('background')
+    image.config.preview_url = '/image-version'
+    image.output = { preview_url: '/old-image-output' }
+    const video = makeVideoWorkflowNode('video')
+    video.config.preview_url = '/video-poster'
+    video.output = { output_url: '/generated-video.mp4' }
+
+    expect(videoWorkflowNodePreviewURL(image)).toBe('/image-version')
+    expect(videoWorkflowNodePreviewURL(video)).toBe('/generated-video.mp4')
+    expect(videoWorkflowNodePreviewURL(null)).toBe('')
   })
 
   it('creates the 19-node starter graph with v2 output and four full clips', () => {
