@@ -15,6 +15,7 @@ const props = withDefaults(defineProps<{
   alt?: string
   downloadName?: string
   loading?: boolean
+  error?: string
   width?: string
 }>(), {
   src: '',
@@ -23,11 +24,13 @@ const props = withDefaults(defineProps<{
   alt: '图片预览',
   downloadName: 'image.png',
   loading: false,
+  error: '',
   width: 'min(1120px, 94vw)',
 })
 
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
+  retry: []
 }>()
 
 const visible = computed({
@@ -239,7 +242,9 @@ async function downloadImage() {
             @error="onImageError"
           >
         </div>
-        <el-empty v-else-if="!currentLoading" description="暂无图片" />
+        <el-empty v-else-if="!currentLoading" :description="error || '暂无图片'">
+          <el-button v-if="error" :icon="Refresh" @click.stop="emit('retry')">重新获取</el-button>
+        </el-empty>
       </div>
     </div>
   </el-dialog>

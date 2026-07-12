@@ -28,6 +28,7 @@ import {
 import { formatCredit, formatDateTime } from '@/utils/format'
 import { getCachedImageObjectURL, peekCachedImageObjectURL } from '@/utils/imageCache'
 import ImagePreviewDialog from '@/components/ImagePreviewDialog.vue'
+import VideoPreviewDialog from '@/components/VideoPreviewDialog.vue'
 
 const MAX_IMAGES = 4
 const MAX_IMAGE_MB = 20
@@ -2091,31 +2092,15 @@ onBeforeUnmount(() => {
       :loading="previewImageLoading"
     />
 
-    <el-dialog
+    <VideoPreviewDialog
       v-if="previewAsset && isVideoAsset(previewAsset)"
       v-model="previewVisible"
-      width="920px"
-      append-to-body
       :title="assetText[previewAsset.asset_type] || previewAsset.asset_type"
-      class="asset-dialog"
-    >
-      <div v-if="previewAsset" class="asset-dialog-body" v-loading="previewImageLoading">
-        <video
-          v-if="previewImageURL"
-          :src="previewImageURL"
-          controls
-          playsinline
-          preload="metadata"
-        />
-      </div>
-      <template #footer>
-        <el-button v-if="previewAsset" @click="downloadAsset(previewAsset)">
-          <el-icon><Download /></el-icon>
-          下载
-        </el-button>
-        <el-button type="primary" @click="previewVisible = false">关闭</el-button>
-      </template>
-    </el-dialog>
+      :src="previewImageURL"
+      :loading="previewImageLoading"
+      downloadable
+      @download="downloadAsset(previewAsset)"
+    />
 
     <el-dialog
       v-model="promptVisible"
