@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -36,6 +37,7 @@ import (
 	"github.com/432539/gpt2api/internal/usage"
 	"github.com/432539/gpt2api/internal/user"
 	"github.com/432539/gpt2api/internal/videogen"
+	"github.com/432539/gpt2api/internal/videoworkflow"
 	"github.com/432539/gpt2api/pkg/crypto"
 	pkgjwt "github.com/432539/gpt2api/pkg/jwt"
 	"github.com/432539/gpt2api/pkg/lock"
@@ -241,6 +243,8 @@ func main() {
 	ecommerceRunner.SetAppBaseURL(cfg.App.BaseURL)
 	ecommerceRunner.SetUsageLogger(usageLogger)
 	ecommerceH := ecommerce.NewHandler(ecommerceDAO, ecommerceRunner, auditDAO)
+	var videoWorkflowH *videoworkflow.Handler
+	var videoWorkflowRuntime *videoworkflow.Runtime
 
 	mailSvc := mailer.New(mailer.Config{
 		Host:     cfg.SMTP.Host,
@@ -297,6 +301,55 @@ func main() {
 	})
 	settingsH.SetVideoGenClient(videoGenClient)
 	videoPlayH := gateway.NewVideoPlaygroundHandler(videoGenClient, billEngine, settingsSvc)
+
+	if cfg.VideoWorkflow.Enabled {
+		workflowSecret := strings.TrimSpace(cfg.VideoWorkflow.SigningSecret)
+		if workflowSecret == "" {
+			// 仅开发环境可到达；prod 已在配置加载阶段强制要求独立密钥。
+			workflowSecret = cfg.Crypto.AESKey + "|" + cfg.JWT.Secret
+		}
+		if err := os.MkdirAll(cfg.VideoWorkflow.AssetDir, 0o750); err != nil {
+			log.Fatal("video workflow asset directory", zap.Error(err))
+		}
+		composer := videoworkflow.NewComposer()
+		composer.FFmpegPath = cfg.VideoWorkflow.FFmpegBin
+		composer.FFprobePath = cfg.VideoWorkflow.FFprobeBin
+		if !composer.Available() {
+			log.Fatal("video workflow ffmpeg/ffprobe unavailable")
+		}
+		videoWorkflowDAO := videoworkflow.NewDAO(sqldb)
+		videoWorkflowSvc := videoworkflow.NewService(videoWorkflowDAO)
+		videoWorkflowSvc.SetAcceptNewRuns(cfg.VideoWorkflow.AcceptNewRuns)
+		videoWorkflowSvc.ConfigureMedia(cfg.VideoWorkflow.AssetDir, workflowSecret, composer)
+		if err := videoWorkflowSvc.EnsureBuiltinTemplate(context.Background()); err != nil {
+			log.Fatal("video workflow template init", zap.Error(err))
+		}
+		videoWorkflowRuntime, err = videoworkflow.NewRuntime(videoworkflow.RuntimeConfig{
+			Store: videoWorkflowDAO, WorkerID: "video-workflow-" + uuid.NewString(),
+			EstimateSecret: workflowSecret, AssetRoot: cfg.VideoWorkflow.AssetDir, PublicBaseURL: cfg.VideoWorkflow.PublicBaseURL,
+			MediaSigner: videoworkflow.NewMediaSigner(workflowSecret), Composer: composer,
+			ImageGenerator: videoWorkflowImageGenerator{runner: imageRunner},
+			TextGenerator:  videoWorkflowTextGenerator{client: textGenClient},
+			VideoGenerator: videoWorkflowVideoGenerator{client: videoGenClient},
+			Billing:        billEngine, Usage: videoWorkflowUsageLogger{logger: usageLogger},
+			ImageCredits: cfg.VideoWorkflow.ImageCredits, TextCredits: cfg.VideoWorkflow.TextCredits,
+			VideoCredits:      cfg.VideoWorkflow.VideoCredits,
+			WorkerConcurrency: cfg.VideoWorkflow.WorkerConcurrency, ImageConcurrency: cfg.VideoWorkflow.ImageConcurrency,
+			VideoConcurrency: cfg.VideoWorkflow.VideoConcurrency, ComposeConcurrency: cfg.VideoWorkflow.ComposeConcurrency,
+		})
+		if err != nil {
+			log.Fatal("video workflow runtime init", zap.Error(err))
+		}
+		videoWorkflowSvc.SetRuntime(videoWorkflowRuntime)
+		videoWorkflowH = videoworkflow.NewHandler(videoWorkflowSvc)
+		videoWorkflowRuntime.Start()
+		defer videoWorkflowRuntime.Close()
+		log.Info("video workflow runtime ready",
+			zap.Int("workers", cfg.VideoWorkflow.WorkerConcurrency),
+			zap.Int("image_concurrency", cfg.VideoWorkflow.ImageConcurrency),
+			zap.Int("video_concurrency", cfg.VideoWorkflow.VideoConcurrency),
+			zap.Int("compose_concurrency", cfg.VideoWorkflow.ComposeConcurrency))
+	}
 
 	// 把 settings 注入到其它受控业务(可热更)
 	keySvc.SetSettings(settingsSvc)
@@ -356,6 +409,15 @@ func main() {
 	deps := &server.Deps{
 		Config: cfg,
 		JWT:    jm,
+		ReadyCheck: func(ctx context.Context) error {
+			if err := sqldb.PingContext(ctx); err != nil {
+				return err
+			}
+			if videoWorkflowRuntime != nil {
+				return videoWorkflowRuntime.Ready()
+			}
+			return nil
+		},
 
 		AuthH: auth.NewHandler(authSvc),
 		UserH: user.NewHandler(userDAO),
@@ -381,10 +443,11 @@ func main() {
 		AdminKeyH:   adminKeyH,
 		AdminUsageH: adminUsageH,
 
-		MeUsageH:    meUsageH,
-		MeImageH:    meImageH,
-		AdminImageH: adminImageH,
-		EcommerceH:  ecommerceH,
+		MeUsageH:       meUsageH,
+		MeImageH:       meImageH,
+		AdminImageH:    adminImageH,
+		EcommerceH:     ecommerceH,
+		VideoWorkflowH: videoWorkflowH,
 
 		RechargeH:      rechargeH,
 		AdminRechargeH: adminRechargeH,

@@ -35,13 +35,14 @@ func AccessLog() gin.HandlerFunc {
 		cost := time.Since(start)
 		path := c.Request.URL.Path
 		route := requestRoute(c)
+		query := safeLogQuery(path, c.Request.URL.RawQuery)
 
 		log := logger.L()
 		fields := []zap.Field{
 			zap.String("method", c.Request.Method),
 			zap.String("path", path),
 			zap.String("route", route),
-			zap.String("query", c.Request.URL.RawQuery),
+			zap.String("query", query),
 			zap.Int("status", c.Writer.Status()),
 			zap.Duration("cost", cost),
 			zap.Int64("cost_ms", cost.Milliseconds()),
@@ -118,6 +119,7 @@ func isAssetFetchPath(path string) bool {
 		"/ecommerce-assets/",
 		"/site-assets/",
 		"/p/img/",
+		"/p/vwf/",
 	} {
 		if strings.HasPrefix(path, prefix) {
 			return true
@@ -131,6 +133,13 @@ func isAssetFetchPath(path string) bool {
 	default:
 		return false
 	}
+}
+
+func safeLogQuery(path, rawQuery string) string {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(path)), "/p/vwf/") && rawQuery != "" {
+		return "[redacted]"
+	}
+	return rawQuery
 }
 
 func getString(c *gin.Context, key string) string {

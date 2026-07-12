@@ -20,6 +20,8 @@ type Service struct {
 	cache map[string]string // 最新快照;不直接暴露,通过 GetXxx 读
 }
 
+var _ videogen.ConfigProvider = (*Service)(nil)
+
 var ErrUnknownKey = errors.New("settings: unknown key")
 
 func NewService(dao *DAO) *Service {

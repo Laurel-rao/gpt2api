@@ -1,7 +1,10 @@
 package server
 
 import (
+	"context"
+	"net/http"
 	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -23,6 +26,7 @@ import (
 	"github.com/432539/gpt2api/internal/settings"
 	"github.com/432539/gpt2api/internal/usage"
 	"github.com/432539/gpt2api/internal/user"
+	"github.com/432539/gpt2api/internal/videoworkflow"
 	pkgjwt "github.com/432539/gpt2api/pkg/jwt"
 	"github.com/432539/gpt2api/pkg/resp"
 )
@@ -31,6 +35,8 @@ import (
 type Deps struct {
 	Config *config.Config
 	JWT    *pkgjwt.Manager
+	// ReadyCheck 检查数据库和视频执行器是否可接收流量；nil 表示只检查进程存活。
+	ReadyCheck func(context.Context) error
 
 	AuthH *auth.Handler
 	UserH *user.Handler
@@ -59,8 +65,9 @@ type Deps struct {
 	MeUsageH *usage.MeHandler
 	MeImageH *image.MeHandler
 
-	AdminImageH *image.AdminHandler
-	EcommerceH  *ecommerce.Handler
+	AdminImageH    *image.AdminHandler
+	EcommerceH     *ecommerce.Handler
+	VideoWorkflowH *videoworkflow.Handler
 
 	RechargeH      *recharge.Handler
 	AdminRechargeH *recharge.AdminHandler
@@ -83,7 +90,23 @@ func New(d *Deps) *gin.Engine {
 	)
 
 	r.GET("/healthz", func(c *gin.Context) { resp.OK(c, gin.H{"status": "ok"}) })
-	r.GET("/readyz", func(c *gin.Context) { resp.OK(c, gin.H{"status": "ok"}) })
+	r.GET("/readyz", func(c *gin.Context) {
+		if d.ReadyCheck != nil {
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+			defer cancel()
+			if err := d.ReadyCheck(ctx); err != nil {
+				c.AbortWithStatusJSON(http.StatusServiceUnavailable, resp.Body{
+					Code: resp.CodeInternal, Message: "service not ready", Data: gin.H{"status": "not_ready"},
+				})
+				return
+			}
+		}
+		resp.OK(c, gin.H{"status": "ok"})
+	})
+	if d.VideoWorkflowH != nil {
+		r.GET("/p/vwf/:version_id", d.VideoWorkflowH.ServeSignedMedia)
+		r.HEAD("/p/vwf/:version_id", d.VideoWorkflowH.ServeSignedMedia)
+	}
 
 	// ---- 内部管理 API(JWT) ----
 	api := r.Group("/api")
@@ -166,6 +189,37 @@ func New(d *Deps) *gin.Engine {
 					eg.POST("/tasks/:id/retry", d.EcommerceH.RetryTask)
 					eg.POST("/tasks/:id/video", d.EcommerceH.GenerateVideo)
 					eg.POST("/tasks/:id/assets/:asset_id/retry", d.EcommerceH.RetryAsset)
+				}
+			}
+			if d.VideoWorkflowH != nil {
+				vg := authed.Group("/me/video-workflows", middleware.RequirePerm(rbac.PermSelfVideoWorkflow))
+				{
+					vg.GET("/templates", d.VideoWorkflowH.ListTemplates)
+					vg.POST("", d.VideoWorkflowH.CreateWorkflow)
+					vg.GET("", d.VideoWorkflowH.ListWorkflows)
+					vg.GET("/:id", d.VideoWorkflowH.GetWorkflow)
+					vg.PUT("/:id", d.VideoWorkflowH.UpdateWorkflow)
+					vg.DELETE("/:id", d.VideoWorkflowH.DeleteWorkflow)
+					vg.POST("/:id/validate", d.VideoWorkflowH.ValidateWorkflow)
+					vg.POST("/:id/run-estimate", d.VideoWorkflowH.EstimateRun)
+					vg.GET("/:id/runs", d.VideoWorkflowH.ListRuns)
+					vg.POST("/:id/runs", d.VideoWorkflowH.StartRun)
+				}
+				rg := authed.Group("/me/video-workflow-runs", middleware.RequirePerm(rbac.PermSelfVideoWorkflow))
+				{
+					rg.GET("/:run_id", d.VideoWorkflowH.GetRun)
+					rg.POST("/:run_id/cancel", d.VideoWorkflowH.CancelRun)
+					rg.POST("/:run_id/approve", d.VideoWorkflowH.ApproveRun)
+					rg.POST("/:run_id/approve-characters", d.VideoWorkflowH.ApproveCharacters)
+					rg.POST("/:run_id/approve-storyboard", d.VideoWorkflowH.ApproveStoryboard)
+				}
+				ag := authed.Group("/me/video-assets", middleware.RequirePerm(rbac.PermSelfVideoWorkflow))
+				{
+					ag.GET("", d.VideoWorkflowH.ListAssets)
+					ag.POST("", d.VideoWorkflowH.UploadAsset)
+					ag.DELETE("/:asset_id", d.VideoWorkflowH.DeleteAsset)
+					ag.POST("/:asset_id/versions/:version_id/sign", d.VideoWorkflowH.SignAssetVersion)
+					ag.POST("/:asset_id/versions/:version_id/transform", d.VideoWorkflowH.TransformAssetVersion)
 				}
 			}
 

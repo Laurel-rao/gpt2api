@@ -99,6 +99,34 @@ videogen:
   resolution: "720p"
   generate_audio: false
 
+# 桌面端视频画布：素材版本、签名媒体和数据库租约执行器。
+video_workflow:
+  enabled: true
+  accept_new_runs: true
+  asset_dir: "/app/data/video-workflow-assets"
+  signing_secret: ""                 # 生产环境用 GPT2API_VIDEO_WORKFLOW_SIGNING_SECRET 注入至少 32 字节随机值
+  public_base_url: ""                 # 生产必填：上游可访问的真实公网 http(s) 源；example.com/localhost 会被拒绝
+  worker_concurrency: 4
+  image_concurrency: 2
+  video_concurrency: 2
+  compose_concurrency: 1
+  heartbeat_sec: 10
+  lease_ttl_sec: 60
+  recovery_scan_sec: 30
+  approval_ttl_sec: 259200           # 72 小时
+  preview_url_ttl_sec: 900           # 15 分钟
+  download_url_ttl_sec: 300          # 5 分钟
+  provider_url_ttl_sec: 3600         # 上游视频下载链接最多缓存 60 分钟
+  estimate_ttl_sec: 300              # 费用确认令牌 5 分钟有效
+  user_quota_bytes: 5368709120       # 每用户 5 GiB
+  image_max_bytes: 20971520          # 单图 20 MiB
+  video_max_bytes: 314572800         # 单视频 300 MiB
+  image_credit_per_output: 500000    # 与 gpt-image-2 默认单图定价一致（厘）
+  text_credit_per_node: 10000        # 单次结构化分镜文本上限（厘）
+  video_credit_per_clip: 100000      # 与默认视频体验预扣一致（厘）
+  ffmpeg_bin: "ffmpeg"
+  ffprobe_bin: "ffprobe"
+
 # 电商生成
 ecommerce:
   image_concurrency: 1             # 电商图片全局并发数;默认 1,可用 GPT2API_ECOMMERCE_IMAGE_CONCURRENCY 覆盖

@@ -8,6 +8,7 @@ func TestIsAssetFetchPath(t *testing.T) {
 		"/ecommerce-assets/videos/video_250/out.mp4",
 		"/site-assets/logo.png",
 		"/p/img/task/0",
+		"/p/vwf/version-1",
 		"/favicon.ico",
 		"/apple-touch-icon.png",
 	} {
@@ -19,6 +20,16 @@ func TestIsAssetFetchPath(t *testing.T) {
 		if isAssetFetchPath(path) {
 			t.Fatalf("expected non asset path: %s", path)
 		}
+	}
+}
+
+func TestSafeLogQueryRedactsSignedVideoWorkflowMedia(t *testing.T) {
+	query := "purpose=preview&exp=123&sig=secret"
+	if got := safeLogQuery("/p/vwf/version-1", query); got != "[redacted]" {
+		t.Fatalf("signed media query=%q", got)
+	}
+	if got := safeLogQuery("/api/me/video-workflows", query); got != query {
+		t.Fatalf("ordinary query=%q", got)
 	}
 }
 

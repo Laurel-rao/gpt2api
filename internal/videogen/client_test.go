@@ -3,6 +3,7 @@ package videogen
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -68,6 +69,95 @@ func TestDefaultVideoGenTimeoutIsThirtyMinutesAndRequestTimeoutIsSixtySeconds(t 
 	if got := client.httpClient.Timeout; got != 60*time.Second {
 		t.Fatalf("http client timeout = %s", got)
 	}
+}
+
+func TestGenerateOnSubmittedRunsBeforePollAndCanAbort(t *testing.T) {
+	var posts, gets int
+	submitted := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/generate/":
+			posts++
+			_, _ = w.Write([]byte(`{"task_id":"task-1"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/generate/tasks/task-1":
+			gets++
+			if !submitted {
+				t.Fatal("poll happened before OnSubmitted")
+			}
+			_, _ = w.Write([]byte(`{"id":"task-1","status":"completed","progress":100,"result_url":"https://example.com/out.mp4"}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	client := NewClient(Config{BaseURL: srv.URL, APIKey: "key", Model: defaultModelID})
+	_, err := client.Generate(context.Background(), Options{Prompt: "video", OnSubmitted: func(result Result) error {
+		submitted = true
+		if result.TaskID != "task-1" {
+			t.Fatalf("submitted task=%q", result.TaskID)
+		}
+		return errors.New("database unavailable")
+	}})
+	if err == nil || !strings.Contains(err.Error(), "task-1") || posts != 1 || gets != 0 {
+		t.Fatalf("err=%v posts=%d gets=%d", err, posts, gets)
+	}
+
+	submitted = false
+	_, err = client.Generate(context.Background(), Options{Prompt: "video", OnSubmitted: func(Result) error { submitted = true; return nil }})
+	if err != nil || posts != 2 || gets != 1 {
+		t.Fatalf("success err=%v posts=%d gets=%d", err, posts, gets)
+	}
+}
+
+func TestGetTaskForSnapshotUsesOriginalEndpoint(t *testing.T) {
+	var originalGets, currentGets int
+	var originalAuthorization string
+	original := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		originalGets++
+		originalAuthorization = r.Header.Get("Authorization")
+		if originalAuthorization != "Bearer old-key" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"task","status":"completed","result_url":"https://example.com/out.mp4"}`))
+	}))
+	t.Cleanup(original.Close)
+	current := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		currentGets++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(current.Close)
+	currentConfig := Config{ChannelType: ChannelAPIYISeedance, BaseURL: current.URL, APIKey: "new-key", Model: apiyiDefaultFastModel, TimeoutSec: 30}
+	client := NewClient(currentConfig)
+	client.SetConfigProvider(switchingVideoConfigProvider{current: currentConfig, byChannel: map[string]Config{
+		ChannelEchoon: {ChannelType: ChannelEchoon, BaseURL: original.URL, APIKey: "old-key", Model: defaultModelID, TimeoutSec: 30},
+	}})
+	snapshot := TaskConfigSnapshot{ChannelType: ChannelEchoon, BaseURL: original.URL, Model: defaultModelID, TimeoutSec: 30}
+	result, err := client.GetTaskForSnapshot(context.Background(), snapshot, "task")
+	if err != nil || result.TaskID != "task" || originalGets != 1 || currentGets != 0 || originalAuthorization != "Bearer old-key" {
+		t.Fatalf("result=%+v err=%v original=%d current=%d authorization=%q", result, err, originalGets, currentGets, originalAuthorization)
+	}
+}
+
+type switchingVideoConfigProvider struct {
+	current   Config
+	byChannel map[string]Config
+}
+
+func (p switchingVideoConfigProvider) VideoGenEnabled() bool       { return true }
+func (p switchingVideoConfigProvider) VideoGenChannelType() string { return p.current.ChannelType }
+func (p switchingVideoConfigProvider) VideoGenAPIKey() string      { return p.current.APIKey }
+func (p switchingVideoConfigProvider) VideoGenBaseURL() string     { return p.current.BaseURL }
+func (p switchingVideoConfigProvider) VideoGenModel() string       { return p.current.Model }
+func (p switchingVideoConfigProvider) VideoGenTimeoutSec() int     { return p.current.TimeoutSec }
+func (p switchingVideoConfigProvider) VideoGenDurationSec() int    { return p.current.DurationSec }
+func (p switchingVideoConfigProvider) VideoGenAspectRatio() string { return p.current.AspectRatio }
+func (p switchingVideoConfigProvider) VideoGenResolution() string  { return p.current.Resolution }
+func (p switchingVideoConfigProvider) VideoGenGenerateAudio() bool { return p.current.GenerateAudio }
+func (p switchingVideoConfigProvider) VideoGenConfigForChannel(channel string) Config {
+	return p.byChannel[normalizeChannelType(channel)]
 }
 
 func TestBalanceUsesAccountBalanceEndpoint(t *testing.T) {
@@ -439,6 +529,32 @@ func TestAPIYIWanGeneratePayloadTextFallback(t *testing.T) {
 	input, _ := createBody["input"].(map[string]any)
 	if _, ok := input["media"]; ok {
 		t.Fatalf("text fallback should not send media: %#v", input)
+	}
+}
+
+func TestAPIYIWanR2VMediaLimitKeepsFirstFiveInOrder(t *testing.T) {
+	images := make([]ImageInput, 0, 10)
+	for i := 0; i < 10; i++ {
+		images = append(images, ImageInput{URL: "https://example.com/ref" + strconv.Itoa(i) + ".png"})
+	}
+	client := NewClient(Config{ChannelType: ChannelAPIYIWan27})
+	payload := client.apiyiWanPayload(Config{ChannelType: ChannelAPIYIWan27}, Options{
+		Prompt: "保持参考角色一致",
+		Images: images,
+	}, apiyiWanDefaultModel)
+	input, ok := payload["input"].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected input: %#v", payload["input"])
+	}
+	media, ok := input["media"].([]map[string]any)
+	if !ok || len(media) != 5 {
+		t.Fatalf("Wan r2v should send exactly 5 of 10 reference images, got %#v", input["media"])
+	}
+	for i, item := range media {
+		wantURL := "https://example.com/ref" + strconv.Itoa(i) + ".png"
+		if item["type"] != "reference_image" || item["url"] != wantURL {
+			t.Fatalf("media[%d]=%#v want reference_image %q", i, item, wantURL)
+		}
 	}
 }
 

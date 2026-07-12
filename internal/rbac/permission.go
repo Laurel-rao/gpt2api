@@ -28,12 +28,13 @@ type Permission string
 
 const (
 	// --- 普通用户(self) ---
-	PermSelfProfile   = Permission("self:profile")   // 看/改自己资料
-	PermSelfKey       = Permission("self:key")       // 管自己 API Key
-	PermSelfUsage     = Permission("self:usage")     // 查自己 usage/账单
-	PermSelfRecharge  = Permission("self:recharge")  // 充值/查自己订单
-	PermSelfImage     = Permission("self:image")     // 自己生图任务
-	PermSelfEcommerce = Permission("self:ecommerce") // 自己电商生成任务
+	PermSelfProfile       = Permission("self:profile")        // 看/改自己资料
+	PermSelfKey           = Permission("self:key")            // 管自己 API Key
+	PermSelfUsage         = Permission("self:usage")          // 查自己 usage/账单
+	PermSelfRecharge      = Permission("self:recharge")       // 充值/查自己订单
+	PermSelfImage         = Permission("self:image")          // 自己生图任务
+	PermSelfEcommerce     = Permission("self:ecommerce")      // 自己电商生成任务
+	PermSelfVideoWorkflow = Permission("self:video_workflow") // 自己的视频工作流与私有素材
 
 	// --- 管理员(admin) ---
 	// 用户管理
@@ -82,10 +83,11 @@ var rolePermissions = map[string][]Permission{
 		PermSelfRecharge,
 		PermSelfImage,
 		PermSelfEcommerce,
+		PermSelfVideoWorkflow,
 	},
 	RoleAdmin: {
 		// admin 继承 user 所有 self 权限(admin 自己也有 api key 等)
-		PermSelfProfile, PermSelfKey, PermSelfUsage, PermSelfRecharge, PermSelfImage, PermSelfEcommerce,
+		PermSelfProfile, PermSelfKey, PermSelfUsage, PermSelfRecharge, PermSelfImage, PermSelfEcommerce, PermSelfVideoWorkflow,
 
 		PermUserRead, PermUserWrite, PermUserCredit,
 		PermKeyReadAll, PermKeyWriteAll,

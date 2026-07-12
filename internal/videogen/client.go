@@ -66,9 +66,24 @@ type Config struct {
 	GenerateAudio bool
 }
 
+// TaskConfigSnapshot 是异步任务查询所需的非敏感上游配置快照；不包含 API Key。
+type TaskConfigSnapshot struct {
+	ChannelType   string `json:"channel_type"`
+	BaseURL       string `json:"base_url"`
+	Model         string `json:"model"`
+	TimeoutSec    int    `json:"timeout_sec"`
+	DurationSec   int    `json:"duration_sec"`
+	AspectRatio   string `json:"aspect_ratio"`
+	Resolution    string `json:"resolution"`
+	GenerateAudio bool   `json:"generate_audio"`
+}
+
 type ConfigProvider interface {
 	VideoGenEnabled() bool
 	VideoGenChannelType() string
+	// VideoGenConfigForChannel 按指定渠道读取当前凭据；用于恢复历史异步任务，
+	// 避免把当前渠道的密钥发送到快照中的旧端点。
+	VideoGenConfigForChannel(string) Config
 	VideoGenAPIKey() string
 	VideoGenBaseURL() string
 	VideoGenModel() string
@@ -107,6 +122,9 @@ type Options struct {
 	GenerateAudio     *bool
 	ExtraParams       map[string]any
 	OnProgress        func(Result)
+	// OnSubmitted 在创建接口返回 task_id 后、首次轮询前同步执行。
+	// 返回错误会中止轮询，供调用方先持久化 task_id，避免进程重启后重复提交。
+	OnSubmitted func(Result) error
 }
 
 type ImageInput struct {
@@ -419,6 +437,22 @@ func (c *Client) GenerateForConfig(ctx context.Context, cfg Config, opt Options)
 	return c.generateWithConfig(ctx, c.normalizedRuntimeConfig(cfg), opt)
 }
 
+func (c *Client) TaskConfigSnapshot() TaskConfigSnapshot {
+	if c == nil {
+		return TaskConfigSnapshot{}
+	}
+	cfg := c.runtimeConfig()
+	return TaskConfigSnapshot{ChannelType: cfg.ChannelType, BaseURL: cfg.BaseURL, Model: cfg.Model, TimeoutSec: cfg.TimeoutSec,
+		DurationSec: cfg.DurationSec, AspectRatio: cfg.AspectRatio, Resolution: cfg.Resolution, GenerateAudio: cfg.GenerateAudio}
+}
+
+func (c *Client) GenerateForTaskSnapshot(ctx context.Context, snapshot TaskConfigSnapshot, opt Options) (*Result, error) {
+	if c == nil {
+		return nil, errors.New("videogen client not configured")
+	}
+	return c.generateWithConfig(ctx, c.configForTaskSnapshot(snapshot), opt)
+}
+
 func (c *Client) generateWithConfig(ctx context.Context, cfg Config, opt Options) (*Result, error) {
 	if strings.TrimSpace(cfg.APIKey) == "" {
 		return nil, errors.New("videogen is disabled or api key is empty")
@@ -475,6 +509,9 @@ func (c *Client) generateWithConfig(ctx context.Context, cfg Config, opt Options
 	if taskID == "" {
 		return nil, errors.New("videogen create task response missing task_id")
 	}
+	if err := notifySubmitted(opt.OnSubmitted, Result{TaskID: taskID, ModelID: modelID, Status: "queued", Progress: 0}); err != nil {
+		return nil, err
+	}
 	if opt.OnProgress != nil {
 		opt.OnProgress(Result{
 			TaskID:        taskID,
@@ -509,6 +546,42 @@ func (c *Client) GetTaskForConfig(ctx context.Context, cfg Config, taskID string
 		return nil, errors.New("videogen client not configured")
 	}
 	return c.getTask(ctx, c.normalizedRuntimeConfig(cfg), taskID)
+}
+
+func (c *Client) GetTaskForSnapshot(ctx context.Context, snapshot TaskConfigSnapshot, taskID string) (*Result, error) {
+	if c == nil {
+		return nil, errors.New("videogen client not configured")
+	}
+	return c.getTask(ctx, c.configForTaskSnapshot(snapshot), taskID)
+}
+
+func (c *Client) configForTaskSnapshot(snapshot TaskConfigSnapshot) Config {
+	cfg := c.runtimeConfig()
+	if strings.TrimSpace(snapshot.ChannelType) == "" && strings.TrimSpace(snapshot.BaseURL) == "" && strings.TrimSpace(snapshot.Model) == "" {
+		return cfg
+	}
+	snapshotChannel := strings.TrimSpace(snapshot.ChannelType)
+	if snapshotChannel == "" {
+		snapshotChannel = cfg.ChannelType
+	}
+	if c.provider != nil {
+		channelConfig := c.provider.VideoGenConfigForChannel(snapshotChannel)
+		cfg.APIKey = strings.TrimSpace(channelConfig.APIKey)
+		cfg.APIKeyEnv = strings.TrimSpace(channelConfig.APIKeyEnv)
+	} else if normalizeChannelType(snapshotChannel) != normalizeChannelType(cfg.ChannelType) {
+		// 静态客户端无法解析另一渠道的凭据，宁可失败也不能向旧端点泄露当前密钥。
+		cfg.APIKey = ""
+		cfg.APIKeyEnv = ""
+	}
+	cfg.ChannelType = snapshotChannel
+	cfg.BaseURL = snapshot.BaseURL
+	cfg.Model = snapshot.Model
+	cfg.TimeoutSec = snapshot.TimeoutSec
+	cfg.DurationSec = snapshot.DurationSec
+	cfg.AspectRatio = snapshot.AspectRatio
+	cfg.Resolution = snapshot.Resolution
+	cfg.GenerateAudio = snapshot.GenerateAudio
+	return c.normalizedRuntimeConfig(cfg)
 }
 
 func (c *Client) getTask(ctx context.Context, cfg Config, taskID string) (*Result, error) {
@@ -617,6 +690,9 @@ func (c *Client) generateAPIYI(ctx context.Context, cfg Config, opt Options, sta
 	if taskID == "" {
 		return nil, errors.New("videogen create task response missing task_id")
 	}
+	if err := notifySubmitted(opt.OnSubmitted, Result{TaskID: taskID, ModelID: model, Status: "queued", Progress: 0}); err != nil {
+		return nil, err
+	}
 	if opt.OnProgress != nil {
 		opt.OnProgress(Result{
 			TaskID:        taskID,
@@ -692,6 +768,9 @@ func (c *Client) generateAPIYIWan(ctx context.Context, cfg Config, opt Options, 
 	if taskID == "" {
 		return nil, errors.New("videogen create task response missing task_id")
 	}
+	if err := notifySubmitted(opt.OnSubmitted, Result{TaskID: taskID, ModelID: model, Status: "queued", Progress: 0}); err != nil {
+		return nil, err
+	}
 	if opt.OnProgress != nil {
 		opt.OnProgress(Result{
 			TaskID:        taskID,
@@ -707,6 +786,16 @@ func (c *Client) generateAPIYIWan(ctx context.Context, cfg Config, opt Options, 
 	}
 	task.DurationMs = time.Since(start).Milliseconds()
 	return task, nil
+}
+
+func notifySubmitted(callback func(Result) error, result Result) error {
+	if callback == nil {
+		return nil
+	}
+	if err := callback(result); err != nil {
+		return fmt.Errorf("videogen persist submitted task %s: %w", result.TaskID, err)
+	}
+	return nil
 }
 
 func (c *Client) apiyiWanModel(cfg Config, opt Options) string {

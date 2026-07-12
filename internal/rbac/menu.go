@@ -39,6 +39,8 @@ var menuTree = []Menu{
 				Perms: []Permission{PermSelfEcommerce}},
 			{Key: "personal.ecommerce-mobile", Title: "电商移动工作台", Icon: "Cellphone", Path: "/personal/ecommerce-mobile",
 				Perms: []Permission{PermSelfEcommerce}},
+			{Key: "personal.video-workflows", Title: "视频工作流", Icon: "VideoPlay", Path: "/personal/video-workflows",
+				Perms: []Permission{PermSelfVideoWorkflow}},
 			{Key: "personal.docs", Title: "接口文档", Icon: "Document", Path: "/personal/docs",
 				Perms: []Permission{PermSelfKey, PermSelfUsage, PermSelfImage}},
 		},

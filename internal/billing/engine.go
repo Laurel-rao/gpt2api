@@ -62,31 +62,40 @@ func (e *Engine) PreDeduct(ctx context.Context, userID, keyID uint64, amount int
 		return nil
 	}
 	return e.runTx(ctx, func(tx *sqlx.Tx) error {
-		res, err := tx.ExecContext(ctx,
-			`UPDATE users
+		return PreDeductTx(ctx, tx, userID, keyID, amount, refID, remark)
+	})
+}
+
+// PreDeductTx 在调用者持有的事务内完成余额冻结与流水写入。业务方可先锁定
+// 自身幂等记录和租约行，再调用本函数，避免业务状态与积分流水跨事务漂移。
+func PreDeductTx(ctx context.Context, tx *sqlx.Tx, userID, keyID uint64, amount int64, refID, remark string) error {
+	if amount <= 0 {
+		return nil
+	}
+	res, err := tx.ExecContext(ctx,
+		`UPDATE users
              SET credit_balance = credit_balance - ?, credit_frozen = credit_frozen + ?,
                  version = version + 1
              WHERE id = ? AND credit_balance >= ? AND deleted_at IS NULL`,
-			amount, amount, userID, amount)
-		if err != nil {
-			return err
-		}
-		n, _ := res.RowsAffected()
-		if n == 0 {
-			return ErrInsufficient
-		}
-		var balanceAfter int64
-		if err := tx.QueryRowxContext(ctx,
-			`SELECT credit_balance FROM users WHERE id = ?`, userID).Scan(&balanceAfter); err != nil {
-			return err
-		}
-		_, err = tx.ExecContext(ctx,
-			`INSERT INTO credit_transactions
+		amount, amount, userID, amount)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrInsufficient
+	}
+	var balanceAfter int64
+	if err := tx.QueryRowxContext(ctx,
+		`SELECT credit_balance FROM users WHERE id = ?`, userID).Scan(&balanceAfter); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO credit_transactions
              (user_id, key_id, type, amount, balance_after, ref_id, remark)
              VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			userID, keyID, KindFreeze, -amount, balanceAfter, refID, remark)
-		return err
-	})
+		userID, keyID, KindFreeze, -amount, balanceAfter, refID, remark)
+	return err
 }
 
 // Settle 结算:expected=预扣金额,actual=真实消耗。
@@ -101,80 +110,91 @@ func (e *Engine) Settle(ctx context.Context, userID, keyID uint64, expected, act
 		actual = 0
 	}
 	return e.runTx(ctx, func(tx *sqlx.Tx) error {
-		refund := expected - actual // 可能为负
+		return SettleTx(ctx, tx, userID, keyID, expected, actual, refID, remark)
+	})
+}
 
-		var balanceDelta int64
-		var frozenDelta int64
+// SettleTx 在调用者事务内完成解冻、真实消费和流水写入。
+func SettleTx(ctx context.Context, tx *sqlx.Tx, userID, keyID uint64, expected, actual int64, refID, remark string) error {
+	if expected <= 0 && actual <= 0 {
+		return nil
+	}
+	if actual < 0 {
+		actual = 0
+	}
+	refund := expected - actual // 可能为负
 
-		var balanceGuard string
-		var guardArgs []interface{}
-		if refund >= 0 {
-			// 退差额:frozen -= expected, balance += refund
-			frozenDelta = -expected
-			balanceDelta = refund
-		} else {
-			// 补扣:frozen -= expected, balance -= (-refund)
-			frozenDelta = -expected
-			balanceDelta = refund // 负值
-			balanceGuard = " AND credit_balance >= ?"
-			guardArgs = append(guardArgs, -refund)
-		}
+	var balanceDelta int64
+	var frozenDelta int64
 
-		args := []interface{}{balanceDelta, frozenDelta, userID, frozenDelta}
-		args = append(args, guardArgs...)
-		res, err := tx.ExecContext(ctx,
-			`UPDATE users
+	var balanceGuard string
+	var guardArgs []interface{}
+	if refund >= 0 {
+		// 退差额:frozen -= expected, balance += refund
+		frozenDelta = -expected
+		balanceDelta = refund
+	} else {
+		// 补扣:frozen -= expected, balance -= (-refund)
+		frozenDelta = -expected
+		balanceDelta = refund // 负值
+		balanceGuard = " AND credit_balance >= ?"
+		guardArgs = append(guardArgs, -refund)
+	}
+
+	args := []interface{}{balanceDelta, frozenDelta, userID, frozenDelta}
+	args = append(args, guardArgs...)
+	res, err := tx.ExecContext(ctx,
+		`UPDATE users
              SET credit_balance = credit_balance + ?,
                  credit_frozen  = credit_frozen  + ?,
                  version        = version + 1
              WHERE id = ? AND credit_frozen + ? >= 0 AND deleted_at IS NULL`+balanceGuard,
-			args...)
-		if err != nil {
-			return err
-		}
-		n, _ := res.RowsAffected()
-		if n == 0 {
-			if refund < 0 {
-				var balance, frozen int64
-				if err := tx.QueryRowxContext(ctx,
-					`SELECT credit_balance, credit_frozen FROM users WHERE id = ? AND deleted_at IS NULL`,
-					userID).Scan(&balance, &frozen); err != nil {
-					return err
-				}
-				if balance < -refund {
-					return ErrInsufficient
-				}
-			}
-			return ErrConflict
-		}
-
-		var balanceAfter int64
-		if err := tx.QueryRowxContext(ctx,
-			`SELECT credit_balance FROM users WHERE id = ?`, userID).Scan(&balanceAfter); err != nil {
-			return err
-		}
-
-		// 流水:unfreeze(+expected), consume(-actual)
-		if expected > 0 {
-			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO credit_transactions
-                 (user_id, key_id, type, amount, balance_after, ref_id, remark)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-				userID, keyID, KindUnfreeze, expected, balanceAfter, refID, remark); err != nil {
+		args...)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		if refund < 0 {
+			var balance, frozen int64
+			if err := tx.QueryRowxContext(ctx,
+				`SELECT credit_balance, credit_frozen FROM users WHERE id = ? AND deleted_at IS NULL`,
+				userID).Scan(&balance, &frozen); err != nil {
 				return err
 			}
-		}
-		if actual > 0 {
-			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO credit_transactions
-                 (user_id, key_id, type, amount, balance_after, ref_id, remark)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-				userID, keyID, KindConsume, -actual, balanceAfter, refID, remark); err != nil {
-				return err
+			if balance < -refund {
+				return ErrInsufficient
 			}
 		}
-		return nil
-	})
+		return ErrConflict
+	}
+
+	var balanceAfter int64
+	if err := tx.QueryRowxContext(ctx,
+		`SELECT credit_balance FROM users WHERE id = ?`, userID).Scan(&balanceAfter); err != nil {
+		return err
+	}
+
+	// 流水:unfreeze(+expected), consume(-actual)
+	if expected > 0 {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO credit_transactions
+                 (user_id, key_id, type, amount, balance_after, ref_id, remark)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			userID, keyID, KindUnfreeze, expected, balanceAfter, refID, remark); err != nil {
+			return err
+		}
+	}
+	if actual > 0 {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO credit_transactions
+                 (user_id, key_id, type, amount, balance_after, ref_id, remark)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			userID, keyID, KindConsume, -actual, balanceAfter, refID, remark); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Refund 全额退款:在请求失败时把 expected 金额原路退回。
