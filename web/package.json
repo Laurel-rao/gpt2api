@@ -17,7 +17,12 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:unit": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "e2e:video-canvas": "node e2e/video-canvas/harness.mjs",
+    "e2e:video-canvas:server": "node e2e/video-canvas/mock-server.mjs",
+    "e2e:video-canvas:contract": "node --test e2e/video-canvas/contract.test.mjs"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.1",
@@ -32,13 +37,17 @@
     "vue-router": "^4.3.0"
   },
   "devDependencies": {
+    "@vitest/coverage-v8": "^1.6.1",
     "@types/node": "^20.11.30",
     "@vitejs/plugin-vue": "^5.0.4",
+    "@vue/test-utils": "^2.4.6",
+    "jsdom": "^24.1.3",
     "sass": "^1.71.1",
     "typescript": "~5.3.3",
     "unplugin-auto-import": "^0.17.5",
     "unplugin-vue-components": "^0.26.0",
     "vite": "^5.2.0",
+    "vitest": "^1.6.1",
     "vue-tsc": "^1.8.27"
   }
 }

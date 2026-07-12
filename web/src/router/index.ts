@@ -32,6 +32,11 @@ const routes: RouteRecordRaw[] = [
     ],
   },
   {
+    path: '/personal/video-workflows',
+    component: () => import('@/views/personal/VideoWorkflows.vue'),
+    meta: { title: '视频画布', perm: 'self:video_workflow' },
+  },
+  {
     path: '/personal',
     component: BasicLayout,
     redirect: '/personal/dashboard',
