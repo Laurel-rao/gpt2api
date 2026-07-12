@@ -11,23 +11,23 @@ import {
   Picture,
   User,
   VideoCamera,
+  VideoPlay,
   WarningFilled,
+  ZoomIn,
 } from '@element-plus/icons-vue'
 import type { VideoWorkflowNode } from '@/api/videoWorkflow'
-import { nodeStatusLabel, videoWorkflowModelLabel } from '@/utils/videoWorkflowGraph'
+import { nodeStatusLabel, videoWorkflowModelLabel, videoWorkflowNodePreviewURL } from '@/utils/videoWorkflowGraph'
 
 const props = defineProps<{
   node: VideoWorkflowNode
   selected?: boolean
 }>()
+const emit = defineEmits<{
+  'preview-media': [node: VideoWorkflowNode]
+}>()
 
 const mediaNode = computed(() => ['background', 'image', 'video'].includes(props.node.type))
-const previewURL = computed(() => {
-  const outputURL = props.node.output?.preview_url || props.node.output?.url || props.node.output?.output_url
-  return String(['background', 'image'].includes(props.node.type)
-    ? props.node.config?.preview_url || outputURL || ''
-    : outputURL || props.node.config?.preview_url || '')
-})
+const previewURL = computed(() => videoWorkflowNodePreviewURL(props.node))
 const status = computed(() => props.node.status || 'idle')
 const statusText = computed(() => {
   if (props.node.enabled === false) return '已停用'
@@ -98,12 +98,24 @@ const summary = computed(() => {
 
     <template v-if="!node.collapsed">
       <div v-if="mediaNode" class="node-media">
-        <video v-if="previewURL && node.type === 'video'" :src="previewURL" muted preload="metadata" />
-        <img v-else-if="previewURL" :src="previewURL" :alt="nodeTitle" />
+        <video v-if="previewURL && node.type === 'video'" :src="previewURL" muted playsinline preload="metadata" aria-hidden="true" />
+        <img v-else-if="previewURL" :src="previewURL" :alt="nodeTitle" draggable="false" />
         <div v-else class="media-placeholder" aria-hidden="true">
           <component :is="node.type === 'video' ? VideoCamera : Picture" />
           <span>{{ node.scene_id?.replace('scene_', 'S') || '9:16' }}</span>
         </div>
+        <button
+          :class="['node-preview-button', 'nodrag', 'nopan', 'nowheel', { video: node.type === 'video' }]"
+          type="button"
+          :aria-label="`全屏预览：${nodeTitle}`"
+          :title="`全屏预览：${nodeTitle}`"
+          @pointerdown.stop
+          @keydown.stop
+          @keyup.stop
+          @click.stop="emit('preview-media', node)"
+        >
+          <component :is="node.type === 'video' ? VideoPlay : ZoomIn" />
+        </button>
         <em>9:16</em>
       </div>
       <p v-else>{{ summary }}</p>
@@ -168,7 +180,18 @@ p {
   line-height: 15px;
 }
 .node-media { position: relative; height: 96px; margin: 0 10px 5px; overflow: hidden; background: #111318; border-radius: 5px; }
-.node-media img, .node-media video { width: 100%; height: 100%; object-fit: cover; transition: transform .18s ease; }
+.node-media img, .node-media video { width: 100%; height: 100%; object-fit: cover; pointer-events: none; transition: transform .18s ease; }
+.node-preview-button {
+  position: absolute; z-index: 2; left: 50%; top: 50%; width: 36px; height: 36px;
+  display: grid; place-items: center; padding: 0; color: #fff;
+  background: rgba(15, 23, 42, .88); border: 1px solid rgba(255, 255, 255, .7); border-radius: 50%;
+  opacity: 0; cursor: pointer; transform: translate(-50%, -50%) scale(.92);
+  transition: opacity .18s ease, background .18s ease, border-color .18s ease, transform .18s ease;
+}
+.node-preview-button.video, .node-media:hover .node-preview-button, .node-media:focus-within .node-preview-button { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+.node-preview-button:hover { background: #2563eb; border-color: #bfdbfe; }
+.node-preview-button:focus-visible { outline: 2px solid #93c5fd; outline-offset: 2px; }
+.node-preview-button svg { width: 16px; height: 16px; }
 .media-placeholder {
   width: 100%; height: 100%; display: grid; place-items: center;
   color: #8492a2;

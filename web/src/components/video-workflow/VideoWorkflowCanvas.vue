@@ -76,6 +76,7 @@ const emit = defineEmits<{
   'nodes-change': [changes: NodeChange[]]
   'edges-change': [changes: EdgeChange[]]
   'node-click': [nodeID: string, additive: boolean]
+  'preview-media': [node: VideoWorkflowNode]
   'node-drag-start': [event: NodeDragEvent]
   'node-drag': [event: NodeDragEvent]
   'node-drag-stop': [event: NodeDragEvent]
@@ -277,7 +278,7 @@ function emitNodeClick(payload: NodeMouseEvent) {
       @viewport-change="emit('viewport-change', $event)"
     >
       <template #node-zone="{ data }"><section :class="['flow-zone', { disabled: data.zone.enabled === false }]"><header><b>{{ data.zone.title }}</b><span>{{ data.zone.subtitle }}</span></header></section></template>
-      <template #node-workflow="{ data, selected }"><VideoWorkflowNodeCard v-if="data.node" :node="data.node" :selected="selected" /></template>
+      <template #node-workflow="{ data, selected }"><VideoWorkflowNodeCard v-if="data.node" :node="data.node" :selected="selected" @preview-media="emit('preview-media', $event)" /></template>
     </VueFlow>
 
     <i v-if="alignmentGuides.x !== null" class="alignment-guide vertical" :style="{ left: `${alignmentGuides.x}px` }" />

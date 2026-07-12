@@ -283,6 +283,15 @@ export function videoWorkflowNodeRunOutputVersionID(nodeRun?: VideoWorkflowNodeR
   )
 }
 
+export function videoWorkflowNodePreviewURL(node?: VideoWorkflowNode | null) {
+  if (!node) return ''
+  const outputURL = node.output?.preview_url || node.output?.url || node.output?.output_url
+  const configURL = node.config?.preview_url
+  return String(['background', 'image'].includes(node.type)
+    ? configURL || outputURL || ''
+    : outputURL || configURL || '')
+}
+
 export function resolveVideoWorkflowAssetBinding(
   node: VideoWorkflowNode | null | undefined,
   nodeRun: VideoWorkflowNodeRun | null | undefined,

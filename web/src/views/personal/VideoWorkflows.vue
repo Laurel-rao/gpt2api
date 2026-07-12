@@ -35,6 +35,7 @@ import axios from 'axios'
 import VideoWorkflowCanvas from '@/components/video-workflow/VideoWorkflowCanvas.vue'
 import VideoWorkflowInspector from '@/components/video-workflow/VideoWorkflowInspector.vue'
 import VideoWorkflowLibrary from '@/components/video-workflow/VideoWorkflowLibrary.vue'
+import VideoWorkflowMediaPreview from '@/components/video-workflow/VideoWorkflowMediaPreview.vue'
 import VideoWorkflowOutline from '@/components/video-workflow/VideoWorkflowOutline.vue'
 import VideoWorkflowRunHistory from '@/components/video-workflow/VideoWorkflowRunHistory.vue'
 import VideoWorkflowRunConfirm from '@/components/video-workflow/VideoWorkflowRunConfirm.vue'
@@ -90,6 +91,7 @@ import {
   updateTimelineClipTrim,
   validateVideoWorkflowGraph,
   videoWorkflowImageVersionTransformState,
+  videoWorkflowNodePreviewURL,
   videoWorkflowNodeRunOutputVersionID,
 } from '@/utils/videoWorkflowGraph'
 import { SerialVideoWorkflowOperationQueue, runConfirmedVideoWorkflowMutation } from '@/utils/videoWorkflowAsync'
@@ -170,6 +172,11 @@ const runHistoryActionID = ref('')
 const runHistoryDetail = ref<VideoWorkflowRun | null>(null)
 const jsonFileInput = ref<HTMLInputElement | null>(null)
 const jsonTransferBusy = ref(false)
+const mediaPreviewVisible = ref(false)
+const mediaPreviewNode = ref<VideoWorkflowNode | null>(null)
+const mediaPreviewURL = ref('')
+const mediaPreviewLoading = ref(false)
+const mediaPreviewError = ref('')
 const panelLayout = reactive({ left: 248, right: 320, timeline: 196, inspectorOpen: true, timelineOpen: true })
 const canvasViewport = reactive({ x: 0, y: 0, zoom: 1 })
 
@@ -188,6 +195,7 @@ let imageTransformContextGeneration = 0
 let deletedRecord: { before: VideoWorkflowGraph; nodeIDs: string[] } | null = null
 let pollingGeneration = 0
 let workspaceGeneration = 0
+let mediaPreviewGeneration = 0
 let componentUnmounted = false
 
 const {
@@ -292,6 +300,115 @@ async function ensureAssetBinding(nodeID: string) {
     binding = assetBindingForNode(node)
   }
   return binding
+}
+
+function closeMediaPreview() {
+  mediaPreviewGeneration += 1
+  mediaPreviewVisible.value = false
+  mediaPreviewLoading.value = false
+  mediaPreviewURL.value = ''
+  mediaPreviewError.value = ''
+  spaceGesture = null
+}
+
+function updateMediaPreviewVisible(visible: boolean) {
+  if (!visible) closeMediaPreview()
+}
+
+function directMediaBinding(node: VideoWorkflowNode) {
+  const nodeRun = activeRunNodeMap.value.get(node.id)
+  const assetID = String(
+    node.asset_id
+    || node.config.asset_id
+    || node.output?.asset_id
+    || node.output?.output_asset_id
+    || nodeRun?.output?.asset_id
+    || '',
+  )
+  const versionID = String(
+    node.asset_version_id
+    || node.config.asset_version_id
+    || node.output?.asset_version_id
+    || node.output?.version_id
+    || node.output?.output_version_id
+    || node.output?.output_asset_version_id
+    || videoWorkflowNodeRunOutputVersionID(nodeRun)
+    || '',
+  )
+  return assetID && versionID ? { assetID, versionID, previewURL: '' } : null
+}
+
+function mediaBindingForNode(node: VideoWorkflowNode) {
+  const binding = assetBindingForNode(node)
+  return binding ? {
+    assetID: binding.assetID,
+    versionID: binding.versionID,
+    previewURL: binding.version?.preview_url || binding.asset.preview_url || '',
+  } : directMediaBinding(node)
+}
+
+async function openMediaPreview(sourceNode: VideoWorkflowNode) {
+  const graphNode = graph.value.nodes.find((node) => node.id === sourceNode.id)
+  const node = graphNode ? displayNode(graphNode) : sourceNode
+  if (!['background', 'image', 'video'].includes(node.type)) return
+
+  const requestGeneration = ++mediaPreviewGeneration
+  const openingWorkspaceGeneration = workspaceGeneration
+  const openingWorkflowID = activeWorkflow.value?.id || ''
+  const contextIsCurrent = () => (
+    !componentUnmounted
+    && mediaPreviewVisible.value
+    && requestGeneration === mediaPreviewGeneration
+    && openingWorkspaceGeneration === workspaceGeneration
+    && openingWorkflowID === (activeWorkflow.value?.id || '')
+  )
+
+  mediaPreviewNode.value = node
+  mediaPreviewVisible.value = true
+  mediaPreviewURL.value = ''
+  mediaPreviewError.value = ''
+  mediaPreviewLoading.value = true
+  spaceGesture = null
+
+  let fallbackURL = videoWorkflowNodePreviewURL(node)
+  let binding = mediaBindingForNode(node)
+  const versionID = String(
+    binding?.versionID
+    || node.asset_version_id
+    || node.config.asset_version_id
+    || videoWorkflowNodeRunOutputVersionID(activeRunNodeMap.value.get(node.id))
+    || '',
+  )
+
+  if (!binding && versionID) {
+    try {
+      const freshAssets = await listVideoAssets({ limit: 100 })
+      if (!contextIsCurrent()) return
+      assets.value = freshAssets
+      binding = mediaBindingForNode(node)
+    } catch { /* 仍可回退到节点已有的预览地址。 */ }
+  }
+
+  if (!contextIsCurrent()) return
+  if (binding) {
+    fallbackURL = binding.previewURL || fallbackURL
+    try {
+      const signed = await signVideoAssetVersion(binding.assetID, binding.versionID, 'preview')
+      if (!contextIsCurrent()) return
+      mediaPreviewURL.value = signed.url
+      mediaPreviewLoading.value = false
+      return
+    } catch { /* 旧节点可能仅保留可直接读取的输出地址。 */ }
+  }
+
+  if (!contextIsCurrent()) return
+  mediaPreviewURL.value = fallbackURL
+  mediaPreviewLoading.value = false
+  if (!fallbackURL) mediaPreviewError.value = binding ? '最新预览地址获取失败，请重试。' : '当前节点尚未生成可预览的媒体。'
+}
+
+function retryMediaPreview() {
+  if (mediaPreviewNode.value) void openMediaPreview(mediaPreviewNode.value)
 }
 
 function applyVideoModelDefault(node: VideoWorkflowNode) {
@@ -421,6 +538,7 @@ async function loadWorkspace(workflow?: VideoWorkflow | null) {
   if (componentUnmounted) return
   invalidateImageTransformContext()
   const generation = ++workspaceGeneration
+  closeMediaPreview()
   stopPolling()
   const next = workflow === undefined
     ? (workflows.value[0]?.id ? await getVideoWorkflow(workflows.value[0].id) : null)
@@ -1620,6 +1738,7 @@ function generateFromHistory() {
 
 function handleCanvasKeydown(event: KeyboardEvent) {
   if (!desktopReady.value) return
+  if (mediaPreviewVisible.value) { spaceGesture = null; return }
   const target = event.target as HTMLElement | null
   if (target?.matches('input, textarea, select, [contenteditable="true"]') || target?.closest('.el-dialog, .el-message-box')) return
   const mod = event.metaKey || event.ctrlKey
@@ -1673,6 +1792,7 @@ function handleCanvasKeydown(event: KeyboardEvent) {
 
 function handleCanvasKeyup(event: KeyboardEvent) {
   if (!desktopReady.value) { spaceGesture = null; return }
+  if (mediaPreviewVisible.value) { spaceGesture = null; return }
   if (event.key !== ' ' || !spaceGesture) return
   const gesture = spaceGesture
   spaceGesture = null
@@ -1752,6 +1872,7 @@ onBeforeUnmount(() => {
   componentUnmounted = true
   invalidateImageTransformContext()
   workspaceGeneration += 1
+  closeMediaPreview()
   stopPolling()
   persistLocalDraft()
   if (saveTimer) window.clearTimeout(saveTimer)
@@ -1886,6 +2007,7 @@ onBeforeUnmount(() => {
           @edge-click="selectEdge"
           @viewport-change="updateCanvasViewport"
           @minimap-navigate="navigateFromMinimap"
+          @preview-media="openMediaPreview"
           @create-connected-node="createConnectedNode"
           @cancel-quick-connect="pendingConnection = null; quickConnectMenu = null"
           @zoom-out="zoomOut()"
@@ -1912,6 +2034,7 @@ onBeforeUnmount(() => {
           @add-connection="openConnectionPicker"
           @add-to-timeline="addSelectedVideoToTimeline"
           @preview-output="previewOutput"
+          @preview-media="openMediaPreview"
           @download-output="downloadOutput"
           @close="setInspectorOpen(false)"
         />
@@ -1954,6 +2077,16 @@ onBeforeUnmount(() => {
       <div class="save-live" aria-live="polite">{{ saveState }}</div>
 
       <VideoWorkflowOutline v-model="outlineVisible" :nodes="graph.nodes" :edge-count="graph.edges.length" :clip-count="timelineClips.length" @select="selectNode" />
+
+      <VideoWorkflowMediaPreview
+        :model-value="mediaPreviewVisible"
+        :node="mediaPreviewNode"
+        :src="mediaPreviewURL"
+        :loading="mediaPreviewLoading"
+        :error="mediaPreviewError"
+        @update:model-value="updateMediaPreviewVisible"
+        @retry="retryMediaPreview"
+      />
 
       <VideoWorkflowRunHistory
         v-model="runHistoryVisible"
