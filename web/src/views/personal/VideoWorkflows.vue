@@ -46,6 +46,7 @@ import {
   getVideoWorkflow,
   getVideoWorkflowRun,
   listVideoAssets,
+  listVideoWorkflowModels,
   listVideoWorkflowRuns,
   listVideoWorkflowTemplates,
   listVideoWorkflows,
@@ -63,6 +64,7 @@ import {
   type VideoWorkflowNode,
   type VideoWorkflowNodeHistoryEntry,
   type VideoWorkflowNodeRun,
+  type VideoWorkflowModelOption,
   type VideoWorkflowRun,
   type VideoWorkflowRunMode,
   type VideoWorkflowTemplate,
@@ -138,6 +140,7 @@ const revisionConflict = ref(false)
 const templates = ref<VideoWorkflowTemplate[]>([])
 const workflows = ref<VideoWorkflow[]>([])
 const assets = ref<VideoAsset[]>([])
+const workflowVideoModels = ref<VideoWorkflowModelOption[]>([])
 const activeWorkflow = ref<VideoWorkflow | null>(null)
 const graph = ref<VideoWorkflowGraph>(createStarterVideoWorkflowGraph())
 const activeRun = ref<VideoWorkflowRun | null>(null)
@@ -291,12 +294,25 @@ const selectedNodeModelOptions = computed(() => {
     : ['character', 'background', 'image'].includes(type)
       ? [{ value: 'gpt-image-2', label: 'GPT Image 2' }]
       : type === 'video'
-        ? [{ value: DEFAULT_VIDEO_WORKFLOW_VIDEO_MODEL, label: 'Wan2.7-r2v' }]
+        ? videoModelOptionsWithCurrent(selectedNodeModel.value)
         : []
   return selectedNodeModel.value && !defaults.some((item) => item.value === selectedNodeModel.value)
     ? [{ value: selectedNodeModel.value, label: selectedNodeModel.value }, ...defaults]
     : defaults
 })
+
+function videoModelOptionsWithCurrent(current: string) {
+  const items = workflowVideoModels.value.length
+    ? workflowVideoModels.value
+    : [{ value: DEFAULT_VIDEO_WORKFLOW_VIDEO_MODEL, label: 'Wan2.7-r2v', channel_type: 'apiyi_wan27' }]
+  const options = items.map((item) => ({
+    value: item.value,
+    label: item.label || item.value,
+  })).filter((item) => item.value)
+  return current && !options.some((item) => item.value === current)
+    ? [{ value: current, label: `${current}（已停用）` }, ...options]
+    : options
+}
 const isRunActive = computed(() => ['queued', 'running', 'awaiting_character_approval', 'awaiting_storyboard_approval', 'cancel_pending'].includes(activeRun.value?.status || ''))
 const saveState = computed(() => {
   if (revisionConflict.value) return '修订冲突 · 已保留本地副本'
@@ -864,13 +880,15 @@ async function inspectHistoryRun(run: VideoWorkflowRun) {
 async function bootstrap() {
   loading.value = true
   try {
-    const [templateItems, workflowItems, assetItems] = await Promise.all([
+    const [templateItems, workflowItems, assetItems, modelItems] = await Promise.all([
       listVideoWorkflowTemplates(), listVideoWorkflows(), listVideoAssets({ limit: 100 }).catch(() => []),
+      listVideoWorkflowModels().catch(() => []),
     ])
     if (componentUnmounted) return
     templates.value = templateItems
     workflows.value = workflowItems
     assets.value = assetItems
+    workflowVideoModels.value = modelItems.length ? modelItems : workflowVideoModels.value
     selectedTemplateID.value = templates.value[0]?.id || ''
     await loadWorkspace()
   } catch {

@@ -13,18 +13,36 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/432539/gpt2api/internal/middleware"
+	"github.com/432539/gpt2api/internal/videogen"
 	"github.com/432539/gpt2api/pkg/resp"
 )
 
-type Handler struct{ service *Service }
+type Handler struct {
+	service        *Service
+	workflowModels func() []videogen.WorkflowModel
+}
 
 func NewHandler(service *Service) *Handler { return &Handler{service: service} }
+
+func (h *Handler) SetWorkflowModels(fn func() []videogen.WorkflowModel) {
+	h.workflowModels = fn
+}
 
 func (h *Handler) ListTemplates(c *gin.Context) {
 	items, err := h.service.ListTemplates(c.Request.Context())
 	if err != nil {
 		resp.Internal(c, err.Error())
 		return
+	}
+	resp.OK(c, gin.H{"items": items})
+}
+
+func (h *Handler) ListWorkflowModels(c *gin.Context) {
+	items := videogen.DefaultWorkflowModels()
+	if h.workflowModels != nil {
+		if configured := h.workflowModels(); len(configured) > 0 {
+			items = configured
+		}
 	}
 	resp.OK(c, gin.H{"items": items})
 }

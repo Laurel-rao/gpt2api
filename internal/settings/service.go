@@ -2,7 +2,9 @@ package settings
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -84,6 +86,14 @@ func (s *Service) Set(ctx context.Context, in map[string]string) error {
 	filtered := make(map[string]string, len(in))
 	for k, v := range in {
 		if !IsAllowedKey(k) {
+			continue
+		}
+		if k == VideoGenWorkflowModels {
+			normalized, err := NormalizeVideoGenWorkflowModels(v)
+			if err != nil {
+				return err
+			}
+			filtered[k] = normalized
 			continue
 		}
 		filtered[k] = strings.TrimSpace(v)
@@ -542,6 +552,107 @@ func (s *Service) VideoGenBillingRatio() float64 {
 		return 10
 	}
 	return n
+}
+
+func (s *Service) VideoGenWorkflowModels() []videogen.WorkflowModel {
+	models, err := ParseVideoGenWorkflowModels(s.GetString(VideoGenWorkflowModels))
+	if err != nil || len(models) == 0 {
+		return videogen.DefaultWorkflowModels()
+	}
+	return models
+}
+
+func (s *Service) VideoGenWorkflowChannelForModel(model string) string {
+	value := strings.TrimSpace(model)
+	if value == "" {
+		return s.VideoGenChannelType()
+	}
+	for _, item := range s.VideoGenWorkflowModels() {
+		if strings.EqualFold(strings.TrimSpace(item.Value), value) && strings.TrimSpace(item.ChannelType) != "" {
+			return item.ChannelType
+		}
+	}
+	if channelType := videogen.GuessWorkflowModelChannel(value); channelType != "" {
+		return channelType
+	}
+	for _, channelType := range []string{videogen.ChannelEchoon, videogen.ChannelAPIYISeedance, videogen.ChannelAPIYIWan27, videogen.ChannelAPIYIHappyHorse} {
+		if strings.EqualFold(value, s.VideoGenConfigForChannel(channelType).Model) {
+			return channelType
+		}
+	}
+	return s.VideoGenChannelType()
+}
+
+func (s *Service) VideoGenConfigForModel(model string) videogen.Config {
+	cfg := s.VideoGenConfigForChannel(s.VideoGenWorkflowChannelForModel(model))
+	if value := strings.TrimSpace(model); value != "" {
+		cfg.Model = value
+	}
+	return cfg
+}
+
+func NormalizeVideoGenWorkflowModels(raw string) (string, error) {
+	models, err := ParseVideoGenWorkflowModels(raw)
+	if err != nil {
+		return "", err
+	}
+	data, err := json.Marshal(models)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func ParseVideoGenWorkflowModels(raw string) ([]videogen.WorkflowModel, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return videogen.DefaultWorkflowModels(), nil
+	}
+	var input []videogen.WorkflowModel
+	if err := json.Unmarshal([]byte(raw), &input); err != nil {
+		return nil, fmt.Errorf("videogen.workflow_models must be valid JSON array: %w", err)
+	}
+	out := make([]videogen.WorkflowModel, 0, len(input))
+	seen := map[string]struct{}{}
+	for _, item := range input {
+		channelType := normalizeVideoGenWorkflowChannel(item.ChannelType)
+		value := strings.TrimSpace(item.Value)
+		if channelType == "" || value == "" {
+			continue
+		}
+		label := strings.TrimSpace(item.Label)
+		if label == "" {
+			label = value
+		}
+		key := channelType + "\x00" + strings.ToLower(value)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, videogen.WorkflowModel{ChannelType: channelType, Value: value, Label: label})
+		if len(out) >= 100 {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return videogen.DefaultWorkflowModels(), nil
+	}
+	return out, nil
+}
+
+func normalizeVideoGenWorkflowChannel(channelType string) string {
+	switch strings.ToLower(strings.TrimSpace(channelType)) {
+	case videogen.ChannelEchoon:
+		return videogen.ChannelEchoon
+	case videogen.ChannelAPIYISeedance:
+		return videogen.ChannelAPIYISeedance
+	case videogen.ChannelAPIYIWan27:
+		return videogen.ChannelAPIYIWan27
+	case videogen.ChannelAPIYIHappyHorse:
+		return videogen.ChannelAPIYIHappyHorse
+	default:
+		return ""
+	}
 }
 
 // -- billing / recharge --

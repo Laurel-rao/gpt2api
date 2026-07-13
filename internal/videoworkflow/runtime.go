@@ -227,6 +227,10 @@ type RuntimeVideoConfigSnapshotter interface {
 	VideoConfigSnapshot() json.RawMessage
 }
 
+type RuntimeVideoModelConfigSnapshotter interface {
+	VideoConfigSnapshotForModel(string) json.RawMessage
+}
+
 type RuntimeBilling interface {
 	PreDeduct(context.Context, uint64, uint64, int64, string, string) error
 	Settle(context.Context, uint64, uint64, int64, int64, string, string) error
@@ -645,7 +649,7 @@ func (r *Runtime) ApproveCharacters(ctx context.Context, run *Run, approval Char
 			return errors.New("videoworkflow: selected character version is not a candidate")
 		}
 		payload, _ := json.Marshal(selection)
-		output, _ := json.Marshal(map[string]any{"selected_version_id": version.ID, "candidate_version_ids": outputVersionIDs(nodeRun.Output)})
+		output := characterApprovalOutput(nodeRun.Output, version.ID)
 		decisions = append(decisions, ApprovalNodeDecision{NodeRunID: nodeRun.ID, NodeID: nodeRun.NodeID, InputHash: nodeRun.InputHash,
 			ApprovalType: "characters", DecisionPayload: payload, Output: output, OutputVersionID: version.ID})
 	}

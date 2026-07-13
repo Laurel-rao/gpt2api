@@ -140,6 +140,15 @@ func (h *Handler) Update(c *gin.Context) {
 			resp.BadRequest(c, "unknown key: "+k)
 			return
 		}
+		if k == VideoGenWorkflowModels {
+			normalized, err := NormalizeVideoGenWorkflowModels(v)
+			if err != nil {
+				resp.BadRequest(c, err.Error())
+				return
+			}
+			req.Items[k] = normalized
+			continue
+		}
 		if def, _ := DefByKey(k); def.Type == "password" {
 			if v == maskedPasswordValue {
 				delete(req.Items, k)

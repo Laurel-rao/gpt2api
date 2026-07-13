@@ -125,6 +125,7 @@ const (
 	VideoGenResolution        = "videogen.resolution"
 	VideoGenGenerateAudio     = "videogen.generate_audio"
 	VideoGenBillingRatio      = "videogen.billing_ratio"
+	VideoGenWorkflowModels    = "videogen.workflow_models"
 
 	// 计费与充值
 	BillingCreditPerCNY        = "billing.credit_per_cny"
@@ -241,6 +242,7 @@ var Defs = []KeyDef{
 	{Key: VideoGenResolution, Type: "string", Category: "videogen", Default: "720p", Label: "默认分辨率", Desc: "如 720p / 1080p，取决于模型支持"},
 	{Key: VideoGenGenerateAudio, Type: "bool", Category: "videogen", Default: "false", Label: "生成音频", Desc: "开启后请求视频模型同时生成音频，取决于模型支持"},
 	{Key: VideoGenBillingRatio, Type: "float", Category: "videogen", Default: "10", Label: "视频扣费倍率", Desc: "用户实际扣费 = 视频平台任务 cost_detail.price × 此倍率；单位按平台积分换算为站内积分，默认 10 倍"},
+	{Key: VideoGenWorkflowModels, Type: "string", Category: "videogen", Default: `[{"channel_type":"apiyi_wan27","value":"wan2.7-r2v","label":"API易 Wan2.7 参考图生视频"}]`, Label: "画布激活模型", Desc: "视频画布可选模型 JSON；后台页面会以多选方式维护"},
 
 	// ---------- 计费与充值 ----------
 	{Key: BillingCreditPerCNY, Type: "int", Category: "billing", Default: "10000", Label: "1 元 = N 积分·厘", Desc: "展示用换算;默认 10000"},

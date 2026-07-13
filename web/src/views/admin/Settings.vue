@@ -200,6 +200,13 @@ interface VideoChannelRow {
   modelKey: string
 }
 
+interface WorkflowVideoModelOption {
+  channel_type: VideoChannelType
+  value: string
+  label: string
+  group: string
+}
+
 const videoChannelRows: VideoChannelRow[] = [
   {
     type: 'echoon',
@@ -242,6 +249,58 @@ const videoChannelRows: VideoChannelRow[] = [
 const commonVideoSettings = computed(() => (
   grouped.value.videogen || []
 ).filter((it) => videoSettingSection(it) === 'common'))
+const workflowModelSelection = computed({
+  get: () => parseWorkflowModels(draft['videogen.workflow_models']).map(workflowModelKey),
+  set: (keys: string[]) => {
+    const options = new Map(workflowModelOptions.value.map((item) => [workflowModelKey(item), item]))
+    const selected = keys.map((key) => options.get(key)).filter((item): item is WorkflowVideoModelOption => Boolean(item))
+    draft['videogen.workflow_models'] = JSON.stringify(selected.map((item) => ({
+      channel_type: item.channel_type,
+      value: item.value,
+      label: item.label,
+    })))
+  },
+})
+const workflowModelGroups = computed(() => {
+  const groups = new Map<string, WorkflowVideoModelOption[]>()
+  for (const item of workflowModelOptions.value) {
+    const list = groups.get(item.group) || []
+    list.push(item)
+    groups.set(item.group, list)
+  }
+  return [...groups.entries()].map(([label, options]) => ({ label, options }))
+})
+const workflowModelOptions = computed(() => {
+  const selected = parseWorkflowModels(draft['videogen.workflow_models'])
+  const options: WorkflowVideoModelOption[] = []
+  const push = (channelType: VideoChannelType, model: VideoGenProbeModel | { value: string; label?: string; name?: string }) => {
+    const value = String(model.value || '').trim()
+    if (!value) return
+    const row = videoChannelRows.find((item) => item.type === channelType)
+    options.push({
+      channel_type: channelType,
+      value,
+      label: String(model.label || model.name || value),
+      group: row?.name || channelType,
+    })
+  }
+  for (const model of normalizeVideoModels(apiyiBuiltInModels)) push('apiyi_seedance2', model)
+  for (const model of normalizeVideoModels(apiyiWan27BuiltInModels)) push('apiyi_wan27', model)
+  for (const model of normalizeVideoModels(apiyiHappyHorseBuiltInModels)) push('apiyi_happyhorse', model)
+  for (const row of videoChannelRows) {
+    for (const model of normalizeVideoModels(videoChannelModels[row.type] || [])) push(row.type, model)
+    const current = String(draft[row.modelKey] || '').trim()
+    if (current) push(row.type, { value: current, label: `${current}（默认模型）` })
+  }
+  for (const item of selected) push(item.channel_type, item)
+  const seen = new Set<string>()
+  return options.filter((item) => {
+    const key = workflowModelKey(item)
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+})
 
 function formatNumber(n: number | undefined | null) {
   return Number(n || 0).toLocaleString('zh-CN')
@@ -595,8 +654,33 @@ function apiyiHappyHorseModelOptions(current: string) {
   return builtIns
 }
 
+function parseWorkflowModels(raw: string | undefined): WorkflowVideoModelOption[] {
+  try {
+    const value = JSON.parse(String(raw || '[]'))
+    if (!Array.isArray(value)) return []
+    return value.map((item) => ({
+      channel_type: normalizeWorkflowChannelType(item?.channel_type),
+      value: String(item?.value || '').trim(),
+      label: String(item?.label || item?.value || '').trim(),
+      group: videoChannelRows.find((row) => row.type === normalizeWorkflowChannelType(item?.channel_type))?.name || String(item?.channel_type || ''),
+    })).filter((item): item is WorkflowVideoModelOption => Boolean(item.channel_type && item.value))
+  } catch {
+    return []
+  }
+}
+
+function normalizeWorkflowChannelType(value: unknown): VideoChannelType | '' {
+  const text = String(value || '').trim().toLowerCase()
+  return videoChannelRows.some((row) => row.type === text) ? text as VideoChannelType : ''
+}
+
+function workflowModelKey(item: Pick<WorkflowVideoModelOption, 'channel_type' | 'value'>) {
+  return `${item.channel_type}\u0000${item.value}`
+}
+
 function videoSettingSection(it: SettingItem) {
   if (it.key === 'videogen.channel_type' || it.key === 'videogen.enabled') return 'current'
+  if (it.key === 'videogen.workflow_models') return 'workflow_models'
   if (it.key.startsWith('videogen.apiyi_seedance2.')) return 'apiyi'
   if (it.key.startsWith('videogen.apiyi_wan27.')) return 'apiyi'
   if (it.key.startsWith('videogen.apiyi_happyhorse.')) return 'apiyi'
@@ -864,6 +948,42 @@ onUnmounted(() => {
                     </template>
                   </el-table-column>
                 </el-table>
+
+                <div class="settings-section-title settings-section-title--table">画布激活模型</div>
+                <div class="workflow-model-panel">
+                  <div class="workflow-model-panel__meta">
+                    <strong>执行模型</strong>
+                    <span>视频画布仅展示这里激活的模型；保存后立即生效。</span>
+                  </div>
+                  <el-select
+                    v-model="workflowModelSelection"
+                    multiple
+                    filterable
+                    collapse-tags
+                    collapse-tags-tooltip
+                    placeholder="选择允许在视频画布中使用的模型"
+                    style="min-width: 420px; max-width: 760px; width: 100%"
+                  >
+                    <el-option-group
+                      v-for="group in workflowModelGroups"
+                      :key="group.label"
+                      :label="group.label"
+                    >
+                      <el-option
+                        v-for="model in group.options"
+                        :key="workflowModelKey(model)"
+                        :label="model.label"
+                        :value="workflowModelKey(model)"
+                      >
+                        <div class="model-option">
+                          <span>{{ model.label }}</span>
+                          <small>{{ model.value }}</small>
+                        </div>
+                      </el-option>
+                    </el-option-group>
+                  </el-select>
+                  <el-tag size="small" type="info">{{ workflowModelSelection.length }} 个已激活</el-tag>
+                </div>
 
                 <div class="settings-section-title settings-section-title--table">通用生成与计费</div>
                 <el-form label-width="170px" label-position="right" class="setting-form">
@@ -1160,6 +1280,33 @@ onUnmounted(() => {
 .video-channel-table {
   max-width: 1180px;
   margin-bottom: 18px;
+}
+.workflow-model-panel {
+  max-width: 1180px;
+  margin: 0 0 18px;
+  padding: 14px 16px;
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) minmax(360px, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  background: var(--el-fill-color-extra-light);
+}
+.workflow-model-panel__meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.workflow-model-panel__meta strong {
+  color: var(--el-text-color-primary);
+  font-size: 14px;
+}
+.workflow-model-panel__meta span {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.45;
 }
 .channel-config-form {
   padding: 16px 18px 2px 8px;

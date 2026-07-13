@@ -239,6 +239,12 @@ export interface VideoWorkflowEstimate {
   balance?: number
 }
 
+export interface VideoWorkflowModelOption {
+  channel_type: string
+  value: string
+  label: string
+}
+
 export interface VideoAssetVersion {
   id: string
   version: number
@@ -289,6 +295,10 @@ function unwrapItems<T>(value: T[] | { items: T[] } | undefined): T[] {
 
 export async function listVideoWorkflowTemplates(): Promise<VideoWorkflowTemplate[]> {
   return unwrapItems(await http.get('/api/me/video-workflows/templates'))
+}
+
+export async function listVideoWorkflowModels(): Promise<VideoWorkflowModelOption[]> {
+  return unwrapItems<VideoWorkflowModelOption>(await http.get('/api/me/video-workflows/models', { silent: true } as any))
 }
 
 export async function listVideoWorkflows(): Promise<VideoWorkflow[]> {

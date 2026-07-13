@@ -197,6 +197,7 @@ func New(d *Deps) *gin.Engine {
 				vg := authed.Group("/me/video-workflows", middleware.RequireCurrentAdmin(d.CurrentUserRole), middleware.RequirePerm(rbac.PermSelfVideoWorkflow))
 				{
 					vg.GET("/templates", d.VideoWorkflowH.ListTemplates)
+					vg.GET("/models", d.VideoWorkflowH.ListWorkflowModels)
 					vg.POST("", d.VideoWorkflowH.CreateWorkflow)
 					vg.GET("", d.VideoWorkflowH.ListWorkflows)
 					vg.GET("/:id", d.VideoWorkflowH.GetWorkflow)

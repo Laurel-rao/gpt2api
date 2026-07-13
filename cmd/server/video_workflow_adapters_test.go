@@ -50,13 +50,22 @@ func TestVideoWorkflowUpstreamModel(t *testing.T) {
 }
 
 func TestValidateVideoWorkflowProviderSnapshot(t *testing.T) {
-	for _, model := range []string{"wan2.7-r2v", " WAN2.7-I2V ", "wan2.7-t2v"} {
-		if err := validateVideoWorkflowProviderSnapshot(model, videogen.TaskConfigSnapshot{ChannelType: " APIYI_WAN27 "}); err != nil {
-			t.Fatalf("valid Wan2.7 snapshot rejected for model %q: %v", model, err)
+	valid := map[string]string{
+		"wan2.7-r2v":                      videogen.ChannelAPIYIWan27,
+		" WAN2.7-I2V ":                    videogen.ChannelAPIYIWan27,
+		"wan2.7-t2v":                      videogen.ChannelAPIYIWan27,
+		"doubao-seedance-2-0-260128":      videogen.ChannelAPIYISeedance,
+		"happyhorse-1.0-r2v":              videogen.ChannelAPIYIHappyHorse,
+		" HAPPYHORSE-1.0-I2V ":            videogen.ChannelAPIYIHappyHorse,
+		"doubao-seedance-2-0-fast-260128": videogen.ChannelAPIYISeedance,
+	}
+	for model, channelType := range valid {
+		if err := validateVideoWorkflowProviderSnapshot(model, videogen.TaskConfigSnapshot{ChannelType: " " + channelType + " "}); err != nil {
+			t.Fatalf("valid snapshot rejected for model %q channel %q: %v", model, channelType, err)
 		}
 	}
-	if err := validateVideoWorkflowProviderSnapshot("doubao-seedance-2-0-260128", videogen.TaskConfigSnapshot{ChannelType: videogen.ChannelEchoon}); err != nil {
-		t.Fatalf("non-Wan model should not require Wan channel: %v", err)
+	if err := validateVideoWorkflowProviderSnapshot("legacy-custom-model", videogen.TaskConfigSnapshot{ChannelType: videogen.ChannelEchoon}); err != nil {
+		t.Fatalf("unknown legacy model should not require a specific channel: %v", err)
 	}
 	for _, channelType := range []string{"", videogen.ChannelAPIYISeedance, videogen.ChannelEchoon} {
 		err := validateVideoWorkflowProviderSnapshot("wan2.7-r2v", videogen.TaskConfigSnapshot{ChannelType: channelType})

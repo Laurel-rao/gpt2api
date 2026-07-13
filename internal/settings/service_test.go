@@ -22,6 +22,7 @@ func TestVideoGenChannelSpecificConfig(t *testing.T) {
 		VideoGenAspectRatio:       "16:9",
 		VideoGenResolution:        "720p",
 		VideoGenGenerateAudio:     "false",
+		VideoGenWorkflowModels:    `[{"channel_type":"apiyi_happyhorse","value":"happyhorse-1.0-i2v","label":"HappyHorse 图生视频"}]`,
 	}}
 
 	if got := svc.VideoGenAPIKey(); got != "apiyi-key" {
@@ -70,5 +71,41 @@ func TestVideoGenChannelSpecificConfig(t *testing.T) {
 	cfg = svc.VideoGenConfigForChannel("apiyi_happyhorse")
 	if cfg.ChannelType != "apiyi_happyhorse" || cfg.APIKey != "hh-key" || cfg.Model != "happyhorse-1.0-r2v" {
 		t.Fatalf("happyhorse config = %+v", cfg)
+	}
+
+	cfg = svc.VideoGenConfigForModel("happyhorse-1.0-i2v")
+	if cfg.ChannelType != "apiyi_happyhorse" || cfg.APIKey != "hh-key" || cfg.Model != "happyhorse-1.0-i2v" {
+		t.Fatalf("workflow happyhorse config = %+v", cfg)
+	}
+
+	cfg = svc.VideoGenConfigForModel("wan2.7-i2v")
+	if cfg.ChannelType != "apiyi_wan27" || cfg.APIKey != "wan-key" || cfg.Model != "wan2.7-i2v" {
+		t.Fatalf("workflow guessed wan config = %+v", cfg)
+	}
+}
+
+func TestNormalizeVideoGenWorkflowModels(t *testing.T) {
+	raw := `[
+		{"channel_type":" APIYI_WAN27 ","value":" wan2.7-r2v ","label":"  Wan 参考图 "},
+		{"channel_type":"apiyi_wan27","value":"WAN2.7-R2V","label":"duplicate"},
+		{"channel_type":"bad","value":"ignored"},
+		{"channel_type":"apiyi_seedance2","value":"doubao-seedance-2-0-260128"}
+	]`
+	normalized, err := NormalizeVideoGenWorkflowModels(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	models, err := ParseVideoGenWorkflowModels(normalized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 2 {
+		t.Fatalf("models len = %d, want 2: %s", len(models), normalized)
+	}
+	if models[0].ChannelType != "apiyi_wan27" || models[0].Value != "wan2.7-r2v" || models[0].Label != "Wan 参考图" {
+		t.Fatalf("first model = %+v", models[0])
+	}
+	if models[1].ChannelType != "apiyi_seedance2" || models[1].Value != "doubao-seedance-2-0-260128" {
+		t.Fatalf("second model = %+v", models[1])
 	}
 }

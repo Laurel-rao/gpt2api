@@ -330,7 +330,7 @@ func main() {
 			MediaSigner: videoworkflow.NewMediaSigner(workflowSecret), Composer: composer,
 			ImageGenerator: videoWorkflowImageGenerator{runner: imageRunner},
 			TextGenerator:  videoWorkflowTextGenerator{client: textGenClient},
-			VideoGenerator: videoWorkflowVideoGenerator{client: videoGenClient},
+			VideoGenerator: videoWorkflowVideoGenerator{client: videoGenClient, configProvider: settingsSvc},
 			Billing:        billEngine, Usage: videoWorkflowUsageLogger{logger: usageLogger},
 			ImageCredits: cfg.VideoWorkflow.ImageCredits, TextCredits: cfg.VideoWorkflow.TextCredits,
 			VideoCredits:      cfg.VideoWorkflow.VideoCredits,
@@ -342,6 +342,7 @@ func main() {
 		}
 		videoWorkflowSvc.SetRuntime(videoWorkflowRuntime)
 		videoWorkflowH = videoworkflow.NewHandler(videoWorkflowSvc)
+		videoWorkflowH.SetWorkflowModels(settingsSvc.VideoGenWorkflowModels)
 		videoWorkflowRuntime.Start()
 		defer videoWorkflowRuntime.Close()
 		log.Info("video workflow runtime ready",

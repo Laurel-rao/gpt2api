@@ -370,8 +370,14 @@ func (r *Runtime) nodeModelSnapshot(run *Run, node Node, state *NodeRun) (json.R
 	}
 	var providerSnapshot json.RawMessage
 	if node.Type == NodeVideo {
-		if snapshotter, ok := r.config.VideoGenerator.(RuntimeVideoConfigSnapshotter); ok {
-			normalized, err := normalizeVideoProviderSnapshot(snapshotter.VideoConfigSnapshot())
+		var rawSnapshot json.RawMessage
+		if snapshotter, ok := r.config.VideoGenerator.(RuntimeVideoModelConfigSnapshotter); ok {
+			rawSnapshot = snapshotter.VideoConfigSnapshotForModel(run.GraphSnapshot.Settings.VideoModel)
+		} else if snapshotter, ok := r.config.VideoGenerator.(RuntimeVideoConfigSnapshotter); ok {
+			rawSnapshot = snapshotter.VideoConfigSnapshot()
+		}
+		if len(rawSnapshot) > 0 {
+			normalized, err := normalizeVideoProviderSnapshot(rawSnapshot)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -535,7 +541,7 @@ func (r *Runtime) executeImageNode(ctx context.Context, run *Run, node Node, sta
 		if err := r.config.Store.AddAssetReference(ctx, &AssetReference{VersionID: version.ID, UserID: run.UserID, RefType: "run", RefID: run.ID, NodeID: node.ID}, node.ID); err != nil {
 			return nil, fmt.Errorf("%w: add bound asset reference for %s: %v", errRecoverableRuntimePersistence, node.ID, err)
 		}
-		output, _ := json.Marshal(map[string]any{"candidate_version_ids": []string{version.ID}, "selected_version_id": version.ID, "source": "bound_asset"})
+		output, _ := json.Marshal(map[string]any{"candidate_version_ids": []string{version.ID}, "selected_version_id": version.ID, "source": "bound_asset", "prompt": buildNodePrompt(node, incoming, outputs)})
 		return &nodeExecutionResult{VersionID: version.ID, Output: output}, nil
 	}
 	if r.config.ImageGenerator == nil {
@@ -554,8 +560,9 @@ func (r *Runtime) executeImageNode(ctx context.Context, run *Run, node Node, sta
 	if err := r.markProviderSubmitting(ctx, run, node, state); err != nil {
 		return nil, err
 	}
+	prompt := buildNodePrompt(node, incoming, outputs)
 	generated, err := r.config.ImageGenerator.GenerateImage(ctx, ImageGenerationRequest{
-		TaskID: state.ID, UserID: run.UserID, Prompt: buildNodePrompt(node, incoming, outputs), Model: run.GraphSnapshot.Settings.ImageModel,
+		TaskID: state.ID, UserID: run.UserID, Prompt: prompt, Model: run.GraphSnapshot.Settings.ImageModel,
 		Size: imageSizeForAspect(run.GraphSnapshot.Settings.AspectRatio), Count: imageCandidateCount(node), References: references,
 	})
 	if err != nil {
@@ -583,7 +590,7 @@ func (r *Runtime) executeImageNode(ctx context.Context, run *Run, node Node, sta
 	if err != nil {
 		return nil, err
 	}
-	output, _ := json.Marshal(map[string]any{"candidate_version_ids": versionIDs, "selected_version_id": versionIDs[0]})
+	output, _ := json.Marshal(map[string]any{"candidate_version_ids": versionIDs, "selected_version_id": versionIDs[0], "prompt": prompt})
 	await := ""
 	if node.Type == NodeCharacter && run.GraphSnapshot.Settings.CharacterApprovalPolicy == ApprovalManual {
 		await = "characters"
@@ -613,13 +620,15 @@ func (r *Runtime) executeScriptNode(ctx context.Context, run *Run, node Node, st
 	if err := r.markProviderSubmitting(ctx, run, node, state); err != nil {
 		return nil, err
 	}
-	output, cost, err := r.config.TextGenerator.GenerateText(ctx, TextGenerationRequest{Prompt: buildNodePrompt(node, incoming, outputs), Model: run.GraphSnapshot.Settings.TextModel})
+	prompt := buildNodePrompt(node, incoming, outputs)
+	output, cost, err := r.config.TextGenerator.GenerateText(ctx, TextGenerationRequest{Prompt: prompt, Model: run.GraphSnapshot.Settings.TextModel})
 	if err != nil {
 		return nil, err
 	}
 	if !json.Valid(output) {
 		return nil, errors.New("text generator returned invalid JSON")
 	}
+	output = attachPromptToNodeOutput(output, prompt)
 	if cost <= 0 {
 		cost = r.config.TextCredits
 	}
@@ -677,8 +686,9 @@ func (r *Runtime) executeVideoNode(ctx context.Context, run *Run, node Node, sta
 			return nil, fmt.Errorf("persist video submitting state: %w", err)
 		}
 	}
+	prompt := buildNodePrompt(node, incoming, outputs)
 	generated, err := r.config.VideoGenerator.GenerateVideo(ctx, VideoGenerationRequest{
-		Prompt: buildNodePrompt(node, incoming, outputs), Model: run.GraphSnapshot.Settings.VideoModel,
+		Prompt: prompt, Model: run.GraphSnapshot.Settings.VideoModel,
 		AspectRatio: string(run.GraphSnapshot.Settings.AspectRatio), Resolution: string(run.GraphSnapshot.Settings.EffectiveResolution()),
 		DurationSec: SceneDuration, ReferenceURLs: referenceURLs, ProviderTaskID: state.UpstreamTaskID, ProviderConfig: providerConfig,
 		OnSubmitted: func(taskID string, provider json.RawMessage) error {
@@ -712,7 +722,7 @@ func (r *Runtime) executeVideoNode(ctx context.Context, run *Run, node Node, sta
 	if err != nil {
 		return nil, err
 	}
-	output, _ := json.Marshal(map[string]string{"version_id": version.ID})
+	output, _ := json.Marshal(map[string]string{"version_id": version.ID, "prompt": prompt})
 	return &nodeExecutionResult{VersionID: version.ID, Output: output, CreditCost: cost, UpstreamID: generated.TaskID, Media: media}, nil
 }
 
@@ -936,9 +946,7 @@ func (r *Runtime) reconcileNodeResultCommit(userID uint64, commit *NodeResultCom
 		if !selected || node.OutputVersionID != selection.SelectedVersionID {
 			return nil, false
 		}
-		expectedOutput, _ := json.Marshal(map[string]any{
-			"selected_version_id": selection.SelectedVersionID, "candidate_version_ids": candidateIDs,
-		})
+		expectedOutput := characterApprovalOutput(node.Output, selection.SelectedVersionID)
 		if !bytes.Equal(normalizeJSON(node.Output), normalizeJSON(expectedOutput)) {
 			return nil, false
 		}
@@ -1173,6 +1181,43 @@ func buildNodePrompt(node Node, incoming []Edge, outputs map[string]runtimeNodeO
 		prompt += "\n\n上游输入：\n" + strings.Join(contextParts, "\n")
 	}
 	return strings.TrimSpace(prompt)
+}
+
+func attachPromptToNodeOutput(raw json.RawMessage, prompt string) json.RawMessage {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return raw
+	}
+	var object map[string]any
+	if json.Unmarshal(raw, &object) == nil && object != nil {
+		if _, exists := object["prompt"]; !exists {
+			object["prompt"] = prompt
+		}
+		out, err := json.Marshal(object)
+		if err == nil {
+			return out
+		}
+	}
+	out, err := json.Marshal(map[string]any{"prompt": prompt, "result": raw})
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
+func characterApprovalOutput(previous json.RawMessage, selectedVersionID string) json.RawMessage {
+	output := map[string]any{
+		"selected_version_id":   selectedVersionID,
+		"candidate_version_ids": outputVersionIDs(previous),
+	}
+	var previousObject map[string]any
+	if json.Unmarshal(previous, &previousObject) == nil && previousObject != nil {
+		if prompt, _ := previousObject["prompt"].(string); strings.TrimSpace(prompt) != "" {
+			output["prompt"] = strings.TrimSpace(prompt)
+		}
+	}
+	encoded, _ := json.Marshal(output)
+	return encoded
 }
 
 func imageSizeForAspect(ratio AspectRatio) string {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	imagepkg "github.com/432539/gpt2api/internal/image"
+	"github.com/432539/gpt2api/internal/settings"
 	"github.com/432539/gpt2api/internal/textgen"
 	"github.com/432539/gpt2api/internal/upstream/chatgpt"
 	"github.com/432539/gpt2api/internal/usage"
@@ -121,7 +122,8 @@ func normalizeVideoWorkflowJSON(value string) json.RawMessage {
 }
 
 type videoWorkflowVideoGenerator struct {
-	client *videogen.Client
+	client         *videogen.Client
+	configProvider *settings.Service
 }
 
 func (g videoWorkflowVideoGenerator) VideoConfigSnapshot() json.RawMessage {
@@ -132,6 +134,14 @@ func (g videoWorkflowVideoGenerator) VideoConfigSnapshot() json.RawMessage {
 	return raw
 }
 
+func (g videoWorkflowVideoGenerator) VideoConfigSnapshotForModel(model string) json.RawMessage {
+	if g.configProvider == nil {
+		return g.VideoConfigSnapshot()
+	}
+	raw, _ := json.Marshal(taskConfigSnapshotForConfig(g.configProvider.VideoGenConfigForModel(model)))
+	return raw
+}
+
 func (g videoWorkflowVideoGenerator) GenerateVideo(ctx context.Context, request videoworkflow.VideoGenerationRequest) (*videoworkflow.GeneratedVideo, error) {
 	if g.client == nil {
 		return nil, errors.New("video workflow video generator is unavailable")
@@ -139,7 +149,7 @@ func (g videoWorkflowVideoGenerator) GenerateVideo(ctx context.Context, request 
 	if strings.TrimSpace(request.ProviderTaskID) != "" {
 		return g.resumeVideo(ctx, request)
 	}
-	snapshot := g.client.TaskConfigSnapshot()
+	snapshot := g.taskConfigSnapshotForModel(request.Model)
 	if len(request.ProviderConfig) > 0 {
 		if err := json.Unmarshal(request.ProviderConfig, &snapshot); err != nil {
 			return nil, fmt.Errorf("decode video provider snapshot: %w", err)
@@ -170,6 +180,23 @@ func (g videoWorkflowVideoGenerator) GenerateVideo(ctx context.Context, request 
 	return videoWorkflowGeneratedVideo(result)
 }
 
+func (g videoWorkflowVideoGenerator) taskConfigSnapshotForModel(model string) videogen.TaskConfigSnapshot {
+	if g.configProvider != nil {
+		return taskConfigSnapshotForConfig(g.configProvider.VideoGenConfigForModel(model))
+	}
+	if g.client == nil {
+		return videogen.TaskConfigSnapshot{}
+	}
+	return g.client.TaskConfigSnapshot()
+}
+
+func taskConfigSnapshotForConfig(cfg videogen.Config) videogen.TaskConfigSnapshot {
+	return videogen.TaskConfigSnapshot{
+		ChannelType: cfg.ChannelType, BaseURL: cfg.BaseURL, Model: cfg.Model, TimeoutSec: cfg.TimeoutSec,
+		DurationSec: cfg.DurationSec, AspectRatio: cfg.AspectRatio, Resolution: cfg.Resolution, GenerateAudio: cfg.GenerateAudio,
+	}
+}
+
 func videoWorkflowUpstreamModel(requested string, snapshot videogen.TaskConfigSnapshot) string {
 	requested = strings.TrimSpace(requested)
 	switch strings.ToLower(requested) {
@@ -182,12 +209,13 @@ func videoWorkflowUpstreamModel(requested string, snapshot videogen.TaskConfigSn
 
 func validateVideoWorkflowProviderSnapshot(requested string, snapshot videogen.TaskConfigSnapshot) error {
 	model := strings.ToLower(strings.TrimSpace(requested))
-	if !strings.HasPrefix(model, "wan2.7") {
+	requiredChannel := videogen.GuessWorkflowModelChannel(model)
+	if requiredChannel == "" {
 		return nil
 	}
 	channelType := strings.ToLower(strings.TrimSpace(snapshot.ChannelType))
-	if channelType != videogen.ChannelAPIYIWan27 {
-		return fmt.Errorf("video workflow model %q requires provider channel_type %q, got %q", strings.TrimSpace(requested), videogen.ChannelAPIYIWan27, strings.TrimSpace(snapshot.ChannelType))
+	if channelType != requiredChannel {
+		return fmt.Errorf("video workflow model %q requires provider channel_type %q, got %q", strings.TrimSpace(requested), requiredChannel, strings.TrimSpace(snapshot.ChannelType))
 	}
 	return nil
 }
