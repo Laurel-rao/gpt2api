@@ -19,6 +19,8 @@ REMOTE_USER="${GPT2API_REMOTE_USER:-root}"
 REMOTE_PORT="${GPT2API_REMOTE_PORT:-22}"
 REMOTE_DIR="${GPT2API_REMOTE_DIR:-/opt/gpt2api}"
 HTTP_PORT="${GPT2API_HTTP_PORT:-8080}"
+HEALTH_URL="${GPT2API_HEALTH_URL:-http://127.0.0.1:$HTTP_PORT}"
+PUBLIC_URL="${GPT2API_PUBLIC_URL:-http://$REMOTE_HOST:$HTTP_PORT/}"
 RUN_LOCAL_BUILD="${GPT2API_RUN_LOCAL_BUILD:-1}"
 RUN_REMOTE_TESTS="${GPT2API_RUN_REMOTE_TESTS:-1}"
 
@@ -96,6 +98,10 @@ usage() {
 
 追加参数:
   传入文件路径后，会在默认 FILES 基础上额外同步这些文件。
+
+环境变量:
+  GPT2API_HEALTH_URL 可覆盖健康检查 origin，例如 https://ai.reeko.net.cn:8000
+  GPT2API_PUBLIC_URL 可覆盖发布完成后显示的访问地址
 
 示例:
   bash deploy/quick-remote-sync.sh
@@ -215,15 +221,9 @@ test -f "$env_file" || {
   exit 1
 }
 
-mysql_root_password=''
-mysql_password=''
-while IFS='=' read -r name value; do
-  case "$name" in
-    MYSQL_ROOT_PASSWORD) mysql_root_password="$value" ;;
-    MYSQL_PASSWORD) mysql_password="$value" ;;
-  esac
-done < <(
-  docker compose --env-file "$env_file" -f - config --environment <<'COMPOSE_YAML'
+resolved_config="$(mktemp)"
+trap 'rm -f "$resolved_config"' EXIT
+docker compose --env-file "$env_file" -f - config --format json >"$resolved_config" <<'COMPOSE_YAML'
 services:
   production-secret-preflight:
     image: scratch
@@ -231,7 +231,28 @@ services:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD-}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD-}
 COMPOSE_YAML
+
+python_bin="$(command -v python3 || command -v python || true)"
+if [ -z "$python_bin" ] && [ -x /usr/libexec/platform-python ]; then
+  python_bin=/usr/libexec/platform-python
+fi
+[ -n "$python_bin" ] || {
+  echo '[quick-sync] ERROR: 远端缺少 Python，无法解析 Compose 预检结果' >&2
+  exit 1
+}
+mapfile -t mysql_passwords < <("$python_bin" - "$resolved_config" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as fh:
+    config = json.load(fh)
+environment = config["services"]["production-secret-preflight"].get("environment", {})
+print(environment.get("MYSQL_ROOT_PASSWORD", ""))
+print(environment.get("MYSQL_PASSWORD", ""))
+PY
 )
+mysql_root_password="${mysql_passwords[0]:-}"
+mysql_password="${mysql_passwords[1]:-}"
 
 is_unsafe_mysql_password() {
   local value normalized byte_length
@@ -301,8 +322,8 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d --wait 
 docker compose --env-file deploy/.env -f deploy/docker-compose.yml restart nginx
 healthy=0
 for attempt in 1 2 3 4 5; do
-  if curl -fsS "http://127.0.0.1:$HTTP_PORT/healthz" \
-    && curl -fsS "http://127.0.0.1:$HTTP_PORT/readyz"; then
+  if curl -fsS "${HEALTH_URL%/}/healthz" \
+    && curl -fsS "${HEALTH_URL%/}/readyz"; then
     healthy=1
     break
   fi
@@ -327,7 +348,7 @@ main() {
   run_local_checks
   sync_sources
   remote_deploy
-  log "发布完成: http://${REMOTE_HOST}:${HTTP_PORT}/"
+  log "发布完成: $PUBLIC_URL"
 }
 
 main "$@"

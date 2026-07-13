@@ -69,7 +69,8 @@ func TestQuickSyncPreflightsResolvedMySQLSecretsWithoutSourcingDeployEnv(t *test
 	script := readRepositoryFile(t, "deploy/quick-remote-sync.sh")
 	for _, required := range []string{
 		`"internal/billing/engine.go"`,
-		`docker compose --env-file "$env_file" -f - config --environment`,
+		`docker compose --env-file "$env_file" -f - config --format json`,
+		`config["services"]["production-secret-preflight"]`,
 		`is_unsafe_mysql_password "$mysql_root_password"`,
 		`is_unsafe_mysql_password "$mysql_password"`,
 		`[ "$mysql_root_password" = "$mysql_password" ]`,
