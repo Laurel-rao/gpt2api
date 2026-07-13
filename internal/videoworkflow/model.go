@@ -121,11 +121,13 @@ type Node struct {
 }
 
 type Edge struct {
-	ID         string `json:"id"`
-	Source     string `json:"source"`
-	SourcePort string `json:"source_port"`
-	Target     string `json:"target"`
-	TargetPort string `json:"target_port"`
+	ID         string     `json:"id"`
+	Source     string     `json:"source"`
+	SourcePort string     `json:"source_port"`
+	Target     string     `json:"target"`
+	TargetPort string     `json:"target_port"`
+	Curve      *Position  `json:"curve,omitempty"`
+	Route      []Position `json:"route,omitempty"`
 }
 
 type Group struct {

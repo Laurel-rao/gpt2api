@@ -85,6 +85,8 @@ export interface VideoWorkflowEdge {
   source_port: string
   target: string
   target_port: string
+  curve?: VideoWorkflowPosition
+  route?: VideoWorkflowPosition[]
 }
 
 export interface VideoWorkflowGroup {

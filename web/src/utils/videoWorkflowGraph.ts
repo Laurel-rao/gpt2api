@@ -514,13 +514,31 @@ export function migrateVideoWorkflowGraph(value: unknown): VideoWorkflowGraph {
 
   const edges: VideoWorkflowEdge[] = (Array.isArray(raw.edges) ? raw.edges : [])
     .filter(isRecord)
-    .map((edge, index) => ({
-      id: typeof edge.id === 'string' && edge.id ? edge.id : `edge_${index + 1}`,
-      source: String(edge.source || ''),
-      source_port: String(edge.source_port || ''),
-      target: String(edge.target || ''),
-      target_port: String(edge.target_port || ''),
-    }))
+    .map((edge, index) => {
+      const curve = isRecord(edge.curve)
+        && typeof edge.curve.x === 'number'
+        && typeof edge.curve.y === 'number'
+        && Number.isFinite(edge.curve.x)
+        && Number.isFinite(edge.curve.y)
+        ? { x: edge.curve.x, y: edge.curve.y }
+        : undefined
+      const route = Array.isArray(edge.route)
+        ? edge.route.filter((point) => isRecord(point)
+          && typeof point.x === 'number' && Number.isFinite(point.x)
+          && typeof point.y === 'number' && Number.isFinite(point.y))
+          .slice(0, 8)
+          .map((point) => ({ x: point.x, y: point.y }))
+        : []
+      return {
+        id: typeof edge.id === 'string' && edge.id ? edge.id : `edge_${index + 1}`,
+        source: String(edge.source || ''),
+        source_port: String(edge.source_port || ''),
+        target: String(edge.target || ''),
+        target_port: String(edge.target_port || ''),
+        ...(curve ? { curve } : {}),
+        ...(route.length ? { route } : {}),
+      }
+    })
   if (!edges.some((edge) => edge.source === timeline!.id && edge.target === compose!.id)) {
     edges.push({
       id: 'timeline-compose',

@@ -94,6 +94,7 @@ import {
   videoWorkflowNodePreviewURL,
   videoWorkflowNodeRunOutputVersionID,
 } from '@/utils/videoWorkflowGraph'
+import { autoLayoutVideoWorkflowGraph, updateVideoWorkflowGroupBounds } from '@/utils/videoWorkflowLayout'
 import { SerialVideoWorkflowOperationQueue, runConfirmedVideoWorkflowMutation } from '@/utils/videoWorkflowAsync'
 import {
   VIDEO_WORKFLOW_TRANSFER_MAX_BYTES,
@@ -197,6 +198,7 @@ let pollingGeneration = 0
 let workspaceGeneration = 0
 let mediaPreviewGeneration = 0
 let componentUnmounted = false
+let edgeCurveHistorySnapshot: VideoWorkflowGraph | null = null
 
 const {
   fitView,
@@ -472,7 +474,8 @@ function syncFlow() {
     target: edge.target,
     sourceHandle: edge.source_port,
     targetHandle: edge.target_port,
-    type: 'smoothstep',
+    type: 'adjustable',
+    data: { curve: edge.curve, route: edge.route },
     selected: selectedEdgeIDs.value.includes(edge.id),
     animated: activeRunNodeMap.value.get(edge.target)?.status === 'running',
   }))
@@ -482,6 +485,26 @@ function selectEdge(edgeID: string) {
   selectedEdgeIDs.value = [edgeID]
   selectedNodeIDs.value = []
   selectedNodeID.value = ''
+  syncFlow()
+}
+
+function onEdgeCurveChangeStart() {
+  if (!edgeCurveHistorySnapshot) edgeCurveHistorySnapshot = cloneWorkflowGraph(graph.value)
+}
+
+function onEdgeCurveChange(edgeID: string, curve: { x: number; y: number }) {
+  const edge = graph.value.edges.find((item) => item.id === edgeID)
+  if (!edge) return
+  edge.curve = curve.x === 0 && curve.y === 0 ? undefined : { ...curve }
+  syncFlow()
+}
+
+function onEdgeCurveChangeEnd(_edgeID: string, changed: boolean) {
+  const snapshot = edgeCurveHistorySnapshot
+  edgeCurveHistorySnapshot = null
+  if (!snapshot || !changed) return
+  pushUndo(snapshot)
+  markDirty()
   syncFlow()
 }
 
@@ -980,7 +1003,7 @@ function pasteNodes(offset = 28) {
     idMap.set(node.id, id)
     return { ...node, id, title: `${nodeTitle(node)} 副本`, position: { x: node.position.x + offset, y: node.position.y + offset }, config: { ...node.config, title: `${nodeTitle(node)} 副本` }, status: 'idle' as const }
   })
-  const edges = clipboard.value.edges.map((edge) => ({ ...edge, id: `edge_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`, source: idMap.get(edge.source)!, target: idMap.get(edge.target)! }))
+  const edges = clipboard.value.edges.map((edge) => ({ ...edge, route: undefined, id: `edge_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`, source: idMap.get(edge.source)!, target: idMap.get(edge.target)! }))
   commitGraph((target) => { target.nodes.push(...clones); target.edges.push(...edges) })
   selectedNodeIDs.value = clones.map((node) => node.id)
   selectedNodeID.value = clones.at(-1)?.id || ''
@@ -1056,6 +1079,8 @@ function onNodeDragStop(event: NodeDragEvent) {
       const node = target.nodes.find((entry) => entry.id === item.id)
       if (node && !node.locked) node.position = { ...item.position }
     }
+    clearAutoEdgeRoutes(target)
+    updateVideoWorkflowGroupBounds(target)
   })
   alignmentGuides.x = null
   alignmentGuides.y = null
@@ -1142,7 +1167,7 @@ function onEdgeUpdate(event: EdgeUpdateEvent) {
   if (error) return ElMessage.warning(error)
   commitGraph((target) => {
     const edge = target.edges.find((item) => item.id === event.edge.id)
-    if (edge) Object.assign(edge, candidate)
+    if (edge) { Object.assign(edge, candidate); edge.route = undefined }
   })
 }
 
@@ -1153,31 +1178,34 @@ function removeSelectedEdges() {
 }
 
 function autoLayout() {
-  const columns: Record<string, number> = { story_brief: 0, character: 1, script: 2, scene: 3, background: 4, video: 5, timeline: 6, compose: 7 }
-  const rows = new Map<number, number>()
-  commitGraph((target) => {
-    for (const node of target.nodes) {
-      const column = columns[node.type] ?? 3
-      const row = rows.get(column) || 0
-      node.position = { x: 60 + column * 260, y: 80 + row * 205 }
-      rows.set(column, row + 1)
-    }
-  })
+  commitGraph(() => { graph.value = autoLayoutVideoWorkflowGraph(graph.value) })
   nextTick(() => fitView({ padding: .12, duration: 260 }))
+}
+
+function clearAutoEdgeRoutes(target: VideoWorkflowGraph) {
+  target.edges.forEach((edge) => { edge.route = undefined })
 }
 
 function alignSelected(axis: 'x' | 'y') {
   const nodes = graph.value.nodes.filter((node) => selectedNodeIDs.value.includes(node.id))
   if (nodes.length < 2) return
   const value = Math.min(...nodes.map((node) => node.position[axis]))
-  commitGraph((target) => target.nodes.filter((node) => selectedNodeIDs.value.includes(node.id)).forEach((node) => { node.position[axis] = value }))
+  commitGraph((target) => {
+    target.nodes.filter((node) => selectedNodeIDs.value.includes(node.id)).forEach((node) => { node.position[axis] = value })
+    clearAutoEdgeRoutes(target)
+    updateVideoWorkflowGroupBounds(target)
+  })
 }
 
 function distributeSelected(axis: 'x' | 'y') {
   const nodes = graph.value.nodes.filter((node) => selectedNodeIDs.value.includes(node.id)).sort((a, b) => a.position[axis] - b.position[axis])
   if (nodes.length < 3) return
   const gap = (nodes.at(-1)!.position[axis] - nodes[0].position[axis]) / (nodes.length - 1)
-  commitGraph((target) => nodes.forEach((source, index) => { const node = target.nodes.find((item) => item.id === source.id); if (node) node.position[axis] = nodes[0].position[axis] + gap * index }))
+  commitGraph((target) => {
+    nodes.forEach((source, index) => { const node = target.nodes.find((item) => item.id === source.id); if (node) node.position[axis] = nodes[0].position[axis] + gap * index })
+    clearAutoEdgeRoutes(target)
+    updateVideoWorkflowGroupBounds(target)
+  })
 }
 
 function toggleLock() {
@@ -1187,7 +1215,11 @@ function toggleLock() {
 }
 
 function toggleCollapse() {
-  commitGraph((target) => target.nodes.filter((node) => selectedNodeIDs.value.includes(node.id)).forEach((node) => { node.collapsed = !node.collapsed }))
+  commitGraph((target) => {
+    target.nodes.filter((node) => selectedNodeIDs.value.includes(node.id)).forEach((node) => { node.collapsed = !node.collapsed })
+    clearAutoEdgeRoutes(target)
+    updateVideoWorkflowGroupBounds(target)
+  })
 }
 
 function groupSelected() {
@@ -1781,12 +1813,16 @@ function handleCanvasKeydown(event: KeyboardEvent) {
   if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key) && selectedNodeIDs.value.length) {
     event.preventDefault()
     const amount = event.shiftKey ? 10 : 1
-    commitGraph((targetGraph) => targetGraph.nodes.filter((node) => selectedNodeIDs.value.includes(node.id) && !node.locked).forEach((node) => {
-      if (event.key === 'ArrowLeft') node.position.x -= amount
-      if (event.key === 'ArrowRight') node.position.x += amount
-      if (event.key === 'ArrowUp') node.position.y -= amount
-      if (event.key === 'ArrowDown') node.position.y += amount
-    }))
+    commitGraph((targetGraph) => {
+      targetGraph.nodes.filter((node) => selectedNodeIDs.value.includes(node.id) && !node.locked).forEach((node) => {
+        if (event.key === 'ArrowLeft') node.position.x -= amount
+        if (event.key === 'ArrowRight') node.position.x += amount
+        if (event.key === 'ArrowUp') node.position.y -= amount
+        if (event.key === 'ArrowDown') node.position.y += amount
+      })
+      clearAutoEdgeRoutes(targetGraph)
+      updateVideoWorkflowGroupBounds(targetGraph)
+    })
   }
 }
 
@@ -2005,6 +2041,9 @@ onBeforeUnmount(() => {
           @connect-end="onConnectEnd"
           @edge-update="onEdgeUpdate"
           @edge-click="selectEdge"
+          @edge-curve-change-start="onEdgeCurveChangeStart"
+          @edge-curve-change="onEdgeCurveChange"
+          @edge-curve-change-end="onEdgeCurveChangeEnd"
           @viewport-change="updateCanvasViewport"
           @minimap-navigate="navigateFromMinimap"
           @preview-media="openMediaPreview"

@@ -281,6 +281,21 @@ describe('video workflow graph migration', () => {
     expect(migrateVideoWorkflowGraph(graph).settings.video_model).toBe('provider-video-model')
   })
 
+  it('preserves finite edge layout data and drops invalid values', () => {
+    const graph = createStarterVideoWorkflowGraph() as any
+    graph.edges[0].curve = { x: 120, y: -80 }
+    graph.edges[0].route = [{ x: 240, y: 80 }, { x: 320, y: 80 }]
+    graph.edges[1].curve = { x: Number.NaN, y: 10 }
+    graph.edges[1].route = [{ x: null, y: 10 }]
+
+    const migrated = migrateVideoWorkflowGraph(graph)
+
+    expect(migrated.edges[0].curve).toEqual({ x: 120, y: -80 })
+    expect(migrated.edges[0].route).toEqual([{ x: 240, y: 80 }, { x: 320, y: 80 }])
+    expect(migrated.edges[1].curve).toBeUndefined()
+    expect(migrated.edges[1].route).toBeUndefined()
+  })
+
   it('restores missing protected system nodes and their connection', () => {
     const graph = createStarterVideoWorkflowGraph() as any
     graph.schema_version = 1

@@ -33,7 +33,8 @@ import {
   Unlock,
 } from '@element-plus/icons-vue'
 import VideoWorkflowNodeCard from './VideoWorkflowNodeCard.vue'
-import type { VideoWorkflowNode } from '@/api/videoWorkflow'
+import VideoWorkflowBezierEdge from './VideoWorkflowBezierEdge.vue'
+import type { VideoWorkflowNode, VideoWorkflowPosition } from '@/api/videoWorkflow'
 
 type CanvasTool = 'select' | 'pan' | 'connect'
 type FlowData = { node?: VideoWorkflowNode; zone?: { title: string; subtitle: string; enabled?: boolean } }
@@ -86,6 +87,9 @@ const emit = defineEmits<{
   'connect-end': [event?: MouseEvent]
   'edge-update': [event: EdgeUpdateEvent]
   'edge-click': [edgeID: string]
+  'edge-curve-change-start': [edgeID: string]
+  'edge-curve-change': [edgeID: string, curve: VideoWorkflowPosition]
+  'edge-curve-change-end': [edgeID: string, changed: boolean]
   'viewport-change': [viewport: ViewportTransform]
   'minimap-navigate': [position: { x: number; y: number }]
   'create-connected-node': [type: string]
@@ -279,6 +283,15 @@ function emitNodeClick(payload: NodeMouseEvent) {
     >
       <template #node-zone="{ data }"><section :class="['flow-zone', { disabled: data.zone.enabled === false }]"><header><b>{{ data.zone.title }}</b><span>{{ data.zone.subtitle }}</span></header></section></template>
       <template #node-workflow="{ data, selected }"><VideoWorkflowNodeCard v-if="data.node" :node="data.node" :selected="selected" @preview-media="emit('preview-media', $event)" /></template>
+      <template #edge-adjustable="edgeProps">
+        <VideoWorkflowBezierEdge
+          v-bind="edgeProps"
+          :zoom="zoom"
+          @curve-change-start="emit('edge-curve-change-start', edgeProps.id)"
+          @curve-change="emit('edge-curve-change', edgeProps.id, $event)"
+          @curve-change-end="emit('edge-curve-change-end', edgeProps.id, $event)"
+        />
+      </template>
     </VueFlow>
 
     <i v-if="alignmentGuides.x !== null" class="alignment-guide vertical" :style="{ left: `${alignmentGuides.x}px` }" />

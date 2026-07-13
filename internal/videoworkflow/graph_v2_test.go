@@ -187,6 +187,8 @@ func TestSemanticGraphHashIgnoresLayout(t *testing.T) {
 	}
 	graph.Nodes[0].Position.X += 900
 	graph.Nodes[0].Collapsed = true
+	graph.Edges[0].Curve = &Position{X: 120, Y: -80}
+	graph.Edges[0].Route = []Position{{X: 240, Y: 80}, {X: 320, Y: 80}}
 	got, err := SemanticGraphHash(graph)
 	if err != nil {
 		t.Fatal(err)
