@@ -26,7 +26,7 @@ import type {
   VideoWorkflowNodeRun,
   VideoWorkflowNodeStatus,
 } from '@/api/videoWorkflow'
-import { nodeStatusLabel, videoWorkflowNodePreviewURL } from '@/utils/videoWorkflowGraph'
+import { VIDEO_WORKFLOW_NODE_CATALOG, nodeStatusLabel, videoWorkflowNodePreviewURL } from '@/utils/videoWorkflowGraph'
 
 type InspectorTab = 'upstream' | 'status' | 'history' | 'output' | 'settings'
 
@@ -112,9 +112,19 @@ const imageNode = computed(() => Boolean(props.node && ['background', 'image'].i
 const videoNode = computed(() => props.node?.type === 'video')
 const systemNode = computed(() => ['timeline', 'compose'].includes(props.node?.type || ''))
 const selectedHistoryEntry = computed(() => props.history.find((entry) => entry.run_id === selectedHistoryRunID.value) || null)
-const effectiveOutput = computed(() => selectedHistoryEntry.value?.node_run.output || props.node?.output || {})
+const effectiveOutput = computed(() => {
+  const output = selectedHistoryEntry.value?.node_run.output || props.node?.output || {}
+  if (!props.node || !output || typeof output !== 'object' || Array.isArray(output)) return output
+  if ('prompt' in output || !String(props.node.config?.prompt || '').trim()) return output
+  return { prompt: props.node.config.prompt, ...output }
+})
+const effectiveOutputObject = computed<Record<string, any>>(() => {
+  const output = effectiveOutput.value
+  if (!output || typeof output !== 'object' || Array.isArray(output)) return {}
+  return output
+})
 const previewURL = computed(() => selectedHistoryEntry.value
-  ? String(effectiveOutput.value.preview_url || effectiveOutput.value.url || effectiveOutput.value.output_url || '')
+  ? String(effectiveOutputObject.value.preview_url || effectiveOutputObject.value.url || effectiveOutputObject.value.output_url || '')
   : videoWorkflowNodePreviewURL(props.node))
 const relatedAsset = computed(() => props.assets.find((asset) => asset.id === props.node?.config?.asset_id))
 const versions = computed<VideoAssetVersion[]>(() => {
@@ -173,6 +183,10 @@ function statusLabel(status?: VideoWorkflowNodeStatus) {
   return status === 'stale' ? '需更新' : nodeStatusLabel(status)
 }
 
+function nodeTypeLabel(type?: string) {
+  return VIDEO_WORKFLOW_NODE_CATALOG.find((item) => item.type === type)?.label || type || '节点'
+}
+
 function outputLabel(key: string) {
   return ({
     summary: '摘要', prompt: '提示词', image_prompt: '图片提示词', video_prompt: '视频提示词',
@@ -220,7 +234,7 @@ function applyCrop() {
   <aside class="workflow-inspector" aria-label="节点检查器">
     <template v-if="node">
       <header class="inspector-header">
-        <div><strong>{{ node.title || node.config?.title || '节点设置' }}</strong><span>{{ node.type }} · {{ node.id }}</span></div>
+        <div><strong>{{ node.title || node.config?.title || '节点设置' }}</strong><span>{{ nodeTypeLabel(node.type) }} · {{ node.id }}</span></div>
         <button title="关闭检查器" aria-label="关闭检查器" @click="emit('close')"><Close /></button>
       </header>
 
@@ -378,7 +392,7 @@ function applyCrop() {
           </div>
 
           <div class="parameter-list">
-            <div><span>节点类型</span><code>{{ node.type }}</code></div>
+            <div><span>节点类型</span><b>{{ nodeTypeLabel(node.type) }}</b></div>
             <div v-if="node.duration_seconds || node.config?.duration_seconds"><span>片段时长</span><b>{{ node.duration_seconds || node.config.duration_seconds }} 秒</b></div>
             <div v-if="['video', 'compose'].includes(node.type)"><span>输出帧率</span><b>30 fps</b></div>
             <div v-if="node.type === 'timeline'"><span>片段数量</span><b>{{ node.config?.clips?.length || 0 }}</b></div>
