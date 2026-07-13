@@ -110,18 +110,19 @@ type Client struct {
 }
 
 type Options struct {
-	Model             string
-	ModelID           string
-	Prompt            string
-	Images            []ImageInput
-	ReferenceURL      string
-	ReferenceVideoURL string
-	DurationSec       int
-	AspectRatio       string
-	Resolution        string
-	GenerateAudio     *bool
-	ExtraParams       map[string]any
-	OnProgress        func(Result)
+	Model              string
+	ModelID            string
+	Prompt             string
+	Images             []ImageInput
+	ReferenceURL       string
+	ReferenceVideoURL  string
+	ReferenceVideoURLs []string
+	DurationSec        int
+	AspectRatio        string
+	Resolution         string
+	GenerateAudio      *bool
+	ExtraParams        map[string]any
+	OnProgress         func(Result)
 	// OnSubmitted 在创建接口返回 task_id 后、首次轮询前同步执行。
 	// 返回错误会中止轮询，供调用方先持久化 task_id，避免进程重启后重复提交。
 	OnSubmitted func(Result) error
@@ -160,6 +161,12 @@ type ProbeModel struct {
 	Type  string `json:"type"`
 	Label string `json:"label"`
 	Value string `json:"value"`
+}
+
+type WorkflowModel struct {
+	ChannelType string `json:"channel_type"`
+	Value       string `json:"value"`
+	Label       string `json:"label"`
 }
 
 type Balance struct {
@@ -460,6 +467,9 @@ func (c *Client) generateWithConfig(ctx context.Context, cfg Config, opt Options
 	if strings.TrimSpace(opt.Prompt) == "" {
 		return nil, errors.New("prompt required")
 	}
+	if err := validateReferenceVideosForChannel(cfg, opt); err != nil {
+		return nil, err
+	}
 	ctx, cancel := ensureTimeout(ctx, time.Duration(cfg.TimeoutSec)*time.Second)
 	defer cancel()
 
@@ -497,8 +507,12 @@ func (c *Client) generateWithConfig(ctx context.Context, cfg Config, opt Options
 	if strings.TrimSpace(opt.ReferenceURL) != "" {
 		payload["reference_image_url"] = strings.TrimSpace(opt.ReferenceURL)
 	}
-	if strings.TrimSpace(opt.ReferenceVideoURL) != "" {
-		payload["reference_video_url"] = strings.TrimSpace(opt.ReferenceVideoURL)
+	referenceVideoURLs := referenceVideoURLs(opt)
+	if len(referenceVideoURLs) > 0 {
+		payload["reference_video_url"] = referenceVideoURLs[0]
+		if len(referenceVideoURLs) > 1 {
+			payload["reference_video_urls"] = referenceVideoURLs
+		}
 	}
 
 	var created generateResp
@@ -733,7 +747,7 @@ func (c *Client) apiyiPayload(cfg Config, opt Options, model string) map[string]
 			"role":      "reference_image",
 		})
 	}
-	if url := strings.TrimSpace(opt.ReferenceVideoURL); url != "" {
+	for _, url := range referenceVideoURLs(opt) {
 		content = append(content, map[string]any{
 			"type":      "video_url",
 			"video_url": map[string]any{"url": url},
@@ -855,13 +869,7 @@ func apiyiWanMedia(opt Options, model string, channelType string) []map[string]a
 		mediaType = "first_frame"
 	}
 	limit := dashScopeMediaLimit(channelType, model)
-	media := make([]map[string]any, 0, len(opt.Images)+1)
-	if url := strings.TrimSpace(opt.ReferenceVideoURL); url != "" {
-		return []map[string]any{{
-			"type": "reference_video",
-			"url":  url,
-		}}
-	}
+	media := make([]map[string]any, 0, limit)
 	for _, img := range opt.Images {
 		url := strings.TrimSpace(img.URL)
 		if url == "" {
@@ -884,11 +892,22 @@ func apiyiWanMedia(opt Options, model string, channelType string) []map[string]a
 			"url":  url,
 		})
 	}
+	if mediaType != "first_frame" && supportsDashScopeReferenceVideo(channelType) {
+		for _, url := range referenceVideoURLs(opt) {
+			if len(media) >= limit {
+				return media
+			}
+			media = append(media, map[string]any{
+				"type": "reference_video",
+				"url":  url,
+			})
+		}
+	}
 	return media
 }
 
 func hasWanMedia(opt Options) bool {
-	if strings.TrimSpace(opt.ReferenceVideoURL) != "" {
+	if len(referenceVideoURLs(opt)) > 0 {
 		return true
 	}
 	if strings.TrimSpace(opt.ReferenceURL) != "" {
@@ -900,6 +919,46 @@ func hasWanMedia(opt Options) bool {
 		}
 	}
 	return false
+}
+
+func referenceVideoURLs(opt Options) []string {
+	out := make([]string, 0, len(opt.ReferenceVideoURLs)+1)
+	seen := map[string]struct{}{}
+	add := func(url string) {
+		url = strings.TrimSpace(url)
+		if url == "" {
+			return
+		}
+		if _, ok := seen[url]; ok {
+			return
+		}
+		seen[url] = struct{}{}
+		out = append(out, url)
+	}
+	add(opt.ReferenceVideoURL)
+	for _, url := range opt.ReferenceVideoURLs {
+		add(url)
+	}
+	return out
+}
+
+func supportsDashScopeReferenceVideo(channelType string) bool {
+	return normalizeChannelType(channelType) == ChannelAPIYIWan27
+}
+
+func validateReferenceVideosForChannel(cfg Config, opt Options) error {
+	if len(referenceVideoURLs(opt)) == 0 {
+		return nil
+	}
+	switch normalizeChannelType(cfg.ChannelType) {
+	case ChannelAPIYIHappyHorse:
+		return errors.New("HappyHorse does not support reference videos")
+	case ChannelAPIYIWan27:
+		if isDashScopeImageModel(defaultString(firstNonEmpty(opt.ModelID, opt.Model, cfg.Model), defaultModelForChannel(cfg.ChannelType))) {
+			return errors.New("wan2.7-i2v does not support reference videos")
+		}
+	}
+	return nil
 }
 
 func isDashScopeTextModel(model string) bool {
@@ -1638,6 +1697,37 @@ func apiyiHappyHorseModels() []Model {
 		{ID: apiyiHappyHorseDefaultModel, Name: "API易 HappyHorse 参考图生视频", Type: "video"},
 		{ID: apiyiHappyHorseTextModel, Name: "API易 HappyHorse 文生视频", Type: "video"},
 		{ID: apiyiHappyHorseImageModel, Name: "API易 HappyHorse 图生视频", Type: "video"},
+	}
+}
+
+func DefaultWorkflowModels() []WorkflowModel {
+	return []WorkflowModel{{ChannelType: ChannelAPIYIWan27, Value: apiyiWanDefaultModel, Label: "API易 Wan2.7 参考图生视频"}}
+}
+
+func BuiltinWorkflowModelsForChannel(channelType string) []WorkflowModel {
+	models := apiYIModelsForChannel(channelType)
+	out := make([]WorkflowModel, 0, len(models))
+	for _, model := range models {
+		out = append(out, WorkflowModel{
+			ChannelType: normalizeChannelType(channelType),
+			Value:       strings.TrimSpace(model.ID),
+			Label:       strings.TrimSpace(model.Name),
+		})
+	}
+	return out
+}
+
+func GuessWorkflowModelChannel(model string) string {
+	model = strings.ToLower(strings.TrimSpace(model))
+	switch {
+	case strings.HasPrefix(model, "wan2.7-"):
+		return ChannelAPIYIWan27
+	case strings.HasPrefix(model, "happyhorse-"):
+		return ChannelAPIYIHappyHorse
+	case strings.HasPrefix(model, "doubao-seedance-2-0-"):
+		return ChannelAPIYISeedance
+	default:
+		return ""
 	}
 }
 

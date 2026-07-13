@@ -338,6 +338,17 @@ export interface PlayVideoChannel {
   type: 'echoon' | 'apiyi_seedance2' | 'apiyi_wan27' | 'apiyi_happyhorse' | string
   name: string
   enabled?: boolean
+  limits?: {
+    max_reference_images?: number
+    max_reference_videos?: number
+    max_reference_media?: number
+    max_image_bytes?: number
+    max_video_bytes?: number
+    supports_reference_video?: boolean
+    min_duration_sec?: number
+    max_duration_sec?: number
+    max_duration_with_reference_video_sec?: number
+  }
 }
 
 export interface PlayVideoState {
@@ -350,6 +361,8 @@ export interface PlayVideoState {
   model_id?: string
   image_url?: string
   video_url?: string
+  image_urls?: string[]
+  video_urls?: string[]
   result_url?: string
   error?: string
   created_at: string
@@ -376,6 +389,8 @@ export async function startPlayVideo(payload: {
   duration?: number
   image?: File | null
   video?: File | null
+  images?: File[]
+  videos?: File[]
 }): Promise<PlayVideoState> {
   const token = localStorage.getItem('gpt2api.access') || ''
   const fd = new FormData()
@@ -385,8 +400,10 @@ export async function startPlayVideo(payload: {
   if (payload.ratio) fd.append('ratio', payload.ratio)
   if (payload.resolution) fd.append('resolution', payload.resolution)
   if (payload.duration) fd.append('duration', String(payload.duration))
-  if (payload.image) fd.append('image', payload.image, payload.image.name)
-  if (payload.video) fd.append('video', payload.video, payload.video.name)
+  const images = payload.images?.length ? payload.images : payload.image ? [payload.image] : []
+  const videos = payload.videos?.length ? payload.videos : payload.video ? [payload.video] : []
+  images.forEach((file) => fd.append('image', file, file.name))
+  videos.forEach((file) => fd.append('video', file, file.name))
   const resp = await fetch('/api/me/playground/video', {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },

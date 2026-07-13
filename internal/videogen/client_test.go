@@ -396,22 +396,25 @@ func TestAPIYIGeneratePayloadReferenceVideo(t *testing.T) {
 
 	client := NewClient(Config{ChannelType: ChannelAPIYISeedance, BaseURL: srv.URL, APIKey: "test-key"})
 	if _, err := client.Generate(context.Background(), Options{
-		Prompt:            "参考视频生成新视频",
-		ReferenceVideoURL: "https://example.com/ref.mp4",
+		Prompt:             "参考视频生成新视频",
+		ReferenceVideoURLs: []string{"https://example.com/ref1.mp4", "https://example.com/ref2.mp4", "https://example.com/ref3.mp4"},
 	}); err != nil {
 		t.Fatalf("Generate error: %v", err)
 	}
 	content, ok := createBody["content"].([]any)
-	if !ok || len(content) != 2 {
+	if !ok || len(content) != 4 {
 		t.Fatalf("unexpected content: %#v", createBody["content"])
 	}
-	video, _ := content[1].(map[string]any)
-	if video["type"] != "video_url" || video["role"] != "reference_video" {
-		t.Fatalf("unexpected video content: %#v", video)
-	}
-	videoURL, _ := video["video_url"].(map[string]any)
-	if videoURL["url"] != "https://example.com/ref.mp4" {
-		t.Fatalf("unexpected video_url content: %#v", videoURL)
+	for i := 1; i < 4; i++ {
+		video, _ := content[i].(map[string]any)
+		if video["type"] != "video_url" || video["role"] != "reference_video" {
+			t.Fatalf("unexpected video content[%d]: %#v", i, video)
+		}
+		videoURL, _ := video["video_url"].(map[string]any)
+		want := "https://example.com/ref" + strconv.Itoa(i) + ".mp4"
+		if videoURL["url"] != want {
+			t.Fatalf("unexpected video_url content[%d]: %#v want %s", i, videoURL, want)
+		}
 	}
 }
 
@@ -585,8 +588,9 @@ func TestAPIYIWanGeneratePayloadReferenceVideo(t *testing.T) {
 
 	client := NewClient(Config{ChannelType: ChannelAPIYIWan27, BaseURL: srv.URL, APIKey: "test-key"})
 	if _, err := client.Generate(context.Background(), Options{
-		Prompt:            "参考视频生成新视频",
-		ReferenceVideoURL: "https://example.com/ref.mp4",
+		Prompt:             "参考视频生成新视频",
+		Images:             []ImageInput{{URL: "https://example.com/ref1.png"}, {URL: "https://example.com/ref2.png"}},
+		ReferenceVideoURLs: []string{"https://example.com/ref1.mp4", "https://example.com/ref2.mp4", "https://example.com/ref3.mp4", "https://example.com/ref4.mp4"},
 	}); err != nil {
 		t.Fatalf("Generate error: %v", err)
 	}
@@ -595,12 +599,32 @@ func TestAPIYIWanGeneratePayloadReferenceVideo(t *testing.T) {
 	}
 	input, _ := createBody["input"].(map[string]any)
 	media, ok := input["media"].([]any)
-	if !ok || len(media) != 1 {
+	if !ok || len(media) != 5 {
 		t.Fatalf("unexpected media: %#v", input["media"])
 	}
-	firstMedia, _ := media[0].(map[string]any)
-	if firstMedia["type"] != "reference_video" || firstMedia["url"] != "https://example.com/ref.mp4" {
-		t.Fatalf("unexpected media item: %#v", firstMedia)
+	for i := 0; i < 2; i++ {
+		item, _ := media[i].(map[string]any)
+		if item["type"] != "reference_image" {
+			t.Fatalf("media[%d] should be reference_image: %#v", i, item)
+		}
+	}
+	for i := 2; i < 5; i++ {
+		item, _ := media[i].(map[string]any)
+		want := "https://example.com/ref" + strconv.Itoa(i-1) + ".mp4"
+		if item["type"] != "reference_video" || item["url"] != want {
+			t.Fatalf("unexpected media[%d]: %#v want %s", i, item, want)
+		}
+	}
+}
+
+func TestAPIYIHappyHorseRejectsReferenceVideo(t *testing.T) {
+	client := NewClient(Config{ChannelType: ChannelAPIYIHappyHorse, APIKey: "test-key"})
+	_, err := client.Generate(context.Background(), Options{
+		Prompt:             "参考视频生成",
+		ReferenceVideoURLs: []string{"https://example.com/ref.mp4"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "HappyHorse") {
+		t.Fatalf("expected happyhorse reference video error, got %v", err)
 	}
 }
 

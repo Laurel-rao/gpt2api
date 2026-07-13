@@ -120,7 +120,6 @@ func TestVideoPlaygroundSupportsReferenceVideoIncludesSeedance(t *testing.T) {
 	for _, channelType := range []string{
 		videogen.ChannelAPIYISeedance,
 		videogen.ChannelAPIYIWan27,
-		videogen.ChannelAPIYIHappyHorse,
 	} {
 		if !videoPlaygroundSupportsReferenceVideo(channelType) {
 			t.Fatalf("channel %q should support reference video", channelType)
@@ -128,6 +127,36 @@ func TestVideoPlaygroundSupportsReferenceVideoIncludesSeedance(t *testing.T) {
 	}
 	if videoPlaygroundSupportsReferenceVideo(videogen.ChannelEchoon) {
 		t.Fatal("echoon should not support reference video")
+	}
+	if videoPlaygroundSupportsReferenceVideo(videogen.ChannelAPIYIHappyHorse) {
+		t.Fatal("happyhorse should not support reference video")
+	}
+}
+
+func TestVideoPlaygroundValidateUploadLimits(t *testing.T) {
+	seedance := videoPlaygroundChannelLimitsFor(videogen.ChannelAPIYISeedance)
+	if err := validateVideoPlaygroundUploads(videogen.Config{ChannelType: videogen.ChannelAPIYISeedance, DurationSec: 15}, seedance, 9, 3); err != nil {
+		t.Fatalf("seedance max refs should pass: %v", err)
+	}
+	if err := validateVideoPlaygroundUploads(videogen.Config{ChannelType: videogen.ChannelAPIYISeedance, DurationSec: 16}, seedance, 1, 0); err == nil {
+		t.Fatal("seedance duration over max should fail")
+	}
+	wan := videoPlaygroundChannelLimitsFor(videogen.ChannelAPIYIWan27)
+	if err := validateVideoPlaygroundUploads(videogen.Config{ChannelType: videogen.ChannelAPIYIWan27, DurationSec: 10}, wan, 2, 3); err != nil {
+		t.Fatalf("wan combined media should pass: %v", err)
+	}
+	if err := validateVideoPlaygroundUploads(videogen.Config{ChannelType: videogen.ChannelAPIYIWan27, DurationSec: 11}, wan, 1, 1); err == nil {
+		t.Fatal("wan reference video duration over max should fail")
+	}
+	if err := validateVideoPlaygroundUploads(videogen.Config{ChannelType: videogen.ChannelAPIYIWan27, DurationSec: 5}, wan, 3, 3); err == nil {
+		t.Fatal("wan combined media over max should fail")
+	}
+	horse := videoPlaygroundChannelLimitsFor(videogen.ChannelAPIYIHappyHorse)
+	if err := validateVideoPlaygroundUploads(videogen.Config{ChannelType: videogen.ChannelAPIYIHappyHorse, DurationSec: 5}, horse, 9, 0); err != nil {
+		t.Fatalf("happyhorse nine images should pass: %v", err)
+	}
+	if err := validateVideoPlaygroundUploads(videogen.Config{ChannelType: videogen.ChannelAPIYIHappyHorse, DurationSec: 5}, horse, 1, 1); err == nil {
+		t.Fatal("happyhorse reference video should fail")
 	}
 }
 

@@ -32,6 +32,18 @@ type videoPlaygroundUpload struct {
 	DataURL   string
 }
 
+type videoPlaygroundChannelLimits struct {
+	MaxReferenceImages               int   `json:"max_reference_images"`
+	MaxReferenceVideos               int   `json:"max_reference_videos"`
+	MaxReferenceMedia                int   `json:"max_reference_media,omitempty"`
+	MaxImageBytes                    int64 `json:"max_image_bytes"`
+	MaxVideoBytes                    int64 `json:"max_video_bytes"`
+	SupportsReferenceVideo           bool  `json:"supports_reference_video"`
+	MinDurationSec                   int   `json:"min_duration_sec"`
+	MaxDurationSec                   int   `json:"max_duration_sec"`
+	MaxDurationWithReferenceVideoSec int   `json:"max_duration_with_reference_video_sec,omitempty"`
+}
+
 type VideoGenSettings interface {
 	VideoGenEnabled() bool
 	VideoGenChannelType() string
@@ -57,6 +69,8 @@ type videoPlaygroundState struct {
 	ModelID       string              `json:"model_id,omitempty"`
 	ImageURL      string              `json:"image_url,omitempty"`
 	VideoURL      string              `json:"video_url,omitempty"`
+	ImageURLs     []string            `json:"image_urls,omitempty"`
+	VideoURLs     []string            `json:"video_urls,omitempty"`
 	ResultURL     string              `json:"result_url,omitempty"`
 	Error         string              `json:"error,omitempty"`
 	CreatedAt     time.Time           `json:"created_at"`
@@ -79,10 +93,10 @@ func (h *VideoPlaygroundHandler) Channels(c *gin.Context) {
 	}
 	current := h.settings.VideoGenChannelType()
 	rows := []gin.H{
-		{"type": videogen.ChannelEchoon, "name": "Echoon / AI Gen Platform", "enabled": current == videogen.ChannelEchoon},
-		{"type": videogen.ChannelAPIYISeedance, "name": "API易 Seedance 2.0", "enabled": current == videogen.ChannelAPIYISeedance},
-		{"type": videogen.ChannelAPIYIWan27, "name": "API易 Wan2.7", "enabled": current == videogen.ChannelAPIYIWan27},
-		{"type": videogen.ChannelAPIYIHappyHorse, "name": "API易 HappyHorse", "enabled": current == videogen.ChannelAPIYIHappyHorse},
+		{"type": videogen.ChannelEchoon, "name": "Echoon / AI Gen Platform", "enabled": current == videogen.ChannelEchoon, "limits": videoPlaygroundChannelLimitsFor(videogen.ChannelEchoon)},
+		{"type": videogen.ChannelAPIYISeedance, "name": "API易 Seedance 2.0", "enabled": current == videogen.ChannelAPIYISeedance, "limits": videoPlaygroundChannelLimitsFor(videogen.ChannelAPIYISeedance)},
+		{"type": videogen.ChannelAPIYIWan27, "name": "API易 Wan2.7", "enabled": current == videogen.ChannelAPIYIWan27, "limits": videoPlaygroundChannelLimitsFor(videogen.ChannelAPIYIWan27)},
+		{"type": videogen.ChannelAPIYIHappyHorse, "name": "API易 HappyHorse", "enabled": current == videogen.ChannelAPIYIHappyHorse, "limits": videoPlaygroundChannelLimitsFor(videogen.ChannelAPIYIHappyHorse)},
 	}
 	resp.OK(c, gin.H{"items": rows, "default_channel_type": current})
 }
@@ -125,24 +139,25 @@ func (h *VideoPlaygroundHandler) Start(c *gin.Context) {
 		cfg.Model = model
 	}
 	applyVideoPlaygroundOptions(c, &cfg)
+	limits := videoPlaygroundChannelLimitsForConfig(cfg)
 
-	imageUpload, err := h.saveOptionalUpload(c, "image", "image")
+	imageUploads, err := h.saveOptionalUploads(c, []string{"image", "image[]", "images"}, "image", limits.MaxImageBytes)
 	if err != nil {
 		resp.BadRequest(c, err.Error())
 		return
 	}
-	videoUpload, err := h.saveOptionalUpload(c, "video", "video")
+	videoUploads, err := h.saveOptionalUploads(c, []string{"video", "video[]", "videos"}, "video", limits.MaxVideoBytes)
 	if err != nil {
 		resp.BadRequest(c, err.Error())
 		return
 	}
-	imageURL := imageUpload.PublicURL
-	imagePayloadURL := videoPlaygroundImagePayloadURL(cfg.ChannelType, imageUpload)
-	videoURL := videoUpload.PublicURL
-	if videoURL != "" && !videoPlaygroundSupportsReferenceVideo(cfg.ChannelType) {
-		resp.BadRequest(c, "参考视频仅支持 API易 Seedance 2.0 / Wan2.7 / HappyHorse 渠道")
+	if err := validateVideoPlaygroundUploads(cfg, limits, len(imageUploads), len(videoUploads)); err != nil {
+		resp.BadRequest(c, err.Error())
 		return
 	}
+	imageURLs := videoPlaygroundPublicURLs(imageUploads)
+	imagePayloadURLs := videoPlaygroundImagePayloadURLs(cfg.ChannelType, imageUploads)
+	videoURLs := videoPlaygroundPublicURLs(videoUploads)
 
 	expectedCost := videoPlaygroundCost(h.settings)
 	if h.billing == nil {
@@ -166,14 +181,16 @@ func (h *VideoPlaygroundHandler) Start(c *gin.Context) {
 		ChannelType:  cfg.ChannelType,
 		Status:       "queued",
 		Progress:     0,
-		ImageURL:     imageURL,
-		VideoURL:     videoURL,
+		ImageURL:     firstNonEmpty(imageURLs...),
+		VideoURL:     firstNonEmpty(videoURLs...),
+		ImageURLs:    imageURLs,
+		VideoURLs:    videoURLs,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 		ExpectedCost: expectedCost,
 	}
 	h.tasks.Store(id, state)
-	go h.run(id, uid, ak.ID, cfg, prompt, imagePayloadURL, videoURL, expectedCost)
+	go h.run(id, uid, ak.ID, cfg, prompt, imagePayloadURLs, videoURLs, expectedCost)
 	resp.OK(c, state)
 }
 
@@ -254,7 +271,7 @@ func (h *VideoPlaygroundHandler) getRecovered(c *gin.Context, id string) {
 	resp.OK(c, state)
 }
 
-func (h *VideoPlaygroundHandler) run(id string, userID uint64, keyID uint64, cfg videogen.Config, prompt, imageURL, videoURL string, expectedCost int64) {
+func (h *VideoPlaygroundHandler) run(id string, userID uint64, keyID uint64, cfg videogen.Config, prompt string, imageURLs, videoURLs []string, expectedCost int64) {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.TimeoutSec)*time.Second)
 	defer cancel()
@@ -280,11 +297,19 @@ func (h *VideoPlaygroundHandler) run(id string, userID uint64, keyID uint64, cfg
 	if strings.TrimSpace(cfg.Model) != "" {
 		opt.Model = strings.TrimSpace(cfg.Model)
 	}
-	if imageURL != "" {
-		opt.Images = []videogen.ImageInput{{URL: imageURL, Name: "playground_reference"}}
+	for i, imageURL := range imageURLs {
+		imageURL = strings.TrimSpace(imageURL)
+		if imageURL == "" {
+			continue
+		}
+		opt.Images = append(opt.Images, videogen.ImageInput{
+			URL:  imageURL,
+			Name: fmt.Sprintf("playground_reference_%d", i+1),
+		})
 	}
-	if videoURL != "" {
-		opt.ReferenceVideoURL = videoURL
+	opt.ReferenceVideoURLs = append(opt.ReferenceVideoURLs, videoURLs...)
+	if len(opt.ReferenceVideoURLs) > 0 {
+		opt.ReferenceVideoURL = opt.ReferenceVideoURLs[0]
 	}
 
 	result, err := h.videoGen.GenerateForConfig(ctx, cfg, opt)
@@ -350,35 +375,42 @@ func (h *VideoPlaygroundHandler) update(id string, mutate func(*videoPlaygroundS
 	h.tasks.Store(id, &copyState)
 }
 
-func (h *VideoPlaygroundHandler) saveOptionalUpload(c *gin.Context, field string, kind string) (videoPlaygroundUpload, error) {
-	fh, err := c.FormFile(field)
-	if err != nil {
-		if errors.Is(err, http.ErrMissingFile) {
-			return videoPlaygroundUpload{}, nil
+func (h *VideoPlaygroundHandler) saveOptionalUploads(c *gin.Context, fields []string, kind string, limit int64) ([]videoPlaygroundUpload, error) {
+	if c == nil || c.Request == nil {
+		return nil, nil
+	}
+	if err := c.Request.ParseMultipartForm(64 << 20); err != nil {
+		if errors.Is(err, http.ErrNotMultipart) || errors.Is(err, http.ErrMissingBoundary) {
+			return nil, nil
 		}
-		return videoPlaygroundUpload{}, err
+		return nil, err
 	}
-	if fh == nil {
-		return videoPlaygroundUpload{}, nil
+	if c.Request.MultipartForm == nil {
+		return nil, nil
 	}
-	limit := int64(10 * 1024 * 1024)
-	if kind == "video" {
-		limit = 200 * 1024 * 1024
+	var uploads []videoPlaygroundUpload
+	for _, field := range fields {
+		for _, fh := range c.Request.MultipartForm.File[field] {
+			if fh == nil {
+				continue
+			}
+			if fh.Size <= 0 {
+				return nil, fmt.Errorf("%s 文件为空", uploadKindText(kind))
+			}
+			if limit > 0 && fh.Size > limit {
+				return nil, fmt.Errorf("%s 文件过大: 最大 %dMB", uploadKindText(kind), limit/1024/1024)
+			}
+			publicPath, dataURL, err := saveVideoPlaygroundUpload(fh, kind)
+			if err != nil {
+				return nil, err
+			}
+			uploads = append(uploads, videoPlaygroundUpload{
+				PublicURL: videoPlaygroundAbsoluteURL(c, h.settings, publicPath),
+				DataURL:   dataURL,
+			})
+		}
 	}
-	if fh.Size <= 0 {
-		return videoPlaygroundUpload{}, fmt.Errorf("%s 文件为空", uploadKindText(kind))
-	}
-	if fh.Size > limit {
-		return videoPlaygroundUpload{}, fmt.Errorf("%s 文件过大: 最大 %dMB", uploadKindText(kind), limit/1024/1024)
-	}
-	publicPath, dataURL, err := saveVideoPlaygroundUpload(fh, kind)
-	if err != nil {
-		return videoPlaygroundUpload{}, err
-	}
-	return videoPlaygroundUpload{
-		PublicURL: videoPlaygroundAbsoluteURL(c, h.settings, publicPath),
-		DataURL:   dataURL,
-	}, nil
+	return uploads, nil
 }
 
 func saveVideoPlaygroundUpload(fh *multipart.FileHeader, kind string) (string, string, error) {
@@ -434,6 +466,26 @@ func videoPlaygroundImagePayloadURL(channelType string, upload videoPlaygroundUp
 	default:
 		return firstNonEmpty(upload.PublicURL, upload.DataURL)
 	}
+}
+
+func videoPlaygroundImagePayloadURLs(channelType string, uploads []videoPlaygroundUpload) []string {
+	out := make([]string, 0, len(uploads))
+	for _, upload := range uploads {
+		if url := videoPlaygroundImagePayloadURL(channelType, upload); url != "" {
+			out = append(out, url)
+		}
+	}
+	return out
+}
+
+func videoPlaygroundPublicURLs(uploads []videoPlaygroundUpload) []string {
+	out := make([]string, 0, len(uploads))
+	for _, upload := range uploads {
+		if url := strings.TrimSpace(upload.PublicURL); url != "" {
+			out = append(out, url)
+		}
+	}
+	return out
 }
 
 func videoPlaygroundImageDataURL(contentType, filename string, data []byte) string {
@@ -550,12 +602,91 @@ func normalizeVideoPlaygroundChannel(v string) string {
 }
 
 func videoPlaygroundSupportsReferenceVideo(channelType string) bool {
+	return videoPlaygroundChannelLimitsFor(channelType).SupportsReferenceVideo
+}
+
+func videoPlaygroundChannelLimitsFor(channelType string) videoPlaygroundChannelLimits {
 	switch normalizeVideoPlaygroundChannel(channelType) {
-	case videogen.ChannelAPIYISeedance, videogen.ChannelAPIYIWan27, videogen.ChannelAPIYIHappyHorse:
-		return true
+	case videogen.ChannelAPIYISeedance:
+		return videoPlaygroundChannelLimits{
+			MaxReferenceImages:     9,
+			MaxReferenceVideos:     3,
+			MaxImageBytes:          30 * 1024 * 1024,
+			MaxVideoBytes:          200 * 1024 * 1024,
+			SupportsReferenceVideo: true,
+			MinDurationSec:         4,
+			MaxDurationSec:         15,
+		}
+	case videogen.ChannelAPIYIWan27:
+		return videoPlaygroundChannelLimits{
+			MaxReferenceImages:               5,
+			MaxReferenceVideos:               5,
+			MaxReferenceMedia:                5,
+			MaxImageBytes:                    30 * 1024 * 1024,
+			MaxVideoBytes:                    200 * 1024 * 1024,
+			SupportsReferenceVideo:           true,
+			MinDurationSec:                   3,
+			MaxDurationSec:                   15,
+			MaxDurationWithReferenceVideoSec: 10,
+		}
+	case videogen.ChannelAPIYIHappyHorse:
+		return videoPlaygroundChannelLimits{
+			MaxReferenceImages:     9,
+			MaxReferenceVideos:     0,
+			MaxImageBytes:          30 * 1024 * 1024,
+			MaxVideoBytes:          0,
+			SupportsReferenceVideo: false,
+			MinDurationSec:         3,
+			MaxDurationSec:         10,
+		}
 	default:
-		return false
+		return videoPlaygroundChannelLimits{
+			MaxReferenceImages:     1,
+			MaxReferenceVideos:     0,
+			MaxImageBytes:          10 * 1024 * 1024,
+			MaxVideoBytes:          0,
+			SupportsReferenceVideo: false,
+			MinDurationSec:         3,
+			MaxDurationSec:         10,
+		}
 	}
+}
+
+func videoPlaygroundChannelLimitsForConfig(cfg videogen.Config) videoPlaygroundChannelLimits {
+	limits := videoPlaygroundChannelLimitsFor(cfg.ChannelType)
+	if strings.EqualFold(strings.TrimSpace(cfg.Model), "wan2.7-i2v") {
+		limits.MaxReferenceImages = 1
+		limits.MaxReferenceVideos = 0
+		limits.MaxReferenceMedia = 1
+		limits.SupportsReferenceVideo = false
+	}
+	return limits
+}
+
+func validateVideoPlaygroundUploads(cfg videogen.Config, limits videoPlaygroundChannelLimits, imageCount, videoCount int) error {
+	if imageCount > limits.MaxReferenceImages {
+		return fmt.Errorf("参考图片最多支持 %d 张", limits.MaxReferenceImages)
+	}
+	if videoCount > 0 && !limits.SupportsReferenceVideo {
+		return fmt.Errorf("当前渠道不支持参考视频")
+	}
+	if videoCount > limits.MaxReferenceVideos {
+		return fmt.Errorf("参考视频最多支持 %d 段", limits.MaxReferenceVideos)
+	}
+	if limits.MaxReferenceMedia > 0 && imageCount+videoCount > limits.MaxReferenceMedia {
+		return fmt.Errorf("参考图片和参考视频合计最多支持 %d 个", limits.MaxReferenceMedia)
+	}
+	if limits.MinDurationSec > 0 && cfg.DurationSec < limits.MinDurationSec {
+		return fmt.Errorf("输出时长最短 %d 秒", limits.MinDurationSec)
+	}
+	maxDuration := limits.MaxDurationSec
+	if videoCount > 0 && limits.MaxDurationWithReferenceVideoSec > 0 {
+		maxDuration = limits.MaxDurationWithReferenceVideoSec
+	}
+	if maxDuration > 0 && cfg.DurationSec > maxDuration {
+		return fmt.Errorf("输出时长最长 %d 秒", maxDuration)
+	}
+	return nil
 }
 
 func videoPlaygroundCost(svc VideoGenSettings) int64 {

@@ -193,8 +193,8 @@ function copyText(s: string) {
 onBeforeUnmount(() => {
   chatAbort.value?.abort()
   if (videoPollTimer) window.clearTimeout(videoPollTimer)
-  clearVideoImage()
-  clearVideoReferenceVideo()
+  clearVideoImages()
+  clearVideoReferenceVideos()
 })
 
 // ---------- 轻量 markdown 渲染(代码块 / 行内代码 / 粗体 / 链接) ----------
@@ -595,6 +595,10 @@ async function sendImg2Img() {
 // 视频生成(Video)
 // ====================================================
 type VideoMode = 'text' | 'image' | 'video'
+interface VideoLocalFile {
+  file: File
+  preview: string
+}
 
 const videoChannels = ref<PlayVideoChannel[]>([])
 const selectedVideoChannel = ref('apiyi_wan27')
@@ -603,10 +607,8 @@ const videoPrompt = ref('生成一段 5 秒商品展示短视频，镜头缓慢�
 const videoRatio = ref('16:9')
 const videoResolution = ref('720p')
 const videoDuration = ref(5)
-const videoImage = ref<File | null>(null)
-const videoImagePreview = ref('')
-const videoRefVideo = ref<File | null>(null)
-const videoRefVideoPreview = ref('')
+const videoImages = ref<VideoLocalFile[]>([])
+const videoRefVideos = ref<VideoLocalFile[]>([])
 const videoSending = ref(false)
 const videoTask = ref<PlayVideoState | null>(null)
 const videoError = ref('')
@@ -632,6 +634,21 @@ const videoResolutions = ['720p', '1080p']
 const selectedVideoChannelMeta = computed(() =>
   videoChannels.value.find((item) => item.type === selectedVideoChannel.value),
 )
+const selectedVideoLimits = computed(() => selectedVideoChannelMeta.value?.limits || {})
+const videoImageLimit = computed(() => selectedVideoLimits.value.max_reference_images ?? 1)
+const videoVideoLimit = computed(() => selectedVideoLimits.value.max_reference_videos ?? 0)
+const videoMediaLimit = computed(() => selectedVideoLimits.value.max_reference_media ?? 0)
+const videoImageMaxBytes = computed(() => selectedVideoLimits.value.max_image_bytes ?? 10 * 1024 * 1024)
+const videoVideoMaxBytes = computed(() => selectedVideoLimits.value.max_video_bytes ?? 200 * 1024 * 1024)
+const videoMinDuration = computed(() => selectedVideoLimits.value.min_duration_sec ?? 3)
+const videoMaxDuration = computed(() => {
+  if (videoMode.value === 'video' && videoRefVideos.value.length > 0 && selectedVideoLimits.value.max_duration_with_reference_video_sec) {
+    return selectedVideoLimits.value.max_duration_with_reference_video_sec
+  }
+  return selectedVideoLimits.value.max_duration_sec ?? 10
+})
+const videoImageMaxMB = computed(() => Math.round(videoImageMaxBytes.value / 1024 / 1024))
+const videoVideoMaxMB = computed(() => Math.round(videoVideoMaxBytes.value / 1024 / 1024))
 
 const videoStatusText = computed(() => {
   const state = videoTask.value
@@ -676,19 +693,28 @@ function isVideoTerminal(state?: Pick<PlayVideoState, 'status'> | null) {
 }
 
 const videoCanUseReferenceVideo = computed(() =>
-  selectedVideoChannel.value === 'apiyi_seedance2' || selectedVideoChannel.value === 'apiyi_wan27' || selectedVideoChannel.value === 'apiyi_happyhorse',
+  Boolean(selectedVideoLimits.value.supports_reference_video && videoVideoLimit.value > 0),
 )
 
 watch(videoMode, (mode) => {
-  if (mode !== 'image') clearVideoImage()
-  if (mode !== 'video') clearVideoReferenceVideo()
+  if (mode !== 'image') clearVideoImages()
+  if (mode !== 'video') clearVideoReferenceVideos()
 })
 
 watch(selectedVideoChannel, () => {
   if (!videoCanUseReferenceVideo.value && videoMode.value === 'video') {
     videoMode.value = 'text'
-    clearVideoReferenceVideo()
+    clearVideoReferenceVideos()
   }
+  trimVideoFilesToLimits()
+})
+
+watch(videoMaxDuration, (max) => {
+  if (videoDuration.value > max) videoDuration.value = max
+})
+
+watch(videoMinDuration, (min) => {
+  if (videoDuration.value < min) videoDuration.value = min
 })
 
 async function loadVideoChannels() {
@@ -750,6 +776,8 @@ function syncVideoHistoryState(state: PlayVideoState) {
     created_at: old.created_at || state.created_at,
     image_url: state.image_url || old.image_url,
     video_url: state.video_url || old.video_url,
+    image_urls: state.image_urls || old.image_urls,
+    video_urls: state.video_urls || old.video_urls,
   })
 }
 
@@ -801,42 +829,85 @@ function openVideoHistoryItem(item: VideoHistoryItem) {
 
 function handleVideoImagePick(e: Event) {
   const input = e.target as HTMLInputElement
-  const file = input.files?.[0]
+  const files = Array.from(input.files || [])
   input.value = ''
-  if (!file) return
-  if (file.size > 10 * 1024 * 1024) {
-    ElMessage.warning('参考图最大 10MB')
+  if (!files.length) return
+  const remaining = Math.max(0, videoImageLimit.value - videoImages.value.length)
+  if (remaining <= 0) {
+    ElMessage.warning(`参考图最多 ${videoImageLimit.value} 张`)
     return
   }
-  clearVideoImage()
-  videoImage.value = file
-  videoImagePreview.value = URL.createObjectURL(file)
+  for (const file of files.slice(0, remaining)) {
+    if (file.size > videoImageMaxBytes.value) {
+      ElMessage.warning(`${file.name} 超过 ${videoImageMaxMB.value}MB 限制`)
+      continue
+    }
+    videoImages.value.push({ file, preview: URL.createObjectURL(file) })
+  }
+  if (files.length > remaining) {
+    ElMessage.warning(`已达到参考图上限 ${videoImageLimit.value} 张`)
+  }
 }
 
 function handleVideoReferencePick(e: Event) {
   const input = e.target as HTMLInputElement
-  const file = input.files?.[0]
+  const files = Array.from(input.files || [])
   input.value = ''
-  if (!file) return
-  if (file.size > 200 * 1024 * 1024) {
-    ElMessage.warning('参考视频最大 200MB')
+  if (!files.length) return
+  const remaining = Math.max(0, videoVideoLimit.value - videoRefVideos.value.length)
+  if (remaining <= 0) {
+    ElMessage.warning(`参考视频最多 ${videoVideoLimit.value} 段`)
     return
   }
-  clearVideoReferenceVideo()
-  videoRefVideo.value = file
-  videoRefVideoPreview.value = URL.createObjectURL(file)
+  for (const file of files.slice(0, remaining)) {
+    if (file.size > videoVideoMaxBytes.value) {
+      ElMessage.warning(`${file.name} 超过 ${videoVideoMaxMB.value}MB 限制`)
+      continue
+    }
+    videoRefVideos.value.push({ file, preview: URL.createObjectURL(file) })
+  }
+  if (files.length > remaining) {
+    ElMessage.warning(`已达到参考视频上限 ${videoVideoLimit.value} 段`)
+  }
 }
 
-function clearVideoImage() {
-  videoImage.value = null
-  if (videoImagePreview.value) URL.revokeObjectURL(videoImagePreview.value)
-  videoImagePreview.value = ''
+function removeVideoImage(idx: number) {
+  const [item] = videoImages.value.splice(idx, 1)
+  if (item?.preview) URL.revokeObjectURL(item.preview)
 }
 
-function clearVideoReferenceVideo() {
-  videoRefVideo.value = null
-  if (videoRefVideoPreview.value) URL.revokeObjectURL(videoRefVideoPreview.value)
-  videoRefVideoPreview.value = ''
+function removeVideoReferenceVideo(idx: number) {
+  const [item] = videoRefVideos.value.splice(idx, 1)
+  if (item?.preview) URL.revokeObjectURL(item.preview)
+}
+
+function clearVideoImages() {
+  for (const item of videoImages.value) {
+    if (item.preview) URL.revokeObjectURL(item.preview)
+  }
+  videoImages.value = []
+}
+
+function clearVideoReferenceVideos() {
+  for (const item of videoRefVideos.value) {
+    if (item.preview) URL.revokeObjectURL(item.preview)
+  }
+  videoRefVideos.value = []
+}
+
+function trimVideoFilesToLimits() {
+  while (videoImages.value.length > videoImageLimit.value) {
+    removeVideoImage(videoImages.value.length - 1)
+  }
+  while (videoRefVideos.value.length > videoVideoLimit.value) {
+    removeVideoReferenceVideo(videoRefVideos.value.length - 1)
+  }
+}
+
+function selectedVideoMediaCount() {
+  if (videoMode.value === 'image') return videoImages.value.length
+  if (videoMode.value === 'video') return videoRefVideos.value.length
+  return 0
 }
 
 async function sendVideo() {
@@ -845,12 +916,16 @@ async function sendVideo() {
     ElMessage.warning('请输入视频提示词')
     return
   }
-  if (videoMode.value === 'image' && !videoImage.value) {
+  if (videoMode.value === 'image' && videoImages.value.length === 0) {
     ElMessage.warning('请先上传参考图')
     return
   }
-  if (videoMode.value === 'video' && !videoRefVideo.value) {
+  if (videoMode.value === 'video' && videoRefVideos.value.length === 0) {
     ElMessage.warning('请先上传参考视频')
+    return
+  }
+  if (videoMediaLimit.value > 0 && selectedVideoMediaCount() > videoMediaLimit.value) {
+    ElMessage.warning(`参考素材合计最多 ${videoMediaLimit.value} 个`)
     return
   }
   videoSending.value = true
@@ -863,8 +938,8 @@ async function sendVideo() {
       ratio: videoRatio.value,
       resolution: videoResolution.value,
       duration: videoDuration.value,
-      image: videoMode.value === 'image' ? videoImage.value : null,
-      video: videoMode.value === 'video' ? videoRefVideo.value : null,
+      images: videoMode.value === 'image' ? videoImages.value.map((item) => item.file) : [],
+      videos: videoMode.value === 'video' ? videoRefVideos.value.map((item) => item.file) : [],
     })
     videoTask.value = state
     upsertVideoHistory(videoHistoryItemFromState(state, prompt))
@@ -1508,7 +1583,7 @@ watch(activeTab, (v) => {
                 <el-radio-button label="video" :disabled="!videoCanUseReferenceVideo">参考视频</el-radio-button>
               </el-radio-group>
               <div v-if="!videoCanUseReferenceVideo" class="side-hint">
-                参考视频目前仅支持 API易 Seedance 2.0 / Wan2.7 / HappyHorse 渠道。
+                当前渠道不支持参考视频。
               </div>
             </div>
 
@@ -1533,35 +1608,43 @@ watch(activeTab, (v) => {
               </div>
               <div>
                 <label class="side-lbl">时长</label>
-                <el-input-number v-model="videoDuration" :min="3" :max="10" size="small" controls-position="right" style="width:100%" />
+                <el-input-number v-model="videoDuration" :min="videoMinDuration" :max="videoMaxDuration" size="small" controls-position="right" style="width:100%" />
               </div>
             </div>
 
             <div v-if="videoMode === 'image'" class="side-row">
-              <label class="side-lbl">参考图</label>
+              <label class="side-lbl">参考图 <span class="side-val">{{ videoImages.length }}/{{ videoImageLimit }}</span></label>
               <label class="upload-zone video-upload-zone">
                 <el-icon class="up-ic"><UploadFilled /></el-icon>
-                <div class="up-t">{{ videoImage ? videoImage.name : '上传一张参考图' }}</div>
-                <div class="up-s">PNG / JPG / WebP, ≤ 10MB</div>
-                <input type="file" accept="image/*" @change="handleVideoImagePick" />
+                <div class="up-t">上传参考图</div>
+                <div class="up-s">PNG / JPG / WebP, 单张 ≤ {{ videoImageMaxMB }}MB</div>
+                <input type="file" accept="image/*" multiple @change="handleVideoImagePick" />
               </label>
-              <div v-if="videoImagePreview" class="video-ref-preview">
-                <img :src="videoImagePreview" alt="参考图" />
-                <button @click="clearVideoImage"><el-icon><Close /></el-icon></button>
+              <div v-if="videoImages.length" class="ref-grid video-ref-grid">
+                <div v-for="(item, idx) in videoImages" :key="`${item.file.name}-${idx}`" class="ref-thumb">
+                  <img :src="item.preview" :alt="item.file.name" />
+                  <div class="ref-x" @click="removeVideoImage(idx)">
+                    <el-icon><Close /></el-icon>
+                  </div>
+                  <div class="ref-meta">{{ (item.file.size / 1024 / 1024).toFixed(1) }} MB</div>
+                </div>
               </div>
             </div>
 
             <div v-if="videoMode === 'video'" class="side-row">
-              <label class="side-lbl">参考视频</label>
+              <label class="side-lbl">参考视频 <span class="side-val">{{ videoRefVideos.length }}/{{ videoVideoLimit }}</span></label>
               <label class="upload-zone video-upload-zone">
                 <el-icon class="up-ic"><UploadFilled /></el-icon>
-                <div class="up-t">{{ videoRefVideo ? videoRefVideo.name : '上传一段参考视频' }}</div>
-                <div class="up-s">MP4 / MOV / WebM, ≤ 200MB</div>
-                <input type="file" accept="video/mp4,video/quicktime,video/webm,video/*" @change="handleVideoReferencePick" />
+                <div class="up-t">上传参考视频</div>
+                <div class="up-s">MP4 / MOV / WebM, 单段 ≤ {{ videoVideoMaxMB }}MB</div>
+                <input type="file" accept="video/mp4,video/quicktime,video/webm,video/*" multiple @change="handleVideoReferencePick" />
               </label>
-              <div v-if="videoRefVideoPreview" class="video-ref-preview">
-                <video :src="videoRefVideoPreview" muted playsinline controls />
-                <button @click="clearVideoReferenceVideo"><el-icon><Close /></el-icon></button>
+              <div v-if="videoRefVideos.length" class="video-ref-list">
+                <div v-for="(item, idx) in videoRefVideos" :key="`${item.file.name}-${idx}`" class="video-ref-preview">
+                  <video :src="item.preview" muted playsinline controls />
+                  <button @click="removeVideoReferenceVideo(idx)"><el-icon><Close /></el-icon></button>
+                  <div class="video-ref-name">{{ item.file.name }}</div>
+                </div>
               </div>
             </div>
 
@@ -1626,7 +1709,7 @@ watch(activeTab, (v) => {
                     >
                       <span class="play-history-thumb video">
                         <video v-if="item.result_url" :src="item.result_url" muted playsinline preload="metadata" />
-                        <img v-else-if="item.image_url" :src="item.image_url" alt="视频参考图" loading="lazy" />
+                        <img v-else-if="(item.image_urls?.[0] || item.image_url)" :src="item.image_urls?.[0] || item.image_url" alt="视频参考图" loading="lazy" />
                         <el-icon v-else><VideoPlay /></el-icon>
                       </span>
                       <span class="play-history-copy">
@@ -2297,6 +2380,25 @@ watch(activeTab, (v) => {
     justify-content: center;
     cursor: pointer;
   }
+}
+.video-ref-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.video-ref-name {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 18px 8px 6px;
+  color: #fff;
+  font-size: 11px;
+  line-height: 1.2;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.68));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .video-actions {
   display: grid;
