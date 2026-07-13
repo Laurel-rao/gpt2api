@@ -841,14 +841,6 @@ export function moveTimelineClip<T>(items: T[], from: number, to: number): T[] {
   return next
 }
 
-export function mobileWorkspaceView(width: number, requested: 'canvas' | 'timeline' | 'inspector') {
-  return width < 768 ? requested : 'all'
-}
-
-export function desktopVideoWorkflowReady(width: number) {
-  return width >= 1280
-}
-
 export function nodeStatusLabel(status?: string) {
   return ({
     idle: '待配置', queued: '排队中', running: '生成中', awaiting_approval: '待审批',

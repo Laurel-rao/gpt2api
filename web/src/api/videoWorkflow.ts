@@ -157,19 +157,26 @@ export interface VideoWorkflow {
 
 export interface VideoWorkflowNodeRun {
   id: string
+  run_id?: string
   node_id: string
   node_type?: string
   status: VideoWorkflowNodeStatus
   progress?: number
   input_hash?: string
+  model_snapshot?: Record<string, any>
+  upstream_task_id?: string
   output?: Record<string, any>
   error?: string
   error_code?: string
   error_message?: string
   output_version_id?: string
+  attempt?: number
   attempt_count?: number
   credit_cost?: number
   cache_hit?: boolean
+  created_at?: string
+  started_at?: string
+  finished_at?: string
 }
 
 export interface VideoWorkflowRun {
@@ -203,6 +210,15 @@ export interface VideoWorkflowRunPage {
   total: number
   limit: number
   offset: number
+}
+
+export interface VideoWorkflowNodeHistoryEntry {
+  run_id: string
+  workflow_revision: number
+  run_status: VideoWorkflowRunStatus
+  run_mode?: VideoWorkflowRunMode
+  run_created_at?: string
+  node_run: VideoWorkflowNodeRun
 }
 
 export interface VideoWorkflowValidationIssue {

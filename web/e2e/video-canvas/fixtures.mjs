@@ -203,6 +203,26 @@ export function createFixtureState(baseURL) {
       width: 1080, height: 1920, duration_ms: 2000, source: 'generated', preview_url: mediaURL(baseURL, 'video-final-v1'),
     }],
   })
+  const nodeOutput = (node, index) => {
+    const sceneIndex = Number(node.id.match(/_(\d+)$/)?.[1] || 1)
+    if (node.type === 'story_brief') return { prompt: '雨夜重逢，成年男女主因旧案再会，在四幕冲突中解开误会。' }
+    if (node.type === 'character') return { selected_version_id: `character-version-${index + 1}` }
+    if (node.type === 'script') return {
+      scenes: [1, 2, 3, 4].map((scene) => ({ index: scene, summary: `第 ${scene} 幕结构化分镜` })),
+    }
+    if (node.type === 'scene') return {
+      summary: `S${String(sceneIndex).padStart(2, '0')} 雨夜场景`, location: '古城雨巷', time: '夜晚', duration: 15,
+      camera: { shot: '中景', movement: '缓慢推进' }, action: '人物在雨中对峙', dialogue: '旧案真相逐渐揭晓',
+      expression: '克制而警觉', lighting: '灯笼暖光与冷雨反光', audio: '雨声、脚步声',
+      image_prompt: `电影感古风雨夜场景 ${sceneIndex}，9:16 构图`,
+      video_prompt: `保持人物一致性，生成场景 ${sceneIndex} 的 15 秒连续镜头`,
+    }
+    if (node.type === 'background') return { version_id: `img-s${String(sceneIndex).padStart(2, '0')}-v${sceneIndex === 2 ? 2 : 1}` }
+    if (node.type === 'video') return { version_id: 'video-preview-v1', duration_ms: 15_000 }
+    if (node.type === 'timeline') return { clips: node.config.clips }
+    if (node.type === 'compose') return { version_id: 'video-final-v1', duration_ms: 55_800, width: 1080, height: 1920 }
+    return {}
+  }
   const succeededRun = {
     id: 'run-history-success', workflow_id: workflow.id, workflow_revision: 11, status: 'succeeded', progress: 100,
     run_mode: 'full', estimated_credits: 1360, actual_credits: 1280, output_version_id: 'video-final-v1',
@@ -211,7 +231,8 @@ export function createFixtureState(baseURL) {
     graph_snapshot: clone(graph),
     node_runs: graph.nodes.map((node, index) => ({
       id: `history-success-node-${index + 1}`, node_id: node.id, node_type: node.type, status: 'succeeded', progress: 100,
-      output_version_id: node.id === 'compose' ? 'video-final-v1' : undefined, credit_cost: 0, cache_hit: false,
+      output_version_id: ['background', 'video', 'compose'].includes(node.type) ? nodeOutput(node, index).version_id : undefined,
+      output: nodeOutput(node, index), credit_cost: 0, cache_hit: false, attempt: 1,
     })),
     created_at: '2026-07-11T11:03:00Z', started_at: '2026-07-11T11:03:05Z', finished_at: '2026-07-11T11:05:18Z', updated_at: '2026-07-11T11:05:18Z',
   }
@@ -224,6 +245,7 @@ export function createFixtureState(baseURL) {
       status: node.id === 'video_2' ? 'failed' : index < 10 ? 'succeeded' : 'canceled', progress: node.id === 'video_2' ? 42 : index < 10 ? 100 : 0,
       error_code: node.id === 'video_2' ? 'UPSTREAM_VIDEO_FAILED' : undefined,
       error_message: node.id === 'video_2' ? '上游服务暂时不可用' : undefined, credit_cost: 0, cache_hit: false,
+      output: node.id === 'video_2' ? undefined : nodeOutput(node, index), attempt: 1,
     })),
     created_at: '2026-07-11T10:40:00Z', started_at: '2026-07-11T10:40:04Z', finished_at: '2026-07-11T10:42:31Z', updated_at: '2026-07-11T10:42:31Z',
   }

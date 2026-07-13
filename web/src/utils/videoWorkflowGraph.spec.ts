@@ -8,10 +8,8 @@ import {
   cloneWorkflowGraph,
   connectionError,
   createStarterVideoWorkflowGraph,
-  desktopVideoWorkflowReady,
   makeVideoWorkflowNode,
   migrateVideoWorkflowGraph,
-  mobileWorkspaceView,
   moveTimelineClip,
   nextVideoWorkflowImageTransform,
   normalizeImageTransform,
@@ -367,18 +365,6 @@ describe('video timeline', () => {
       .not.toContain('timeline_clip_count')
     expect(validateVideoWorkflowGraph(graph, { requireComplete: true }).map((issue) => issue.code))
       .toContain('timeline_clip_count')
-  })
-})
-
-describe('mobile workspace compatibility', () => {
-  it('keeps the legacy segmented helper stable for existing callers', () => {
-    expect(mobileWorkspaceView(390, 'canvas')).toBe('canvas')
-    expect(mobileWorkspaceView(1440, 'timeline')).toBe('all')
-  })
-
-  it('blocks the video canvas below the 1280px desktop boundary', () => {
-    expect(desktopVideoWorkflowReady(1279)).toBe(false)
-    expect(desktopVideoWorkflowReady(1280)).toBe(true)
   })
 })
 

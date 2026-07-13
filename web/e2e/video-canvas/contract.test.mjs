@@ -61,6 +61,10 @@ test('视频画布浏览器 Mock API 契约', async (t) => {
     assert.equal(history.data.items[0].graph_snapshot, undefined)
     const secondHistory = await request('/api/me/video-workflows/wf-rain-reunion/runs?limit=1&offset=1')
     assert.equal(secondHistory.data.items[0].id, 'run-history-failed')
+    const historyDetail = await request('/api/me/video-workflow-runs/run-history-success')
+    const sceneOutput = historyDetail.data.node_runs.find((node) => node.node_id === 'scene_2').output
+    assert.match(sceneOutput.image_prompt, /电影感古风雨夜/)
+    assert.match(sceneOutput.video_prompt, /15 秒连续镜头/)
   })
 
   await t.test('素材上传、图片变换、版本签名与修订冲突', async () => {

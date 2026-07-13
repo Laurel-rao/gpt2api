@@ -14,12 +14,10 @@ import {
 import {
   Aim,
   ArrowLeft,
-  ArrowUp,
   Check,
   Clock,
   Download,
   EditPen,
-  Grid,
   Menu,
   MoreFilled,
   Plus,
@@ -39,7 +37,6 @@ import VideoWorkflowMediaPreview from '@/components/video-workflow/VideoWorkflow
 import VideoWorkflowOutline from '@/components/video-workflow/VideoWorkflowOutline.vue'
 import VideoWorkflowRunHistory from '@/components/video-workflow/VideoWorkflowRunHistory.vue'
 import VideoWorkflowRunConfirm from '@/components/video-workflow/VideoWorkflowRunConfirm.vue'
-import VideoWorkflowTimeline from '@/components/video-workflow/VideoWorkflowTimeline.vue'
 import {
   approveVideoWorkflowCharacters,
   approveVideoWorkflowStoryboard,
@@ -64,12 +61,15 @@ import {
   type VideoWorkflowEdge,
   type VideoWorkflowGraph,
   type VideoWorkflowNode,
+  type VideoWorkflowNodeHistoryEntry,
+  type VideoWorkflowNodeRun,
   type VideoWorkflowRun,
   type VideoWorkflowRunMode,
   type VideoWorkflowTemplate,
   type VideoWorkflowTimelineClip,
 } from '@/api/videoWorkflow'
 import {
+  DEFAULT_VIDEO_WORKFLOW_VIDEO_MODEL,
   VIDEO_WORKFLOW_MAX_EDGES,
   VIDEO_WORKFLOW_MAX_NODES,
   VIDEO_WORKFLOW_NODE_CATALOG,
@@ -78,17 +78,14 @@ import {
   connectionError,
   createTimelineClip,
   createStarterVideoWorkflowGraph,
-  desktopVideoWorkflowReady,
   migrateVideoWorkflowGraph,
   makeVideoWorkflowNode,
-  moveTimelineClip,
   nextVideoWorkflowImageTransform,
   normalizeImageTransform,
   removeNodeFromGraph,
   resolveVideoWorkflowAssetBinding,
   resolveVideoWorkflowDisplayedStatus,
   resolveVideoWorkflowVideoModel,
-  updateTimelineClipTrim,
   validateVideoWorkflowGraph,
   videoWorkflowImageVersionTransformState,
   videoWorkflowNodePreviewURL,
@@ -125,6 +122,7 @@ const POLL_INTERVAL = 2500
 const AUTO_SAVE_DELAY = 800
 const HISTORY_LIMIT = 50
 const RUN_HISTORY_PAGE_SIZE = 20
+const NODE_HISTORY_LIMIT = 5
 const RUN_STORAGE_KEY = 'gpt2api.video-workflow-runs'
 const LAYOUT_STORAGE_KEY = 'gpt2api.video-workflow-layout.v2'
 const LOCAL_DRAFT_PREFIX = 'gpt2api.video-workflow-draft.'
@@ -137,7 +135,6 @@ const creating = ref(false)
 const runningAction = ref(false)
 const backendAvailable = ref(true)
 const revisionConflict = ref(false)
-const viewportWidth = ref(typeof window === 'undefined' ? 1440 : window.innerWidth)
 const templates = ref<VideoWorkflowTemplate[]>([])
 const workflows = ref<VideoWorkflow[]>([])
 const assets = ref<VideoAsset[]>([])
@@ -150,7 +147,6 @@ const selectedNodeID = ref('background_2')
 const selectedNodeIDs = ref<string[]>(['background_2'])
 const selectedEdgeIDs = ref<string[]>([])
 const selectedSummaryEdgeID = ref('')
-const selectedClipID = ref('clip_2')
 const dirty = ref(false)
 const autosaveReady = ref(false)
 const changeSequence = ref(0)
@@ -172,14 +168,12 @@ const pickingAsset = ref(false)
 const pendingConnection = ref<{ nodeID: string; portID: string } | null>(null)
 const quickConnectMenu = ref<{ x: number; y: number; position: { x: number; y: number } } | null>(null)
 const alignmentGuides = reactive<{ x: number | null; y: number | null }>({ x: null, y: null })
-const interactionArea = ref<'canvas' | 'timeline' | 'other'>('canvas')
 const selectedTemplateID = ref<string | number>('')
 const newWorkflowName = ref('雨夜重逢 · 60秒短剧')
 const characterSelections = ref<Record<string, string>>({})
 const storyboardJSON = ref('{}')
 const deletionToast = ref<{ count: number } | null>(null)
 const conflictDraftKey = ref('')
-const timelineRef = ref<InstanceType<typeof VideoWorkflowTimeline> | null>(null)
 const runConfirmRef = ref<InstanceType<typeof VideoWorkflowRunConfirm> | null>(null)
 const runHistoryVisible = ref(false)
 const runHistoryLoading = ref(false)
@@ -187,6 +181,8 @@ const runHistoryItems = ref<VideoWorkflowRun[]>([])
 const runHistoryTotal = ref(0)
 const runHistoryActionID = ref('')
 const runHistoryDetail = ref<VideoWorkflowRun | null>(null)
+const runDetailCache = ref<Record<string, VideoWorkflowRun>>({})
+const nodeHistoryLoading = ref(false)
 const jsonFileInput = ref<HTMLInputElement | null>(null)
 const jsonTransferBusy = ref(false)
 const mediaPreviewVisible = ref(false)
@@ -194,17 +190,14 @@ const mediaPreviewNode = ref<VideoWorkflowNode | null>(null)
 const mediaPreviewURL = ref('')
 const mediaPreviewLoading = ref(false)
 const mediaPreviewError = ref('')
-const panelLayout = reactive({ left: 248, right: 320, timeline: 196, inspectorOpen: true, timelineOpen: true })
+const panelLayout = reactive({ left: 248, right: 320, inspectorOpen: true })
 const canvasViewport = reactive({ x: 0, y: 0, zoom: 1 })
 
 let saveTimer: number | null = null
 let retryTimer: number | null = null
 let pollingTimer: number | null = null
 let deletionTimer: number | null = null
-let trimHistoryOpen = false
-let trimHistoryTimer: number | null = null
-let resizing: { kind: 'left' | 'right' | 'timeline'; start: number; value: number } | null = null
-let spaceGesture: { startedAt: number; moved: boolean } | null = null
+let resizing: { kind: 'left' | 'right'; start: number; value: number } | null = null
 let activeSavePromise: Promise<VideoWorkflow | null> | null = null
 let restoredLocalDraft = false
 const imageTransformQueue = new SerialVideoWorkflowOperationQueue()
@@ -212,6 +205,7 @@ let imageTransformContextGeneration = 0
 let deletedRecord: { before: VideoWorkflowGraph; nodeIDs: string[] } | null = null
 let pollingGeneration = 0
 let workspaceGeneration = 0
+let nodeHistoryGeneration = 0
 let mediaPreviewGeneration = 0
 let componentUnmounted = false
 let edgeCurveHistorySnapshot: VideoWorkflowGraph | null = null
@@ -226,13 +220,83 @@ const {
   screenToFlowCoordinate,
 } = useVueFlow('video-workflow-flow')
 
-const desktopReady = computed(() => desktopVideoWorkflowReady(viewportWidth.value))
 const selectedNode = computed(() => graph.value.nodes.find((node) => node.id === selectedNodeID.value) || null)
 const timelineNode = computed(() => graph.value.nodes.find((node) => node.type === 'timeline') || null)
 const timelineClips = computed<VideoWorkflowTimelineClip[]>(() => Array.isArray(timelineNode.value?.config.clips)
   ? timelineNode.value!.config.clips as VideoWorkflowTimelineClip[]
   : [])
-const activeRunNodeMap = computed(() => new Map((activeRun.value?.node_runs || []).map((item) => [item.node_id, item])))
+const activeRunMatchesWorkflow = computed(() => Boolean(
+  activeRun.value
+  && activeWorkflow.value
+  && activeRun.value.workflow_revision === activeWorkflow.value.revision,
+))
+const activeRunNodeMap = computed(() => new Map(
+  (activeRunMatchesWorkflow.value ? activeRun.value?.node_runs || [] : []).map((item) => [item.node_id, item]),
+))
+const selectedNodeRun = computed(() => activeRunNodeMap.value.get(selectedNodeID.value) || null)
+const selectedNodeUpstreams = computed(() => {
+  const target = selectedNode.value
+  if (!target) return []
+  return (target.inputs || []).map((port) => ({
+    id: port.id,
+    label: port.label || port.id,
+    type: port.type,
+    required: Boolean(port.required),
+    sources: graph.value.edges.filter((edge) => edge.target === target.id && edge.target_port === port.id).map((edge) => {
+      const source = graph.value.nodes.find((node) => node.id === edge.source)
+      const displayed = source ? displayNode(source) : null
+      const output = source?.outputs?.find((item) => item.id === edge.source_port)
+      return {
+        id: edge.id,
+        node_id: edge.source,
+        node_title: source ? nodeTitle(source) : edge.source,
+        node_type: source?.type || '',
+        port_label: output?.label || edge.source_port,
+        status: displayed?.status || 'idle',
+      }
+    }),
+  }))
+})
+const selectedNodeHistory = computed<VideoWorkflowNodeHistoryEntry[]>(() => {
+  if (!selectedNodeID.value) return []
+  const runs = [activeRun.value, ...Object.values(runDetailCache.value)].filter((run): run is VideoWorkflowRun => Boolean(run))
+  const unique = new Map<string, VideoWorkflowNodeHistoryEntry>()
+  for (const run of runs) {
+    const nodeRun = run.node_runs?.find((item) => item.node_id === selectedNodeID.value)
+    if (!nodeRun || unique.has(run.id)) continue
+    unique.set(run.id, {
+      run_id: run.id,
+      workflow_revision: run.workflow_revision,
+      run_status: run.status,
+      run_mode: run.run_mode,
+      run_created_at: nodeRun.created_at || run.created_at,
+      node_run: nodeRun,
+    })
+  }
+  return [...unique.values()]
+    .sort((a, b) => new Date(b.run_created_at || 0).getTime() - new Date(a.run_created_at || 0).getTime())
+    .slice(0, NODE_HISTORY_LIMIT)
+})
+const selectedNodeModel = computed(() => {
+  const type = selectedNode.value?.type || ''
+  if (['story_brief', 'script', 'scene'].includes(type)) return graph.value.settings.text_model || 'default'
+  if (['character', 'background', 'image'].includes(type)) return graph.value.settings.image_model || 'gpt-image-2'
+  if (type === 'video') return currentVideoModel(selectedNode.value)
+  return ''
+})
+const selectedNodeModelOptions = computed(() => {
+  const type = selectedNode.value?.type || ''
+  const defaults = ['story_brief', 'script', 'scene'].includes(type)
+    ? [{ value: 'default', label: '系统默认文本模型' }]
+    : ['character', 'background', 'image'].includes(type)
+      ? [{ value: 'gpt-image-2', label: 'GPT Image 2' }]
+      : type === 'video'
+        ? [{ value: DEFAULT_VIDEO_WORKFLOW_VIDEO_MODEL, label: 'Wan2.7-r2v' }]
+        : []
+  return selectedNodeModel.value && !defaults.some((item) => item.value === selectedNodeModel.value)
+    ? [{ value: selectedNodeModel.value, label: selectedNodeModel.value }, ...defaults]
+    : defaults
+})
 const isRunActive = computed(() => ['queued', 'running', 'awaiting_character_approval', 'awaiting_storyboard_approval', 'cancel_pending'].includes(activeRun.value?.status || ''))
 const saveState = computed(() => {
   if (revisionConflict.value) return '修订冲突 · 已保留本地副本'
@@ -248,7 +312,6 @@ const runStatus = computed(() => ({
 const workspaceStyle = computed(() => ({
   '--left-panel': `${panelLayout.left}px`,
   '--right-panel': panelLayout.inspectorOpen ? `${panelLayout.right}px` : '0px',
-  '--timeline-height': panelLayout.timelineOpen ? `${panelLayout.timeline}px` : '0px',
 }))
 const modKeyCode = computed(() => typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? 'Meta' : 'Control')
 const selectedCompatibleSources = computed(() => {
@@ -327,7 +390,6 @@ function closeMediaPreview() {
   mediaPreviewLoading.value = false
   mediaPreviewURL.value = ''
   mediaPreviewError.value = ''
-  spaceGesture = null
 }
 
 function updateMediaPreviewVisible(visible: boolean) {
@@ -387,7 +449,6 @@ async function openMediaPreview(sourceNode: VideoWorkflowNode) {
   mediaPreviewURL.value = ''
   mediaPreviewError.value = ''
   mediaPreviewLoading.value = true
-  spaceGesture = null
 
   let fallbackURL = videoWorkflowNodePreviewURL(node)
   let binding = mediaBindingForNode(node)
@@ -636,7 +697,6 @@ function updateCanvasViewport(viewport: { x: number; y: number; zoom: number }) 
 }
 
 function navigateFromMinimap(position: { x: number; y: number }) {
-  interactionArea.value = 'canvas'
   void setCenter(position.x, position.y, { zoom: canvasViewport.zoom, duration: 0 })
 }
 
@@ -695,6 +755,9 @@ async function loadWorkspace(workflow?: VideoWorkflow | null) {
   runHistoryItems.value = []
   runHistoryTotal.value = 0
   runHistoryDetail.value = null
+  runDetailCache.value = {}
+  nodeHistoryLoading.value = false
+  nodeHistoryGeneration += 1
   activeRun.value = null
   if (next) {
     const latestPage = await listVideoWorkflowRuns(next.id, { limit: 1, offset: 0 }).catch(() => null)
@@ -713,7 +776,6 @@ async function loadWorkspace(workflow?: VideoWorkflow | null) {
   selectedNodeIDs.value = preferred ? [preferred.id] : []
   selectedEdgeIDs.value = []
   selectedSummaryEdgeID.value = ''
-  selectedClipID.value = timelineClips.value[1]?.id || timelineClips.value[0]?.id || ''
   undoStack.value = []
   redoStack.value = []
   revisionConflict.value = false
@@ -754,6 +816,37 @@ async function loadRunHistory(reset = true) {
   }
 }
 
+async function loadSelectedNodeHistory() {
+  const workflowID = activeWorkflow.value?.id
+  const nodeID = selectedNodeID.value
+  if (!workflowID || !nodeID) return
+  const generation = ++nodeHistoryGeneration
+  nodeHistoryLoading.value = true
+  try {
+    const page = await listVideoWorkflowRuns(workflowID, { limit: NODE_HISTORY_LIMIT, offset: 0 })
+    if (componentUnmounted || workflowID !== activeWorkflow.value?.id) return
+    const merged = [...page.items, ...runHistoryItems.value]
+    runHistoryItems.value = [...new Map(merged.map((item) => [item.id, item])).values()]
+      .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
+    runHistoryTotal.value = Math.max(runHistoryTotal.value, page.total)
+    const missing = page.items.filter((run) => (
+      run.id !== activeRun.value?.id
+      && !run.node_runs
+      && !runDetailCache.value[run.id]
+    ))
+    const details = await Promise.all(missing.map((run) => getVideoWorkflowRun(run.id, true).catch(() => null)))
+    if (componentUnmounted || workflowID !== activeWorkflow.value?.id) return
+    const cache = { ...runDetailCache.value }
+    for (const detail of details) if (detail) cache[detail.id] = detail
+    for (const run of page.items) if (run.node_runs) cache[run.id] = run
+    runDetailCache.value = cache
+  } catch {
+    if (generation === nodeHistoryGeneration) ElMessage.error('节点历史加载失败，请重试')
+  } finally {
+    if (generation === nodeHistoryGeneration) nodeHistoryLoading.value = false
+  }
+}
+
 function openRunHistory() {
   runHistoryVisible.value = true
   runHistoryDetail.value = null
@@ -764,6 +857,7 @@ async function inspectHistoryRun(run: VideoWorkflowRun) {
   runHistoryActionID.value = run.id
   try {
     runHistoryDetail.value = await getVideoWorkflowRun(run.id, true)
+    runDetailCache.value = { ...runDetailCache.value, [run.id]: runHistoryDetail.value }
   } catch { ElMessage.error('运行详情加载失败') } finally { runHistoryActionID.value = '' }
 }
 
@@ -981,7 +1075,6 @@ async function importWorkflowJSON(event: Event) {
     selectedNodeID.value = preferred?.id || ''
     selectedNodeIDs.value = preferred ? [preferred.id] : []
     selectedEdgeIDs.value = []
-    selectedClipID.value = timelineClips.value[0]?.id || ''
     markDirty()
     syncFlow()
     await nextTick()
@@ -1130,7 +1223,36 @@ function updateNodeConfig(key: string, value: any) {
   const id = selectedNode.value.id
   commitGraph((target) => {
     const node = target.nodes.find((item) => item.id === id)
-    if (node) { node.config[key] = value; markDownstreamStale(target, id) }
+    if (node) {
+      node.config[key] = value
+      node.status = 'stale'
+      node.stale_reason = '节点参数已修改，请重新运行'
+      markDownstreamStale(target, id)
+    }
+  })
+}
+
+function updateNodeModel(value: string) {
+  const type = selectedNode.value?.type || ''
+  const setting: 'text_model' | 'image_model' | 'video_model' | '' = ['story_brief', 'script', 'scene'].includes(type)
+    ? 'text_model'
+    : ['character', 'background', 'image'].includes(type)
+      ? 'image_model'
+      : type === 'video' ? 'video_model' : ''
+  if (!setting) return
+  const affectedTypes = setting === 'text_model'
+    ? new Set(['story_brief', 'script', 'scene'])
+    : setting === 'image_model'
+      ? new Set(['character', 'background', 'image'])
+      : new Set(['video'])
+  commitGraph((target) => {
+    target.settings[setting] = value
+    for (const node of target.nodes.filter((item) => affectedTypes.has(item.type))) {
+      node.config.model = value
+      node.status = 'stale'
+      node.stale_reason = '执行模型已修改，请重新运行'
+      markDownstreamStale(target, node.id)
+    }
   })
 }
 
@@ -1500,28 +1622,6 @@ function setTimelineClips(target: VideoWorkflowGraph, clips: VideoWorkflowTimeli
   return true
 }
 
-function moveClip(from: number, to: number) {
-  if (to < 0 || to >= timelineClips.value.length) return
-  commitGraph((target) => setTimelineClips(target, moveTimelineClip(timelineClips.value, from, to)), { sync: false })
-}
-
-function trimClip(clipID: string, trimInMS: number, trimOutMS: number) {
-  if (!trimHistoryOpen) { pushUndo(); trimHistoryOpen = true }
-  const next = timelineClips.value.map((clip) => clip.id === clipID ? updateTimelineClipTrim(clip, trimInMS, trimOutMS) : clip)
-  setTimelineClips(graph.value, next)
-  markDirty()
-  if (trimHistoryTimer) window.clearTimeout(trimHistoryTimer)
-  trimHistoryTimer = window.setTimeout(() => { trimHistoryOpen = false }, 400)
-}
-
-function removeClip(clipID: string) {
-  if (timelineClips.value.length <= 1) return ElMessage.warning('时间线至少保留 1 个片段')
-  commitGraph((target) => {
-    setTimelineClips(target, timelineClips.value.filter((clip) => clip.id !== clipID))
-  }, { sync: false })
-  if (selectedClipID.value === clipID) selectedClipID.value = timelineClips.value[0]?.id || ''
-}
-
 function addSelectedVideoToTimeline() {
   const node = selectedNode.value
   if (!node || node.type !== 'video') return
@@ -1537,10 +1637,7 @@ function addSelectedVideoToTimeline() {
     const source = target.nodes.find((item) => item.id === node.id)
     if (source) source.enabled = true
   }, { sync: false })
-  selectedClipID.value = clip.id
 }
-
-function selectClip(clip: VideoWorkflowTimelineClip) { selectedClipID.value = clip.id; selectNode(clip.source_node_id) }
 
 async function replaceImage(file: File) {
   if (!selectedNode.value) return
@@ -1983,8 +2080,7 @@ function generateFromHistory() {
 }
 
 function handleCanvasKeydown(event: KeyboardEvent) {
-  if (!desktopReady.value) return
-  if (mediaPreviewVisible.value) { spaceGesture = null; return }
+  if (mediaPreviewVisible.value) return
   const target = event.target as HTMLElement | null
   if (target?.matches('input, textarea, select, [contenteditable="true"]') || target?.closest('.el-dialog, .el-message-box')) return
   const mod = event.metaKey || event.ctrlKey
@@ -2014,16 +2110,6 @@ function handleCanvasKeydown(event: KeyboardEvent) {
       .then(({ value }) => updateNodeTitle(value)).catch(() => undefined)
     return
   }
-  if (event.key === ' ' && !event.repeat) {
-    const inCanvas = Boolean(target?.closest('.canvas-stage')) || interactionArea.value === 'canvas'
-    if (inCanvas) {
-      spaceGesture = { startedAt: performance.now(), moved: false }
-      return
-    }
-    event.preventDefault()
-    timelineRef.value?.togglePlayback()
-    return
-  }
   if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key) && selectedNodeIDs.value.length) {
     event.preventDefault()
     const amount = event.shiftKey ? 10 : 1
@@ -2041,32 +2127,17 @@ function handleCanvasKeydown(event: KeyboardEvent) {
   }
 }
 
-function handleCanvasKeyup(event: KeyboardEvent) {
-  if (!desktopReady.value) { spaceGesture = null; return }
-  if (mediaPreviewVisible.value) { spaceGesture = null; return }
-  if (event.key !== ' ' || !spaceGesture) return
-  const gesture = spaceGesture
-  spaceGesture = null
-  if (!gesture.moved && performance.now() - gesture.startedAt < 220) timelineRef.value?.togglePlayback()
-}
-
-function trackSpacePan(event: PointerEvent) {
-  if (spaceGesture && event.buttons) spaceGesture.moved = true
-}
-
-function startResize(kind: 'left' | 'right' | 'timeline', event: PointerEvent) {
-  resizing = { kind, start: kind === 'timeline' ? event.clientY : event.clientX, value: panelLayout[kind] }
+function startResize(kind: 'left' | 'right', event: PointerEvent) {
+  resizing = { kind, start: event.clientX, value: panelLayout[kind] }
   window.addEventListener('pointermove', resizePanel)
   window.addEventListener('pointerup', stopResize, { once: true })
   event.preventDefault()
 }
 function resizePanel(event: PointerEvent) {
   if (!resizing) return
-  const current = resizing.kind === 'timeline' ? event.clientY : event.clientX
-  const delta = current - resizing.start
+  const delta = event.clientX - resizing.start
   if (resizing.kind === 'left') panelLayout.left = Math.max(208, Math.min(340, resizing.value + delta))
   if (resizing.kind === 'right') panelLayout.right = Math.max(280, Math.min(420, resizing.value - delta))
-  if (resizing.kind === 'timeline') panelLayout.timeline = Math.max(160, Math.min(320, resizing.value - delta))
 }
 function stopResize() {
   resizing = null
@@ -2080,13 +2151,6 @@ function persistPanelLayout() {
 
 function setInspectorOpen(open: boolean) {
   panelLayout.inspectorOpen = open
-  interactionArea.value = 'canvas'
-  persistPanelLayout()
-}
-
-function setTimelineOpen(open: boolean) {
-  panelLayout.timelineOpen = open
-  interactionArea.value = 'canvas'
   persistPanelLayout()
 }
 
@@ -2095,13 +2159,10 @@ function restoreLayout() {
     const stored = JSON.parse(localStorage.getItem(LAYOUT_STORAGE_KEY) || '{}')
     if (Number.isFinite(stored.left)) panelLayout.left = Math.max(208, Math.min(340, stored.left))
     if (Number.isFinite(stored.right)) panelLayout.right = Math.max(280, Math.min(420, stored.right))
-    if (Number.isFinite(stored.timeline)) panelLayout.timeline = Math.max(160, Math.min(320, stored.timeline))
     if (typeof stored.inspectorOpen === 'boolean') panelLayout.inspectorOpen = stored.inspectorOpen
-    if (typeof stored.timelineOpen === 'boolean') panelLayout.timelineOpen = stored.timelineOpen
     if (['smart', 'all', 'hidden'].includes(stored.edgeDisplayMode)) edgeDisplayMode.value = stored.edgeDisplayMode
   } catch { /* 使用默认布局 */ }
 }
-function checkViewport() { viewportWidth.value = window.innerWidth }
 function beforeUnload(event: BeforeUnloadEvent) { persistLocalDraft(); if (dirty.value) { event.preventDefault(); event.returnValue = '' } }
 
 watch(() => activeRun.value?.status, (status) => {
@@ -2117,11 +2178,7 @@ watch(edgeDisplayMode, () => {
 
 onMounted(() => {
   restoreLayout()
-  checkViewport()
-  window.addEventListener('resize', checkViewport)
   window.addEventListener('keydown', handleCanvasKeydown)
-  window.addEventListener('keyup', handleCanvasKeyup)
-  window.addEventListener('pointermove', trackSpacePan)
   window.addEventListener('beforeunload', beforeUnload)
   void bootstrap()
 })
@@ -2136,11 +2193,7 @@ onBeforeUnmount(() => {
   if (saveTimer) window.clearTimeout(saveTimer)
   if (retryTimer) window.clearTimeout(retryTimer)
   if (deletionTimer) window.clearTimeout(deletionTimer)
-  if (trimHistoryTimer) window.clearTimeout(trimHistoryTimer)
-  window.removeEventListener('resize', checkViewport)
   window.removeEventListener('keydown', handleCanvasKeydown)
-  window.removeEventListener('keyup', handleCanvasKeyup)
-  window.removeEventListener('pointermove', trackSpacePan)
   window.removeEventListener('beforeunload', beforeUnload)
   window.removeEventListener('pointermove', resizePanel)
 })
@@ -2148,15 +2201,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="video-workflow-page" :style="workspaceStyle" v-loading="loading">
-    <div v-if="!desktopReady" class="desktop-required" role="alert">
-      <div class="desktop-icon"><Grid /></div>
-      <h1>视频画布请在桌面端使用</h1>
-      <p>当前窗口宽度 {{ viewportWidth }}px，至少需要 1280px。</p>
-      <el-button @click="router.push('/personal/dashboard')">返回个人中心</el-button>
-    </div>
-
-    <template v-else>
-      <header class="workspace-header" @pointerdown="interactionArea = 'other'">
+      <header class="workspace-header">
         <div class="brand-block"><span class="brand-mark"><Aim /></span><strong>灵境智创</strong></div>
         <button class="back-button" title="返回个人中心" @click="router.push('/personal/dashboard')"><ArrowLeft /></button>
         <div class="workflow-name">
@@ -2169,8 +2214,8 @@ onBeforeUnmount(() => {
         <div class="save-state" :class="{ dirty, offline: !backendAvailable }" aria-live="polite"><i /><span>{{ saveState }}</span></div>
         <div class="header-spacer" />
         <div v-if="runStatus" class="run-state" aria-live="polite"><i :class="activeRun?.status" />{{ runStatus }}<b v-if="activeRun?.progress !== undefined">{{ activeRun.progress }}%</b></div>
-        <button class="icon-button" title="撤销（⌘/Ctrl+Z）" :disabled="!undoStack.length" @click="undo"><RefreshLeft /></button>
-        <button class="icon-button" title="重做（⇧⌘/Ctrl+Z）" :disabled="!redoStack.length" @click="redo"><RefreshRight /></button>
+        <button class="icon-button undo-button" title="撤销（⌘/Ctrl+Z）" :disabled="!undoStack.length" @click="undo"><RefreshLeft /></button>
+        <button class="icon-button redo-button" title="重做（⇧⌘/Ctrl+Z）" :disabled="!redoStack.length" @click="redo"><RefreshRight /></button>
         <select v-model="graph.settings.aspect_ratio" class="header-select" aria-label="画幅" @change="markDirty"><option>9:16</option><option>16:9</option><option>1:1</option></select>
         <select v-model="graph.settings.resolution" class="header-select resolution" aria-label="分辨率" @change="markDirty"><option>720p</option><option>1080p</option></select>
         <button class="history-button" :aria-expanded="runHistoryVisible" @click="openRunHistory"><Clock />生成历史<span v-if="runHistoryTotal">{{ runHistoryTotal }}</span></button>
@@ -2241,7 +2286,6 @@ onBeforeUnmount(() => {
           :layout-busy="layoutBusy"
           :zoom="canvasViewport.zoom"
           :viewport="canvasViewport"
-          @interaction="interactionArea = 'canvas'"
           @drop-node="dropNode"
           @recover-conflict-draft="recoverConflictDraft"
           @group-selected="groupSelected"
@@ -2284,9 +2328,17 @@ onBeforeUnmount(() => {
           id="node-inspector"
           :node="selectedNode ? displayNode(selectedNode) : null"
           :assets="assets"
+          :upstreams="selectedNodeUpstreams"
+          :latest-run="selectedNodeRun"
+          :history="selectedNodeHistory"
+          :history-loading="nodeHistoryLoading"
+          :model-value="selectedNodeModel"
+          :model-options="selectedNodeModelOptions"
+          :revision="activeWorkflow?.revision || 0"
           :running="isRunActive"
           @update-title="updateNodeTitle"
           @update-config="updateNodeConfig"
+          @update-model="updateNodeModel"
           @transform="applyImageTransform"
           @select-version="selectImageVersion"
           @replace-file="replaceImage"
@@ -2299,23 +2351,9 @@ onBeforeUnmount(() => {
           @preview-output="previewOutput"
           @preview-media="openMediaPreview"
           @download-output="downloadOutput"
+          @request-history="loadSelectedNodeHistory"
+          @open-history="openRunHistory"
           @close="setInspectorOpen(false)"
-        />
-
-        <button v-if="panelLayout.timelineOpen" class="panel-resizer timeline-resizer" aria-label="调整时间线高度" @pointerdown="startResize('timeline', $event)" />
-        <VideoWorkflowTimeline
-          v-show="panelLayout.timelineOpen"
-          id="workflow-timeline"
-          ref="timelineRef"
-          :clips="timelineClips"
-          :nodes="graph.nodes"
-          :selected-clip-i-d="selectedClipID"
-          @pointerdown="interactionArea = 'timeline'"
-          @select="selectClip"
-          @move="moveClip"
-          @trim="trimClip"
-          @remove="removeClip"
-          @close="setTimelineOpen(false)"
         />
 
         <button
@@ -2326,14 +2364,6 @@ onBeforeUnmount(() => {
           aria-controls="node-inspector"
           @click="setInspectorOpen(true)"
         ><ArrowLeft /><span>节点详情</span></button>
-        <button
-          v-if="!panelLayout.timelineOpen"
-          class="panel-restore timeline-restore"
-          title="打开时间线"
-          aria-label="打开时间线"
-          aria-controls="workflow-timeline"
-          @click="setTimelineOpen(true)"
-        ><ArrowUp /><span>时间线</span></button>
       </div>
 
       <transition name="toast"><div v-if="deletionToast" class="undo-toast" role="status">已删除 {{ deletionToast.count }} 个节点<button @click="restoreDeletedNodes">撤销</button><span>5秒</span></div></transition>
@@ -2383,7 +2413,6 @@ onBeforeUnmount(() => {
       </el-dialog>
 
       <el-dialog v-model="storyboardDialogVisible" title="确认分镜剧本" width="760px" :close-on-click-modal="false"><el-input v-model="storyboardJSON" type="textarea" :rows="20" resize="none" class="storyboard-editor" /><template #footer><span v-if="!canApproveStoryboard" class="json-error">JSON 格式错误</span><el-button type="primary" :disabled="!canApproveStoryboard" @click="approveStoryboard">确认剧本并生成场景</el-button></template></el-dialog>
-    </template>
     <VideoWorkflowRunConfirm ref="runConfirmRef" />
   </div>
 </template>
@@ -2404,9 +2433,6 @@ onBeforeUnmount(() => {
   background: var(--shell);
   font-family: "Avenir Next", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
-.desktop-required { position: fixed; inset: 0; z-index: 2000; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; background: #f8fafc; text-align: center; }
-.desktop-icon { width: 58px; height: 58px; display: grid; place-items: center; color: #2563eb; background: #dbeafe; border-radius: 16px; }.desktop-icon svg { width: 28px; }
-.desktop-required h1 { margin: 6px 0 0; font-size: 22px; }.desktop-required p { margin: 0 0 8px; color: #64748b; font-size: 13px; }
 .workspace-header { height: 64px; display: grid; grid-template-columns: 138px 40px minmax(180px, 340px) 142px minmax(0, 1fr) auto 32px 32px 78px 86px 78px 92px auto 32px 32px; align-items: center; gap: 6px; box-sizing: border-box; padding: 0 16px; background: #fff; border-bottom: 1px solid var(--border); }
 .brand-block { display: flex; align-items: center; gap: 8px; }.brand-block strong { font-size: 19px; letter-spacing: -.5px; white-space: nowrap; }.brand-mark { width: 28px; height: 28px; display: grid; place-items: center; color: #fff; background: #2563eb; clip-path: polygon(50% 0, 100% 100%, 50% 75%, 0 100%); }.brand-mark svg { width: 17px; }
 .back-button, .icon-button { width: 32px; height: 32px; display: grid; place-items: center; color: #475569; background: #fff; border: 1px solid #dbe2ea; border-radius: 5px; cursor: pointer; }.back-button svg, .icon-button svg { width: 15px; }.icon-button:disabled { opacity: .35; cursor: default; }.back-button:hover, .icon-button:not(:disabled):hover { color: #2563eb; background: #eff6ff; border-color: #93c5fd; }
@@ -2416,14 +2442,28 @@ onBeforeUnmount(() => {
 .header-select { height: 32px; padding: 0 8px; color: #334155; background: #fff; border: 1px solid #dbe2ea; border-radius: 5px; outline: none; font-size: 11px; }.header-select.resolution { width: 86px; }
 .history-button, .preview-button, .stop-button { height: 34px; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 0 9px; color: #334155; background: #fff; border: 1px solid #dbe2ea; border-radius: 5px; cursor: pointer; white-space: nowrap; font-size: 11px; }.history-button:hover, .preview-button:hover { color: #2563eb; background: #eff6ff; border-color: #93c5fd; }.history-button svg, .preview-button svg, .stop-button svg { width: 14px; }.history-button span { min-width: 16px; padding: 1px 4px; color: #1d4ed8; background: #dbeafe; border-radius: 999px; font-size: 8px; }.stop-button { color: #dc2626; }
 .generate-button { height: 34px; }.generate-button :deep(.el-button) { height: 34px; border-radius: 5px; }.generate-button :deep(svg) { width: 12px; }
-.workspace-grid { position: relative; height: calc(100% - 64px); display: grid; grid-template-columns: var(--left-panel) minmax(0, 1fr) var(--right-panel); grid-template-rows: minmax(0, 1fr) var(--timeline-height); grid-template-areas: "library canvas inspector" "library timeline inspector"; }
-.workflow-library { grid-area: library; border-right: 1px solid var(--border); }.workflow-inspector { grid-area: inspector; border-left: 1px solid var(--border); }.workflow-timeline { grid-area: timeline; border-top: 1px solid var(--border); }
-.panel-resizer { position: absolute; z-index: 20; padding: 0; background: transparent; border: 0; }.left-resizer { left: calc(var(--left-panel) - 3px); top: 0; bottom: 0; width: 6px; cursor: col-resize; }.right-resizer { right: calc(var(--right-panel) - 3px); top: 0; bottom: 0; width: 6px; cursor: col-resize; }.timeline-resizer { left: var(--left-panel); right: var(--right-panel); bottom: calc(var(--timeline-height) - 3px); height: 6px; cursor: row-resize; }.panel-resizer:hover { background: rgba(37, 99, 235, .45); }
-.panel-restore { position: absolute; z-index: 21; height: 32px; display: flex; align-items: center; gap: 6px; padding: 0 10px; color: #334155; background: rgba(255, 255, 255, .94); border: 1px solid #cbd5e1; border-radius: 5px; box-shadow: 0 4px 14px rgba(15, 23, 42, .14); cursor: pointer; font-size: 11px; backdrop-filter: blur(8px); }.panel-restore:hover { color: #2563eb; background: #eff6ff; border-color: #93c5fd; }.panel-restore svg { width: 13px; }.inspector-restore { top: 12px; right: 12px; }.timeline-restore { left: calc(var(--left-panel) + (100% - var(--left-panel) - var(--right-panel)) / 2); bottom: 12px; transform: translateX(-50%); }
+.workspace-grid { position: relative; height: calc(100% - 64px); display: grid; grid-template-columns: var(--left-panel) minmax(0, 1fr) var(--right-panel); grid-template-areas: "library canvas inspector"; }
+.workflow-library { grid-area: library; border-right: 1px solid var(--border); }.workflow-inspector { grid-area: inspector; border-left: 1px solid var(--border); }
+.panel-resizer { position: absolute; z-index: 20; padding: 0; background: transparent; border: 0; }.left-resizer { left: calc(var(--left-panel) - 3px); top: 0; bottom: 0; width: 6px; cursor: col-resize; }.right-resizer { right: calc(var(--right-panel) - 3px); top: 0; bottom: 0; width: 6px; cursor: col-resize; }.panel-resizer:hover { background: rgba(37, 99, 235, .45); }
+.panel-restore { position: absolute; z-index: 21; height: 32px; display: flex; align-items: center; gap: 6px; padding: 0 10px; color: #334155; background: rgba(255, 255, 255, .94); border: 1px solid #cbd5e1; border-radius: 5px; box-shadow: 0 4px 14px rgba(15, 23, 42, .14); cursor: pointer; font-size: 11px; backdrop-filter: blur(8px); }.panel-restore:hover { color: #2563eb; background: #eff6ff; border-color: #93c5fd; }.panel-restore svg { width: 13px; }.inspector-restore { top: 12px; right: 12px; }
 .undo-toast { position: fixed; z-index: 120; left: 50%; bottom: 28px; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; padding: 10px 14px; color: #f8fafc; background: #1e293b; border-radius: 6px; box-shadow: 0 12px 28px rgba(15, 23, 42, .25); font-size: 12px; }.undo-toast button { color: #93c5fd; background: transparent; border: 0; cursor: pointer; font-weight: 650; }.undo-toast span { color: #94a3b8; font-size: 10px; }.toast-enter-active, .toast-leave-active { transition: opacity .18s ease, transform .18s ease; }.toast-enter-from, .toast-leave-to { opacity: 0; transform: translate(-50%, 8px); }
 .save-live { position: fixed; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .template-list { width: 100%; display: grid; gap: 8px; }.template-list :deep(.el-radio) { width: 100%; height: auto; min-height: 58px; margin: 0; padding: 10px 12px; }.template-list :deep(.el-radio__label) { display: flex; flex-direction: column; gap: 3px; }.template-list span, .dialog-empty { color: #64748b; font-size: 11px; }.dialog-empty { padding: 20px; }
 .candidate-roles { display: grid; gap: 16px; max-height: 62vh; overflow: auto; }.candidate-roles section header { display: flex; justify-content: space-between; margin-bottom: 8px; }.candidate-roles section header span { color: #64748b; font-size: 11px; }.candidate-roles section > div { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }.candidate-roles button { position: relative; height: 230px; overflow: hidden; color: #64748b; background: #f8fafc; border: 2px solid transparent; border-radius: 5px; }.candidate-roles button.selected { border-color: #2563eb; }.candidate-roles img { width: 100%; height: 100%; object-fit: contain; }.candidate-roles button > svg { position: absolute; right: 8px; top: 8px; width: 24px; padding: 4px; color: #fff; background: #2563eb; border-radius: 50%; }.storyboard-editor :deep(textarea) { font-family: "SFMono-Regular", Consolas, monospace; font-size: 11px; line-height: 1.6; }.json-error { margin-right: 12px; color: #dc2626; font-size: 11px; }
 button, select { font-family: inherit; } button:focus-visible, select:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+@media (max-width: 1279px) {
+  .brand-block { display: none; }
+  .workspace-header { grid-template-columns: 40px minmax(180px, 340px) 142px minmax(0, 1fr) auto 32px 32px 78px 86px 78px 92px auto 32px 32px; }
+}
+@media (max-width: 1023px) {
+  .save-state, .run-state, .undo-button, .redo-button, .history-button, .preview-button { display: none; }
+  .workspace-header { grid-template-columns: 40px minmax(120px, 1fr) minmax(0, 1fr) 72px 80px auto 32px 32px; }
+}
+@media (max-width: 767px) {
+  .header-select { display: none; }
+  .workspace-header { grid-template-columns: 40px minmax(100px, 1fr) minmax(0, 1fr) auto 32px 32px; padding-inline: 8px; }
+  .workspace-grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: "canvas"; }
+  .workflow-library, .workflow-inspector, .left-resizer, .right-resizer, .inspector-restore { display: none !important; }
+}
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; } }
 </style>

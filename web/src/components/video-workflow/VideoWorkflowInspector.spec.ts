@@ -61,8 +61,14 @@ describe('VideoWorkflowInspector', () => {
   })
 
   it('provides a keyboard-accessible connection action', async () => {
-    const wrapper = mount(VideoWorkflowInspector, { props: { node, assets } })
-    await wrapper.find('.ports-section button').trigger('click')
+    const wrapper = mount(VideoWorkflowInspector, {
+      props: {
+        node,
+        assets,
+        upstreams: [{ id: 'scene', label: '场景描述', type: 'scene', required: true, sources: [] }],
+      },
+    })
+    await wrapper.find('.unconnected button').trigger('click')
     expect(wrapper.emitted('add-connection')?.[0]).toEqual(['scene'])
   })
 
@@ -81,8 +87,67 @@ describe('VideoWorkflowInspector', () => {
       position: { x: 0, y: 0 },
       config: { model: 'wan2.7-r2v' },
     }
-    const wrapper = mount(VideoWorkflowInspector, { props: { node: videoNode, assets: [] } })
-    expect(wrapper.find('.locked-section b').text()).toBe('Wan2.7-r2v')
+    const wrapper = mount(VideoWorkflowInspector, {
+      props: {
+        node: videoNode,
+        assets: [],
+        modelValue: 'wan2.7-r2v',
+        modelOptions: [{ value: 'wan2.7-r2v', label: 'Wan2.7-r2v' }],
+      },
+    })
+    expect((wrapper.find('#node-model').element as HTMLSelectElement).value).toBe('wan2.7-r2v')
+    expect(wrapper.find('#node-model option').text()).toBe('Wan2.7-r2v')
+  })
+
+  it('uses the same five information tabs for every node', () => {
+    const wrapper = mount(VideoWorkflowInspector, { props: { node, assets } })
+    expect(wrapper.findAll('.inspector-tabs button').map((item) => item.text())).toEqual(['上游', '状态', '历史', '输出', '参数'])
+    expect(wrapper.findAll('.inspector-panel')).toHaveLength(5)
+  })
+
+  it('loads real node history on demand and renders revision metadata', async () => {
+    const wrapper = mount(VideoWorkflowInspector, {
+      props: {
+        node,
+        assets,
+        history: [{
+          run_id: 'run-1', workflow_revision: 12, run_status: 'succeeded', run_created_at: '2026-07-13T08:00:00Z',
+          node_run: {
+            id: 'node-run-1', node_id: node.id, status: 'succeeded', attempt: 2, credit_cost: 8, cache_hit: false,
+            output: { summary: '历史雨巷画面' },
+          },
+        }],
+      },
+    })
+    await wrapper.findAll('.inspector-tabs button')[2].trigger('click')
+    expect(wrapper.emitted('request-history')).toHaveLength(1)
+    expect(wrapper.find('.node-history-list').text()).toContain('R12')
+    expect(wrapper.find('.node-history-list').text()).toContain('尝试 2')
+    await wrapper.find('.history-output-button').trigger('click')
+    expect(wrapper.find('.output-panel').text()).toContain('历史 R12')
+    expect(wrapper.find('.output-panel').text()).toContain('历史雨巷画面')
+  })
+
+  it('shows structured node output and emits model changes', async () => {
+    const outputNode: VideoWorkflowNode = {
+      ...node,
+      output: { summary: '雨巷对峙', image_prompt: '电影感雨夜街道', camera: { shot: '中景' } },
+    }
+    const wrapper = mount(VideoWorkflowInspector, {
+      props: {
+        node: outputNode,
+        assets,
+        modelValue: 'gpt-image-2',
+        modelOptions: [
+          { value: 'gpt-image-2', label: 'GPT Image 2' },
+          { value: 'image-next', label: 'Image Next' },
+        ],
+      },
+    })
+    expect(wrapper.find('.output-fields').text()).toContain('雨巷对峙')
+    expect(wrapper.find('.output-fields').text()).toContain('图片提示词')
+    await wrapper.find('#node-model').setValue('image-next')
+    expect(wrapper.emitted('update-model')?.[0]).toEqual(['image-next'])
   })
 
   it('never reapplies metadata transforms to a server-baked image version', () => {
