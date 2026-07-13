@@ -22,7 +22,9 @@ import {
   Fold,
   FullScreen,
   Grid,
+  Hide,
   Lock,
+  Loading,
   Minus,
   Operation,
   Plus,
@@ -31,13 +33,21 @@ import {
   Sort,
   SwitchButton,
   Unlock,
+  View,
 } from '@element-plus/icons-vue'
 import VideoWorkflowNodeCard from './VideoWorkflowNodeCard.vue'
 import VideoWorkflowBezierEdge from './VideoWorkflowBezierEdge.vue'
+import VideoWorkflowAssetBus from './VideoWorkflowAssetBus.vue'
 import type { VideoWorkflowNode, VideoWorkflowPosition } from '@/api/videoWorkflow'
+import type { VideoWorkflowEdgeDisplayMode } from '@/utils/videoWorkflowPresentation'
 
 type CanvasTool = 'select' | 'pan' | 'connect'
-type FlowData = { node?: VideoWorkflowNode; zone?: { title: string; subtitle: string; enabled?: boolean } }
+type FlowData = {
+  node?: VideoWorkflowNode
+  zone?: { title: string; subtitle: string; enabled?: boolean }
+  bus?: { sourceCount: number; targetCount: number }
+  collapsedInputPortIDs?: string[]
+}
 type QuickConnectItem = { type: string; label: string }
 type QuickConnectMenu = { x: number; y: number }
 
@@ -54,6 +64,8 @@ const props = defineProps<{
   graphNodes: VideoWorkflowNode[]
   selectedNodeIDs: string[]
   selectedNodeLocked: boolean
+  edgeDisplayMode: VideoWorkflowEdgeDisplayMode
+  layoutBusy: boolean
   zoom: number
   viewport: ViewportTransform
 }>()
@@ -67,7 +79,8 @@ const emit = defineEmits<{
   'recover-conflict-draft': []
   'group-selected': []
   'ungroup-selected': []
-  'auto-layout': []
+  'auto-layout': [mode: 'auto' | 'selected_auto' | 'all']
+  'update:edgeDisplayMode': [mode: VideoWorkflowEdgeDisplayMode]
   'align-selected': [axis: 'x' | 'y']
   'distribute-selected': [axis: 'x' | 'y']
   'toggle-enabled': []
@@ -229,7 +242,21 @@ function emitNodeClick(payload: NodeMouseEvent) {
       <button :class="{ active: activeTool === 'connect' }" title="连线" @click="emit('update:activeTool', 'connect')"><ConnectionIcon /></button>
       <button title="建立分组（⌘/Ctrl+G）" @click="emit('group-selected')"><Grid /></button>
       <button title="解除分组（⇧⌘/Ctrl+G）" @click="emit('ungroup-selected')"><Grid class="ungroup-icon" /></button>
-      <button title="自动横向布局" @click="emit('auto-layout')"><Sort /></button>
+      <el-dropdown
+        trigger="click"
+        placement="right-start"
+        :disabled="layoutBusy"
+        @command="(mode: 'auto' | 'selected_auto' | 'all') => emit('auto-layout', mode)"
+      >
+        <button title="整理画布" aria-label="整理画布" :aria-busy="layoutBusy"><component :is="layoutBusy ? Loading : Sort" /></button>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="auto">整理自动节点</el-dropdown-item>
+            <el-dropdown-item command="selected_auto">所选恢复自动布局</el-dropdown-item>
+            <el-dropdown-item command="all" divided>重新整理全部…</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
       <span />
       <button title="左对齐" @click="emit('align-selected', 'x')"><Operation /></button>
       <button title="顶部对齐" @click="emit('align-selected', 'y')"><Operation class="rotate-icon" /></button>
@@ -282,7 +309,8 @@ function emitNodeClick(payload: NodeMouseEvent) {
       @viewport-change="emit('viewport-change', $event)"
     >
       <template #node-zone="{ data }"><section :class="['flow-zone', { disabled: data.zone.enabled === false }]"><header><b>{{ data.zone.title }}</b><span>{{ data.zone.subtitle }}</span></header></section></template>
-      <template #node-workflow="{ data, selected }"><VideoWorkflowNodeCard v-if="data.node" :node="data.node" :selected="selected" @preview-media="emit('preview-media', $event)" /></template>
+      <template #node-workflow="{ data, selected }"><VideoWorkflowNodeCard v-if="data.node" :node="data.node" :selected="selected" :collapsed-input-port-i-ds="data.collapsedInputPortIDs" @preview-media="emit('preview-media', $event)" /></template>
+      <template #node-assetBus="{ data, selected }"><VideoWorkflowAssetBus v-if="data.bus" v-bind="data.bus" :selected="selected" /></template>
       <template #edge-adjustable="edgeProps">
         <VideoWorkflowBezierEdge
           v-bind="edgeProps"
@@ -317,6 +345,11 @@ function emitNodeClick(payload: NodeMouseEvent) {
       <i v-for="node in graphNodes" :key="node.id" :class="{ selected: selectedNodeIDs.includes(node.id) }" :style="minimapNodeStyle(node)" />
       <span class="minimap-viewport" :style="minimapViewportStyle" />
     </div>
+    <div class="edge-display-controls" role="group" aria-label="连线显示模式">
+      <button title="智能显示连线" aria-label="智能显示连线" :aria-pressed="edgeDisplayMode === 'smart'" :class="{ active: edgeDisplayMode === 'smart' }" @click="emit('update:edgeDisplayMode', 'smart')"><ConnectionIcon /></button>
+      <button title="显示全部连线" aria-label="显示全部连线" :aria-pressed="edgeDisplayMode === 'all'" :class="{ active: edgeDisplayMode === 'all' }" @click="emit('update:edgeDisplayMode', 'all')"><View /></button>
+      <button title="隐藏非相关连线" aria-label="隐藏非相关连线" :aria-pressed="edgeDisplayMode === 'hidden'" :class="{ active: edgeDisplayMode === 'hidden' }" @click="emit('update:edgeDisplayMode', 'hidden')"><Hide /></button>
+    </div>
     <div class="zoom-controls"><button title="缩小" @click="emit('zoom-out')"><Minus /></button><b>{{ Math.round(zoom * 100) }}%</b><button title="放大" @click="emit('zoom-in')"><Plus /></button><button title="适应全部" @click="emit('fit-view')"><FullScreen /></button></div>
   </main>
 </template>
@@ -332,9 +365,11 @@ function emitNodeClick(payload: NodeMouseEvent) {
 .alignment-guide { position: absolute; z-index: 6; pointer-events: none; background: #60a5fa; box-shadow: 0 0 0 1px rgba(96, 165, 250, .18); }.alignment-guide.vertical { top: 0; bottom: 0; width: 1px; }.alignment-guide.horizontal { left: 0; right: 0; height: 1px; }
 .quick-connect-menu { position: absolute; z-index: 30; width: 174px; display: grid; gap: 4px; padding: 8px; color: #e2e8f0; background: #222831; border: 1px solid #64748b; border-radius: 6px; box-shadow: 0 14px 32px rgba(0, 0, 0, .4); }.quick-connect-menu strong { padding: 3px 5px 6px; font-size: 10px; }.quick-connect-menu button { height: 30px; padding: 0 8px; color: #e2e8f0; text-align: left; background: #2b323c; border: 0; border-radius: 4px; cursor: pointer; font-size: 10px; }.quick-connect-menu button:hover { background: #2563eb; }.quick-connect-menu button.cancel { color: #94a3b8; background: transparent; }
 .flow-zone { width: 100%; height: 100%; box-sizing: border-box; color: #94a3b8; background: rgba(30, 35, 43, .28); border: 1px dashed #3c4653; border-radius: 8px; }.flow-zone.disabled { opacity: .36; }.flow-zone header { height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-bottom: 1px solid rgba(71, 85, 105, .45); }.flow-zone b { font-size: 10px; }.flow-zone span { color: #64748b; font-size: 9px; }
-.canvas-tools { position: absolute; z-index: 8; left: 16px; top: 48px; width: 38px; display: grid; padding: 4px; background: rgba(30, 35, 43, .94); border: 1px solid #47515e; border-radius: 6px; box-shadow: 0 10px 24px rgba(0, 0, 0, .26); }.canvas-tools button { width: 30px; height: 30px; display: grid; place-items: center; color: #b9c2ce; background: transparent; border: 0; border-radius: 4px; cursor: pointer; }.canvas-tools button:hover, .canvas-tools button.active { color: #fff; background: #2563eb; }.canvas-tools button:focus-visible { outline: 2px solid #93c5fd; outline-offset: 1px; }.canvas-tools svg { width: 15px; }.canvas-tools > span { height: 1px; margin: 4px 2px; background: #47515e; }.rotate-icon { transform: rotate(90deg); }.ungroup-icon { opacity: .72; transform: scale(.78); }
+.canvas-tools { position: absolute; z-index: 8; left: 16px; top: 48px; width: 38px; display: grid; padding: 4px; background: rgba(30, 35, 43, .94); border: 1px solid #47515e; border-radius: 6px; box-shadow: 0 10px 24px rgba(0, 0, 0, .26); }.canvas-tools button { width: 30px; height: 30px; display: grid; place-items: center; color: #b9c2ce; background: transparent; border: 0; border-radius: 4px; cursor: pointer; }.canvas-tools button:hover, .canvas-tools button.active { color: #fff; background: #2563eb; }.canvas-tools button:focus-visible { outline: 2px solid #93c5fd; outline-offset: 1px; }.canvas-tools button[aria-busy="true"] svg { animation: tool-spin 1s linear infinite; }.canvas-tools svg { width: 15px; }.canvas-tools > span { height: 1px; margin: 4px 2px; background: #47515e; }.rotate-icon { transform: rotate(90deg); }.ungroup-icon { opacity: .72; transform: scale(.78); }
 .canvas-minimap { position: absolute; z-index: 7; right: 16px; bottom: 54px; width: 150px; height: 92px; box-sizing: border-box; overflow: hidden; background: rgba(23, 28, 35, .94); border: 1px solid #66717f; border-radius: 5px; cursor: crosshair; touch-action: none; user-select: none; }.canvas-minimap:hover, .canvas-minimap:focus-visible, .canvas-minimap.dragging { border-color: #93c5fd; box-shadow: 0 0 0 2px rgba(96, 165, 250, .18); }.canvas-minimap.dragging { cursor: grabbing; }.canvas-minimap i { position: absolute; width: 16px; height: 7px; pointer-events: none; transform: translate(-50%, -50%); background: #7b8795; border-radius: 1px; }.canvas-minimap i.selected { background: #3b82f6; box-shadow: 0 0 0 1px #93c5fd; }.minimap-viewport { position: absolute; box-sizing: border-box; pointer-events: none; background: rgba(37, 99, 235, .08); border: 1px solid #60a5fa; }
+.edge-display-controls { position: absolute; z-index: 8; right: 174px; bottom: 14px; height: 32px; display: flex; align-items: center; background: rgba(23, 28, 35, .94); border: 1px solid #66717f; border-radius: 5px; }.edge-display-controls button { width: 32px; height: 30px; display: grid; place-items: center; padding: 0; color: #9aa6b2; background: transparent; border: 0; border-right: 1px solid #47515e; cursor: pointer; }.edge-display-controls button:last-child { border: 0; }.edge-display-controls button:hover, .edge-display-controls button.active { color: #fff; background: #2563eb; }.edge-display-controls svg { width: 13px; }
 .zoom-controls { position: absolute; z-index: 8; right: 16px; bottom: 14px; height: 32px; display: flex; align-items: center; color: #dbe2ea; background: rgba(23, 28, 35, .94); border: 1px solid #66717f; border-radius: 5px; }.zoom-controls button { width: 32px; height: 30px; display: grid; place-items: center; color: #dbe2ea; background: transparent; border: 0; border-right: 1px solid #47515e; cursor: pointer; }.zoom-controls button:last-child { border: 0; border-left: 1px solid #47515e; }.zoom-controls b { min-width: 50px; text-align: center; font-size: 10px; }.zoom-controls svg { width: 13px; }
 button { font-family: inherit; } button:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; } }
+@keyframes tool-spin { to { transform: rotate(360deg); } }
 </style>

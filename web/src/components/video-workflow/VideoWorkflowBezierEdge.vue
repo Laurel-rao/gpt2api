@@ -8,6 +8,7 @@ import { adjustableEdgeGeometry, normalizeEdgeCurve } from '@/utils/videoWorkflo
 interface CurveEdgeData {
   curve?: VideoWorkflowPosition
   route?: VideoWorkflowPosition[]
+  readonly?: boolean
 }
 
 const props = withDefaults(defineProps<{
@@ -161,7 +162,7 @@ onBeforeUnmount(removeDragListeners)
     :interaction-width="interactionWidth"
     :style="style"
   />
-  <g v-if="selected" class="curve-editor">
+  <g v-if="selected && !data?.readonly" class="curve-editor">
     <line
       v-if="data?.curve?.x || data?.curve?.y"
       class="curve-guide"

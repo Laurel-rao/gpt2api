@@ -17,6 +17,10 @@ const GROUP_PADDING = { left: 30, right: 30, top: 46, bottom: 18 }
 const GROUP_GAP = 40
 const COLLISION_PADDING = 14
 const ROUTE_LANE_PADDING = 30
+const PLACEMENT_STEP = 36
+const PLACEMENT_ATTEMPTS = 80
+
+export type VideoWorkflowLayoutMode = 'auto' | 'all'
 
 interface NodeBox {
   id: string
@@ -45,7 +49,7 @@ export function videoWorkflowNodeSize(node: VideoWorkflowNode) {
   return { width: 188, height: 108 }
 }
 
-function cloneGraph(graph: VideoWorkflowGraph): VideoWorkflowGraph {
+export function cloneLayoutGraph(graph: VideoWorkflowGraph): VideoWorkflowGraph {
   return JSON.parse(JSON.stringify(graph)) as VideoWorkflowGraph
 }
 
@@ -58,6 +62,90 @@ function overlaps(left: NodeBox, right: NodeBox, padding = 0) {
     && left.x + left.width + padding > right.x
     && left.y < right.y + right.height + padding
     && left.y + left.height + padding > right.y
+}
+
+function movableNode(node: VideoWorkflowNode, mode: VideoWorkflowLayoutMode) {
+  return !node.locked && (mode === 'all' || node.position_mode === 'auto')
+}
+
+export function videoWorkflowMovableNodeIDs(graph: VideoWorkflowGraph, mode: VideoWorkflowLayoutMode) {
+  return graph.nodes.filter((node) => movableNode(node, mode)).map((node) => node.id)
+}
+
+function nodeBoxAt(node: VideoWorkflowNode, position: VideoWorkflowPosition): NodeBox {
+  return { id: node.id, ...position, ...videoWorkflowNodeSize(node) }
+}
+
+function nearestAnchorOffset(
+  nodeID: string,
+  proposed: Map<string, VideoWorkflowPosition>,
+  fixed: VideoWorkflowNode[],
+) {
+  const position = proposed.get(nodeID)
+  if (!position || !fixed.length) return { x: 0, y: 0 }
+  let nearest: { distance: number; offset: VideoWorkflowPosition } | null = null
+  for (const anchor of fixed) {
+    const anchorProposal = proposed.get(anchor.id)
+    if (!anchorProposal) continue
+    const distance = Math.hypot(position.x - anchorProposal.x, position.y - anchorProposal.y)
+    const candidate = {
+      distance,
+      offset: {
+        x: anchor.position.x - anchorProposal.x,
+        y: anchor.position.y - anchorProposal.y,
+      },
+    }
+    if (!nearest || candidate.distance < nearest.distance) nearest = candidate
+  }
+  return nearest?.offset || { x: 0, y: 0 }
+}
+
+function freePosition(node: VideoWorkflowNode, preferred: VideoWorkflowPosition, occupied: NodeBox[]) {
+  const candidates: VideoWorkflowPosition[] = [{ ...preferred }]
+  for (let attempt = 1; attempt <= PLACEMENT_ATTEMPTS; attempt += 1) {
+    const ring = Math.ceil(attempt / 4)
+    const distance = ring * PLACEMENT_STEP
+    const direction = attempt % 4
+    if (direction === 1) candidates.push({ x: preferred.x, y: preferred.y + distance })
+    if (direction === 2) candidates.push({ x: preferred.x, y: preferred.y - distance })
+    if (direction === 3) candidates.push({ x: preferred.x + distance, y: preferred.y })
+    if (direction === 0) candidates.push({ x: preferred.x - distance, y: preferred.y })
+  }
+  return candidates.find((position) => !occupied.some((box) => overlaps(nodeBoxAt(node, position), box, 24))) || candidates.at(-1)!
+}
+
+export function applyVideoWorkflowLayoutProposal(
+  source: VideoWorkflowGraph,
+  proposed: Map<string, VideoWorkflowPosition>,
+  mode: VideoWorkflowLayoutMode,
+) {
+  const graph = cloneLayoutGraph(source)
+  const movable = graph.nodes.filter((node) => movableNode(node, mode))
+  const fixed = graph.nodes.filter((node) => !movableNode(node, mode))
+  const occupied = fixed.map((node) => nodeBoxAt(node, node.position))
+  const preferred = new Map<string, VideoWorkflowPosition>()
+
+  for (const node of movable) {
+    const candidate = proposed.get(node.id) || node.position
+    const offset = nearestAnchorOffset(node.id, proposed, fixed)
+    preferred.set(node.id, { x: candidate.x + offset.x, y: candidate.y + offset.y })
+  }
+
+  movable
+    .sort((left, right) => {
+      const leftPosition = preferred.get(left.id)!
+      const rightPosition = preferred.get(right.id)!
+      return leftPosition.x - rightPosition.x || leftPosition.y - rightPosition.y || left.id.localeCompare(right.id)
+    })
+    .forEach((node) => {
+      node.position = freePosition(node, preferred.get(node.id)!, occupied)
+      node.position_mode = 'auto'
+      occupied.push(nodeBoxAt(node, node.position))
+    })
+
+  updateVideoWorkflowGroupBounds(graph)
+  routeEdges(graph)
+  return graph
 }
 
 function centerUngroupedColumns(graph: VideoWorkflowGraph, groupedNodeIDs: Set<string>, sceneTop: number, sceneBottom: number) {
@@ -279,8 +367,11 @@ function routeEdges(graph: VideoWorkflowGraph) {
   }
 }
 
-export function autoLayoutVideoWorkflowGraph(source: VideoWorkflowGraph): VideoWorkflowGraph {
-  const graph = cloneGraph(source)
+export function autoLayoutVideoWorkflowGraph(
+  source: VideoWorkflowGraph,
+  mode: VideoWorkflowLayoutMode = 'all',
+): VideoWorkflowGraph {
+  const graph = cloneLayoutGraph(source)
   const layoutGraph = new dagre.graphlib.Graph({ directed: true, multigraph: true })
   layoutGraph.setGraph({
     rankdir: 'LR',
@@ -307,10 +398,9 @@ export function autoLayoutVideoWorkflowGraph(source: VideoWorkflowGraph): VideoW
     const size = videoWorkflowNodeSize(node)
     node.position = { x: positioned.x - size.width / 2, y: positioned.y - size.height / 2 }
   }
-  alignSceneGroups(graph)
-  updateVideoWorkflowGroupBounds(graph)
-  routeEdges(graph)
-  return graph
+  if (mode === 'all') alignSceneGroups(graph)
+  const proposed = new Map(graph.nodes.map((node) => [node.id, { ...node.position }]))
+  return applyVideoWorkflowLayoutProposal(source, proposed, mode)
 }
 
 export function diagnoseVideoWorkflowLayout(graph: VideoWorkflowGraph): VideoWorkflowLayoutDiagnostics {

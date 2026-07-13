@@ -94,7 +94,15 @@ import {
   videoWorkflowNodePreviewURL,
   videoWorkflowNodeRunOutputVersionID,
 } from '@/utils/videoWorkflowGraph'
-import { autoLayoutVideoWorkflowGraph, updateVideoWorkflowGroupBounds } from '@/utils/videoWorkflowLayout'
+import { updateVideoWorkflowGroupBounds, videoWorkflowMovableNodeIDs } from '@/utils/videoWorkflowLayout'
+import { layoutVideoWorkflowGraph } from '@/utils/videoWorkflowLayoutEngine'
+import {
+  SHARED_CHARACTER_BUS_ID,
+  ensureSharedCharacterBusLayout,
+  sharedCharacterBus,
+  sharedCharacterBusTargetRoute,
+  type VideoWorkflowEdgeDisplayMode,
+} from '@/utils/videoWorkflowPresentation'
 import { SerialVideoWorkflowOperationQueue, runConfirmedVideoWorkflowMutation } from '@/utils/videoWorkflowAsync'
 import {
   VIDEO_WORKFLOW_TRANSFER_MAX_BYTES,
@@ -105,7 +113,12 @@ import {
 
 type PanelTab = 'nodes' | 'assets'
 type CanvasTool = 'select' | 'pan' | 'connect'
-type FlowData = { node?: VideoWorkflowNode; zone?: { title: string; subtitle: string; enabled?: boolean } }
+type FlowData = {
+  node?: VideoWorkflowNode
+  zone?: { title: string; subtitle: string; enabled?: boolean }
+  bus?: { sourceCount: number; targetCount: number }
+  collapsedInputPortIDs?: string[]
+}
 type WorkspaceMenuCommand = 'outline' | 'import_json' | 'export_json'
 
 const POLL_INTERVAL = 2500
@@ -136,6 +149,7 @@ const activeTool = ref<CanvasTool>('select')
 const selectedNodeID = ref('background_2')
 const selectedNodeIDs = ref<string[]>(['background_2'])
 const selectedEdgeIDs = ref<string[]>([])
+const selectedSummaryEdgeID = ref('')
 const selectedClipID = ref('clip_2')
 const dirty = ref(false)
 const autosaveReady = ref(false)
@@ -145,6 +159,8 @@ const redoStack = ref<VideoWorkflowGraph[]>([])
 const clipboard = ref<{ nodes: VideoWorkflowNode[]; edges: VideoWorkflowEdge[] } | null>(null)
 const flowNodes = ref<Node<FlowData>[]>([])
 const flowEdges = ref<Edge[]>([])
+const layoutBusy = ref(false)
+const edgeDisplayMode = ref<VideoWorkflowEdgeDisplayMode>('smart')
 const createDialogVisible = ref(false)
 const characterDialogVisible = ref(false)
 const storyboardDialogVisible = ref(false)
@@ -199,6 +215,7 @@ let workspaceGeneration = 0
 let mediaPreviewGeneration = 0
 let componentUnmounted = false
 let edgeCurveHistorySnapshot: VideoWorkflowGraph | null = null
+let visualEdgeLogicalIDs = new Map<string, string[]>()
 
 const {
   fitView,
@@ -447,6 +464,26 @@ function displayNode(node: VideoWorkflowNode): VideoWorkflowNode {
 }
 
 function syncFlow() {
+  const bus = edgeDisplayMode.value === 'all' ? null : sharedCharacterBus(graph.value)
+  const collapsedEdgeIDs = new Set(bus?.logicalEdges.map((edge) => edge.id) || [])
+  const selectedLogicalEdgeIDs = new Set([
+    ...selectedEdgeIDs.value,
+    ...(visualEdgeLogicalIDs.get(selectedSummaryEdgeID.value) || []),
+  ])
+  const selectedNodes = new Set(selectedNodeIDs.value)
+  const hasSelection = selectedNodes.size > 0 || selectedLogicalEdgeIDs.size > 0
+  const nextVisualEdgeLogicalIDs = new Map<string, string[]>()
+
+  function edgeOpacity(logicalEdges: VideoWorkflowEdge[], defaultOpacity: number) {
+    const related = logicalEdges.some((edge) => selectedLogicalEdgeIDs.has(edge.id)
+      || selectedNodes.has(edge.source)
+      || selectedNodes.has(edge.target))
+    if (!hasSelection) return edgeDisplayMode.value === 'hidden' ? 0 : defaultOpacity
+    if (related) return 1
+    if (edgeDisplayMode.value === 'hidden') return 0
+    return edgeDisplayMode.value === 'all' ? .18 : .08
+  }
+
   const zones: Node<FlowData>[] = graph.value.groups.map((group) => ({
     id: `__${group.scene_id}`,
     type: 'zone',
@@ -462,27 +499,113 @@ function syncFlow() {
       id: node.id,
       type: 'workflow',
       position: { ...node.position },
-      data: { node: displayNode(node) },
+      data: {
+        node: displayNode(node),
+        collapsedInputPortIDs: bus?.targetPortIDs.get(node.id),
+      },
       selected: selectedNodeIDs.value.includes(node.id),
       draggable: !node.locked,
       style: { width: `${['background', 'image', 'video'].includes(node.type) ? 208 : 188}px`, zIndex: 2 },
     } as Node<FlowData>)),
+    ...(bus ? [{
+      id: SHARED_CHARACTER_BUS_ID,
+      type: 'assetBus',
+      position: { ...bus.position },
+      data: { bus: { sourceCount: bus.sourceNodeIDs.length, targetCount: bus.targetNodeIDs.length } },
+      selected: selectedSummaryEdgeID.value === SHARED_CHARACTER_BUS_ID,
+      draggable: true,
+      selectable: true,
+      style: { width: '132px', height: '44px', zIndex: 3 },
+    } as Node<FlowData>] : []),
   ]
-  flowEdges.value = graph.value.edges.map((edge) => ({
-    id: edge.id,
-    source: edge.source,
-    target: edge.target,
-    sourceHandle: edge.source_port,
-    targetHandle: edge.target_port,
-    type: 'adjustable',
-    data: { curve: edge.curve, route: edge.route },
-    selected: selectedEdgeIDs.value.includes(edge.id),
-    animated: activeRunNodeMap.value.get(edge.target)?.status === 'running',
-  }))
+  const regularEdges: Edge[] = graph.value.edges
+    .filter((edge) => !collapsedEdgeIDs.has(edge.id))
+    .map((edge) => {
+      const opacity = edgeOpacity([edge], edgeDisplayMode.value === 'all' ? .72 : .3)
+      return {
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        sourceHandle: edge.source_port,
+        targetHandle: edge.target_port,
+        type: 'adjustable',
+        data: { curve: edge.curve, route: edge.route },
+        selected: selectedEdgeIDs.value.includes(edge.id),
+        selectable: opacity > 0,
+        focusable: opacity > 0,
+        interactionWidth: opacity > 0 ? 20 : 0,
+        style: { opacity, transition: 'opacity 180ms ease' },
+        animated: activeRunNodeMap.value.get(edge.target)?.status === 'running',
+      }
+    })
+  const summaryEdges: Edge[] = []
+  if (bus) {
+    nextVisualEdgeLogicalIDs.set(SHARED_CHARACTER_BUS_ID, bus.logicalEdges.map((edge) => edge.id))
+    for (const sourceID of bus.sourceNodeIDs) {
+      const logicalEdges = bus.logicalEdges.filter((edge) => edge.source === sourceID)
+      const id = `__shared_character_in_${sourceID}`
+      const opacity = edgeOpacity(logicalEdges, .62)
+      nextVisualEdgeLogicalIDs.set(id, logicalEdges.map((edge) => edge.id))
+      summaryEdges.push({
+        id,
+        source: sourceID,
+        target: SHARED_CHARACTER_BUS_ID,
+        sourceHandle: logicalEdges[0]?.source_port,
+        targetHandle: 'characters',
+        type: 'smoothstep',
+        selected: selectedSummaryEdgeID.value === id,
+        selectable: opacity > 0,
+        focusable: opacity > 0,
+        updatable: false,
+        interactionWidth: opacity > 0 ? 20 : 0,
+        style: {
+          opacity,
+          stroke: selectedSummaryEdgeID.value === id ? '#60a5fa' : '#fbbf24',
+          strokeWidth: selectedSummaryEdgeID.value === id ? 2.5 : 1.8,
+          transition: 'opacity 180ms ease',
+        },
+      } as Edge)
+    }
+    for (const [targetIndex, targetID] of bus.targetNodeIDs.entries()) {
+      const logicalEdges = bus.logicalEdges.filter((edge) => edge.target === targetID)
+      const id = `__shared_character_out_${targetID}`
+      const opacity = edgeOpacity(logicalEdges, .62)
+      nextVisualEdgeLogicalIDs.set(id, logicalEdges.map((edge) => edge.id))
+      summaryEdges.push({
+        id,
+        source: SHARED_CHARACTER_BUS_ID,
+        target: targetID,
+        sourceHandle: 'shared',
+        targetHandle: '__shared_characters',
+        type: 'adjustable',
+        data: { route: sharedCharacterBusTargetRoute(graph.value, bus, targetID, targetIndex), readonly: true },
+        selected: selectedSummaryEdgeID.value === id,
+        selectable: opacity > 0,
+        focusable: opacity > 0,
+        updatable: false,
+        interactionWidth: opacity > 0 ? 20 : 0,
+        style: {
+          opacity,
+          stroke: selectedSummaryEdgeID.value === id ? '#60a5fa' : '#fbbf24',
+          strokeWidth: selectedSummaryEdgeID.value === id ? 2.5 : 1.8,
+          transition: 'opacity 180ms ease',
+        },
+        animated: activeRunNodeMap.value.get(targetID)?.status === 'running',
+      } as Edge)
+    }
+  }
+  visualEdgeLogicalIDs = nextVisualEdgeLogicalIDs
+  flowEdges.value = [...regularEdges, ...summaryEdges]
 }
 
 function selectEdge(edgeID: string) {
-  selectedEdgeIDs.value = [edgeID]
+  if (visualEdgeLogicalIDs.has(edgeID)) {
+    selectedSummaryEdgeID.value = edgeID
+    selectedEdgeIDs.value = []
+  } else {
+    selectedSummaryEdgeID.value = ''
+    selectedEdgeIDs.value = [edgeID]
+  }
   selectedNodeIDs.value = []
   selectedNodeID.value = ''
   syncFlow()
@@ -589,6 +712,7 @@ async function loadWorkspace(workflow?: VideoWorkflow | null) {
   selectedNodeID.value = preferred?.id || ''
   selectedNodeIDs.value = preferred ? [preferred.id] : []
   selectedEdgeIDs.value = []
+  selectedSummaryEdgeID.value = ''
   selectedClipID.value = timelineClips.value[1]?.id || timelineClips.value[0]?.id || ''
   undoStack.value = []
   redoStack.value = []
@@ -892,6 +1016,14 @@ async function selectWorkflow(id: string) {
 }
 
 function selectNode(id: string, additive = false) {
+  if (id === SHARED_CHARACTER_BUS_ID) {
+    selectedNodeID.value = ''
+    selectedNodeIDs.value = []
+    selectedEdgeIDs.value = []
+    selectedSummaryEdgeID.value = SHARED_CHARACTER_BUS_ID
+    syncFlow()
+    return
+  }
   if (id.startsWith('__')) return
   if (!panelLayout.inspectorOpen) setInspectorOpen(true)
   selectedNodeID.value = id
@@ -901,6 +1033,7 @@ function selectNode(id: string, additive = false) {
       : [...selectedNodeIDs.value, id]
   } else selectedNodeIDs.value = [id]
   selectedEdgeIDs.value = []
+  selectedSummaryEdgeID.value = ''
   syncFlow()
 }
 
@@ -908,6 +1041,7 @@ function clearSelection() {
   selectedNodeID.value = ''
   selectedNodeIDs.value = []
   selectedEdgeIDs.value = []
+  selectedSummaryEdgeID.value = ''
   quickConnectMenu.value = null
   pendingConnection.value = null
   syncFlow()
@@ -915,7 +1049,17 @@ function clearSelection() {
 
 function onNodeChanges(changes: NodeChange[]) {
   for (const change of changes) {
-    if (change.type !== 'select' || change.id.startsWith('__')) continue
+    if (change.type !== 'select') continue
+    if (change.id === SHARED_CHARACTER_BUS_ID) {
+      selectedSummaryEdgeID.value = change.selected ? SHARED_CHARACTER_BUS_ID : ''
+      if (change.selected) {
+        selectedNodeID.value = ''
+        selectedNodeIDs.value = []
+        selectedEdgeIDs.value = []
+      }
+      continue
+    }
+    if (change.id.startsWith('__')) continue
     if (change.selected && !selectedNodeIDs.value.includes(change.id)) selectedNodeIDs.value.push(change.id)
     if (!change.selected) selectedNodeIDs.value = selectedNodeIDs.value.filter((id) => id !== change.id)
   }
@@ -924,6 +1068,15 @@ function onNodeChanges(changes: NodeChange[]) {
 function onEdgeChanges(changes: EdgeChange[]) {
   for (const change of changes) {
     if (change.type !== 'select') continue
+    if (visualEdgeLogicalIDs.has(change.id)) {
+      selectedSummaryEdgeID.value = change.selected ? change.id : ''
+      if (change.selected) {
+        selectedNodeID.value = ''
+        selectedNodeIDs.value = []
+        selectedEdgeIDs.value = []
+      }
+      continue
+    }
     if (change.selected && !selectedEdgeIDs.value.includes(change.id)) selectedEdgeIDs.value.push(change.id)
     if (!change.selected) selectedEdgeIDs.value = selectedEdgeIDs.value.filter((id) => id !== change.id)
   }
@@ -1075,12 +1228,26 @@ function onNodeDragStart(event: NodeDragEvent) {
 function onNodeDragStop(event: NodeDragEvent) {
   const moved = event.nodes?.length ? event.nodes : [event.node]
   commitGraph((target) => {
+    let movedGraphNode = false
     for (const item of moved) {
+      if (item.id === SHARED_CHARACTER_BUS_ID) {
+        target.layout = {
+          ...(target.layout || {}),
+          shared_character_bus: { position: { ...item.position }, position_mode: 'manual' },
+        }
+        continue
+      }
       const node = target.nodes.find((entry) => entry.id === item.id)
-      if (node && !node.locked) node.position = { ...item.position }
+      if (node && !node.locked) {
+        node.position = { ...item.position }
+        node.position_mode = 'manual'
+        movedGraphNode = true
+      }
     }
-    clearAutoEdgeRoutes(target)
-    updateVideoWorkflowGroupBounds(target)
+    if (movedGraphNode) {
+      clearAutoEdgeRoutes(target)
+      updateVideoWorkflowGroupBounds(target)
+    }
   })
   alignmentGuides.x = null
   alignmentGuides.y = null
@@ -1177,9 +1344,47 @@ function removeSelectedEdges() {
   selectedEdgeIDs.value = []
 }
 
-function autoLayout() {
-  commitGraph(() => { graph.value = autoLayoutVideoWorkflowGraph(graph.value) })
-  nextTick(() => fitView({ padding: .12, duration: 260 }))
+async function autoLayout(command: 'auto' | 'selected_auto' | 'all') {
+  if (layoutBusy.value) return
+  if (command === 'all') {
+    try {
+      await ElMessageBox.confirm(
+        '将重新排列所有未锁定节点。锁定节点保持原位，手工调整的位置会改为自动布局。',
+        '重新整理全部节点？',
+        { confirmButtonText: '重新整理', cancelButtonText: '取消', type: 'warning' },
+      )
+    } catch { return }
+  }
+
+  const working = cloneWorkflowGraph(graph.value)
+  if (command === 'selected_auto') {
+    const selected = new Set(selectedNodeIDs.value)
+    const restorable = working.nodes.filter((node) => selected.has(node.id) && !node.locked)
+    if (!restorable.length) return ElMessage.info('请先选择至少一个未锁定节点')
+    restorable.forEach((node) => { node.position_mode = 'auto' })
+  }
+  const mode = command === 'all' ? 'all' : 'auto'
+  if (!videoWorkflowMovableNodeIDs(working, mode).length) return ElMessage.info('没有可整理的自动布局节点')
+
+  const sequence = changeSequence.value
+  layoutBusy.value = true
+  try {
+    const result = await layoutVideoWorkflowGraph(working, mode)
+    if (sequence !== changeSequence.value) {
+      ElMessage.warning('布局期间画布已发生修改，本次整理结果未应用')
+      return
+    }
+    if (sharedCharacterBus(result.graph)) ensureSharedCharacterBusLayout(result.graph, command === 'all')
+    pushUndo()
+    graph.value = result.graph
+    markDirty()
+    syncFlow()
+    await nextTick()
+    fitView({ padding: .12, duration: 260 })
+    if (result.engine === 'dagre') ElMessage.warning('ELK 布局不可用，已使用兼容布局')
+  } finally {
+    layoutBusy.value = false
+  }
 }
 
 function clearAutoEdgeRoutes(target: VideoWorkflowGraph) {
@@ -1191,7 +1396,10 @@ function alignSelected(axis: 'x' | 'y') {
   if (nodes.length < 2) return
   const value = Math.min(...nodes.map((node) => node.position[axis]))
   commitGraph((target) => {
-    target.nodes.filter((node) => selectedNodeIDs.value.includes(node.id)).forEach((node) => { node.position[axis] = value })
+    target.nodes.filter((node) => selectedNodeIDs.value.includes(node.id) && !node.locked).forEach((node) => {
+      node.position[axis] = value
+      node.position_mode = 'manual'
+    })
     clearAutoEdgeRoutes(target)
     updateVideoWorkflowGroupBounds(target)
   })
@@ -1202,7 +1410,13 @@ function distributeSelected(axis: 'x' | 'y') {
   if (nodes.length < 3) return
   const gap = (nodes.at(-1)!.position[axis] - nodes[0].position[axis]) / (nodes.length - 1)
   commitGraph((target) => {
-    nodes.forEach((source, index) => { const node = target.nodes.find((item) => item.id === source.id); if (node) node.position[axis] = nodes[0].position[axis] + gap * index })
+    nodes.forEach((source, index) => {
+      const node = target.nodes.find((item) => item.id === source.id)
+      if (node && !node.locked) {
+        node.position[axis] = nodes[0].position[axis] + gap * index
+        node.position_mode = 'manual'
+      }
+    })
     clearAutoEdgeRoutes(target)
     updateVideoWorkflowGroupBounds(target)
   })
@@ -1819,6 +2033,7 @@ function handleCanvasKeydown(event: KeyboardEvent) {
         if (event.key === 'ArrowRight') node.position.x += amount
         if (event.key === 'ArrowUp') node.position.y -= amount
         if (event.key === 'ArrowDown') node.position.y += amount
+        node.position_mode = 'manual'
       })
       clearAutoEdgeRoutes(targetGraph)
       updateVideoWorkflowGroupBounds(targetGraph)
@@ -1860,7 +2075,7 @@ function stopResize() {
 }
 
 function persistPanelLayout() {
-  localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(panelLayout))
+  localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify({ ...panelLayout, edgeDisplayMode: edgeDisplayMode.value }))
 }
 
 function setInspectorOpen(open: boolean) {
@@ -1883,6 +2098,7 @@ function restoreLayout() {
     if (Number.isFinite(stored.timeline)) panelLayout.timeline = Math.max(160, Math.min(320, stored.timeline))
     if (typeof stored.inspectorOpen === 'boolean') panelLayout.inspectorOpen = stored.inspectorOpen
     if (typeof stored.timelineOpen === 'boolean') panelLayout.timelineOpen = stored.timelineOpen
+    if (['smart', 'all', 'hidden'].includes(stored.edgeDisplayMode)) edgeDisplayMode.value = stored.edgeDisplayMode
   } catch { /* 使用默认布局 */ }
 }
 function checkViewport() { viewportWidth.value = window.innerWidth }
@@ -1891,6 +2107,12 @@ function beforeUnload(event: BeforeUnloadEvent) { persistLocalDraft(); if (dirty
 watch(() => activeRun.value?.status, (status) => {
   if (status === 'awaiting_character_approval') openCharacterApproval()
   if (status === 'awaiting_storyboard_approval') openStoryboardApproval()
+})
+
+watch(edgeDisplayMode, () => {
+  selectedSummaryEdgeID.value = ''
+  syncFlow()
+  persistPanelLayout()
 })
 
 onMounted(() => {
@@ -2006,6 +2228,7 @@ onBeforeUnmount(() => {
           v-model:active-tool="activeTool"
           v-model:nodes="flowNodes"
           v-model:edges="flowEdges"
+          v-model:edge-display-mode="edgeDisplayMode"
           :backend-available="backendAvailable"
           :conflict-draft-key="conflictDraftKey"
           :mod-key-code="modKeyCode"
@@ -2015,6 +2238,7 @@ onBeforeUnmount(() => {
           :graph-nodes="graph.nodes"
           :selected-node-i-ds="selectedNodeIDs"
           :selected-node-locked="Boolean(selectedNode?.locked)"
+          :layout-busy="layoutBusy"
           :zoom="canvasViewport.zoom"
           :viewport="canvasViewport"
           @interaction="interactionArea = 'canvas'"

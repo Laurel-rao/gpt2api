@@ -88,6 +88,13 @@ type Position struct {
 	Y float64 `json:"y"`
 }
 
+type PositionMode string
+
+const (
+	PositionAuto   PositionMode = "auto"
+	PositionManual PositionMode = "manual"
+)
+
 type Size struct {
 	Width  float64 `json:"width,omitempty"`
 	Height float64 `json:"height,omitempty"`
@@ -111,6 +118,7 @@ type Node struct {
 	AssetVersionID  string          `json:"asset_version_id,omitempty"`
 	DurationSeconds int             `json:"duration_seconds,omitempty"`
 	Position        Position        `json:"position"`
+	PositionMode    PositionMode    `json:"position_mode,omitempty"`
 	Size            Size            `json:"size,omitempty"`
 	Collapsed       bool            `json:"collapsed,omitempty"`
 	Enabled         *bool           `json:"enabled,omitempty"`
@@ -140,6 +148,15 @@ type Group struct {
 	Position        Position `json:"position"`
 	Size            Size     `json:"size,omitempty"`
 	Collapsed       bool     `json:"collapsed,omitempty"`
+}
+
+type LayoutAnchor struct {
+	Position     Position     `json:"position"`
+	PositionMode PositionMode `json:"position_mode"`
+}
+
+type GraphLayout struct {
+	SharedCharacterBus *LayoutAnchor `json:"shared_character_bus,omitempty"`
 }
 
 type Settings struct {
@@ -200,11 +217,12 @@ type NormalizedCrop struct {
 }
 
 type Graph struct {
-	SchemaVersion int      `json:"schema_version"`
-	Settings      Settings `json:"settings"`
-	Nodes         []Node   `json:"nodes"`
-	Edges         []Edge   `json:"edges"`
-	Groups        []Group  `json:"groups,omitempty"`
+	SchemaVersion int          `json:"schema_version"`
+	Settings      Settings     `json:"settings"`
+	Nodes         []Node       `json:"nodes"`
+	Edges         []Edge       `json:"edges"`
+	Groups        []Group      `json:"groups,omitempty"`
+	Layout        *GraphLayout `json:"layout,omitempty"`
 }
 
 func (g *Graph) Scan(value any) error {

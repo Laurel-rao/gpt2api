@@ -186,9 +186,11 @@ func TestSemanticGraphHashIgnoresLayout(t *testing.T) {
 		t.Fatal(err)
 	}
 	graph.Nodes[0].Position.X += 900
+	graph.Nodes[0].PositionMode = PositionManual
 	graph.Nodes[0].Collapsed = true
 	graph.Edges[0].Curve = &Position{X: 120, Y: -80}
 	graph.Edges[0].Route = []Position{{X: 240, Y: 80}, {X: 320, Y: 80}}
+	graph.Layout = &GraphLayout{SharedCharacterBus: &LayoutAnchor{Position: Position{X: 600, Y: 300}, PositionMode: PositionManual}}
 	got, err := SemanticGraphHash(graph)
 	if err != nil {
 		t.Fatal(err)
@@ -211,6 +213,11 @@ func TestUpgradeGraphV1ToV2(t *testing.T) {
 	}
 	if upgraded.SchemaVersion != SchemaVersionV2 || upgraded.Settings.Resolution != Resolution720p || upgraded.Settings.CharacterApprovalPolicy != ApprovalManual {
 		t.Fatalf("upgraded settings=%+v", upgraded.Settings)
+	}
+	for _, node := range upgraded.Nodes {
+		if node.PositionMode != PositionAuto {
+			t.Fatalf("node %s position mode=%q", node.ID, node.PositionMode)
+		}
 	}
 	timeline := upgraded.Nodes[findNodeIndex(upgraded, "timeline")]
 	var config TimelineConfig

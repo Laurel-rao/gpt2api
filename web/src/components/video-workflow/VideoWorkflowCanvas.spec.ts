@@ -26,6 +26,8 @@ const baseProps = {
   graphNodes,
   selectedNodeIDs: ['video_1'],
   selectedNodeLocked: false,
+  edgeDisplayMode: 'smart' as const,
+  layoutBusy: false,
   zoom: 1,
   viewport: { x: 0, y: 0, zoom: 1 },
 }
@@ -40,9 +42,20 @@ const VueFlowWithNodeSlot = defineComponent({
   },
 })
 
+const SlotStub = defineComponent({
+  setup(_, { slots }) { return () => h('div', slots.default?.()) },
+})
+const dropdownStubs = {
+  'el-dropdown': defineComponent({
+    setup(_, { slots }) { return () => h('div', [slots.default?.(), slots.dropdown?.()]) },
+  }),
+  'el-dropdown-menu': SlotStub,
+  'el-dropdown-item': SlotStub,
+}
+
 describe('VideoWorkflowCanvas', () => {
   it('renders canvas navigation and relays toolbar actions', async () => {
-    const wrapper = shallowMount(VideoWorkflowCanvas, { props: baseProps })
+    const wrapper = shallowMount(VideoWorkflowCanvas, { props: baseProps, global: { stubs: dropdownStubs } })
     expect(wrapper.find('.canvas-minimap i').classes()).toContain('selected')
     expect(wrapper.find('.zoom-controls b').text()).toBe('100%')
 
@@ -52,6 +65,10 @@ describe('VideoWorkflowCanvas', () => {
     expect(wrapper.emitted('update:activeTool')?.[0]).toEqual(['pan'])
     expect(wrapper.emitted('group-selected')).toHaveLength(1)
     expect(wrapper.emitted('delete-selected')).toHaveLength(1)
+
+    await wrapper.find('button[aria-label="显示全部连线"]').trigger('click')
+    await wrapper.find('button[aria-label="隐藏非相关连线"]').trigger('click')
+    expect(wrapper.emitted('update:edgeDisplayMode')).toEqual([['all'], ['hidden']])
   })
 
   it('keeps recovery and compatible-node creation outside the page shell', async () => {
@@ -63,6 +80,7 @@ describe('VideoWorkflowCanvas', () => {
         quickConnectMenu: { x: 80, y: 120 },
         quickConnectTypes: [{ type: 'video', label: '视频生成' }],
       },
+      global: { stubs: dropdownStubs },
     })
     expect(wrapper.find('.offline-banner').exists()).toBe(true)
     await wrapper.find('.draft-recovery-banner button').trigger('click')
@@ -74,7 +92,7 @@ describe('VideoWorkflowCanvas', () => {
   })
 
   it('navigates the canvas by clicking, dragging and using the minimap keyboard controls', async () => {
-    const wrapper = shallowMount(VideoWorkflowCanvas, { props: baseProps })
+    const wrapper = shallowMount(VideoWorkflowCanvas, { props: baseProps, global: { stubs: dropdownStubs } })
     const minimap = wrapper.find('.canvas-minimap')
     expect(minimap.attributes()).toMatchObject({ role: 'button', tabindex: '0', 'aria-label': '画布小地图，点击或拖动定位画布' })
     Object.defineProperty(minimap.element, 'getBoundingClientRect', {
@@ -113,7 +131,7 @@ describe('VideoWorkflowCanvas', () => {
           data: { node: previewNode },
         }],
       },
-      global: { stubs: { VueFlow: VueFlowWithNodeSlot } },
+      global: { stubs: { ...dropdownStubs, VueFlow: VueFlowWithNodeSlot } },
     })
 
     wrapper.findComponent(VideoWorkflowNodeCard).vm.$emit('preview-media', previewNode)

@@ -8,6 +8,7 @@ export type VideoWorkflowRunMode = 'full' | 'node_only' | 'downstream'
 export type VideoWorkflowPortType = 'text' | 'script' | 'scene' | 'image' | 'image_set' | 'video' | 'video_list'
 export type VideoWorkflowNodeStatus = 'idle' | 'queued' | 'running' | 'awaiting_approval' | 'cancel_pending' | 'succeeded' | 'failed' | 'canceled' | 'stale'
 export type VideoWorkflowRunStatus = 'queued' | 'running' | 'awaiting_character_approval' | 'awaiting_storyboard_approval' | 'cancel_pending' | 'canceled' | 'succeeded' | 'failed'
+export type VideoWorkflowPositionMode = 'auto' | 'manual'
 export type VideoAssetKind = 'image' | 'video'
 export type VideoAssetStatus = 'pending' | 'ready' | 'failed' | 'deleted'
 export type VideoAssetVersionSource = 'upload' | 'generated' | 'transform'
@@ -61,6 +62,7 @@ export interface VideoWorkflowNode {
   version?: number
   title?: string
   position: VideoWorkflowPosition
+  position_mode?: VideoWorkflowPositionMode
   role_id?: string
   scene_id?: string
   duration_seconds?: number
@@ -101,6 +103,15 @@ export interface VideoWorkflowGroup {
   collapsed: boolean
 }
 
+export interface VideoWorkflowLayoutAnchor {
+  position: VideoWorkflowPosition
+  position_mode: VideoWorkflowPositionMode
+}
+
+export interface VideoWorkflowGraphLayout {
+  shared_character_bus?: VideoWorkflowLayoutAnchor
+}
+
 export interface VideoWorkflowGraph {
   schema_version: number
   settings: {
@@ -119,6 +130,7 @@ export interface VideoWorkflowGraph {
   nodes: VideoWorkflowNode[]
   edges: VideoWorkflowEdge[]
   groups: VideoWorkflowGroup[]
+  layout?: VideoWorkflowGraphLayout
 }
 
 export interface VideoWorkflowTemplate {

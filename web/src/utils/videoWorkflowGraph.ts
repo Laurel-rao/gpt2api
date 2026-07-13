@@ -253,6 +253,7 @@ export function makeVideoWorkflowNode(
     type,
     title,
     position,
+    position_mode: 'manual',
     scene_id: sceneID,
     status: 'idle',
     enabled: true,
@@ -450,6 +451,9 @@ export function createStarterVideoWorkflowGraph(): VideoWorkflowGraph {
     { id: 'timeline-compose', source: timeline.id, source_port: 'videos', target: compose.id, target_port: 'videos' },
   ]
 
+  const nodes = [brief, ...roles, script, ...sceneNodes, ...backgrounds, ...videos, timeline, compose]
+  nodes.forEach((node) => { node.position_mode = 'auto' })
+
   return {
     schema_version: VIDEO_WORKFLOW_SCHEMA_VERSION,
     settings: {
@@ -462,7 +466,7 @@ export function createStarterVideoWorkflowGraph(): VideoWorkflowGraph {
       storyboard_approval_policy: 'manual',
       video_model: DEFAULT_VIDEO_WORKFLOW_VIDEO_MODEL,
     },
-    nodes: [brief, ...roles, script, ...sceneNodes, ...backgrounds, ...videos, timeline, compose],
+    nodes,
     edges,
     groups,
   }
@@ -494,6 +498,7 @@ export function migrateVideoWorkflowGraph(value: unknown): VideoWorkflowGraph {
       position: isRecord(item.position)
         ? { x: Number(item.position.x) || 0, y: Number(item.position.y) || 0 }
         : { x: 120, y: 120 },
+      position_mode: item.position_mode === 'auto' ? 'auto' : 'manual',
       config: isRecord(item.config) ? item.config : {},
       locked: item.type === 'timeline' || item.type === 'compose' ? true : Boolean(item.locked),
     } as VideoWorkflowNode))
@@ -607,6 +612,22 @@ export function migrateVideoWorkflowGraph(value: unknown): VideoWorkflowGraph {
     nodes,
     edges,
     groups: (Array.isArray(raw.groups) ? raw.groups : []) as VideoWorkflowGraph['groups'],
+    ...(isRecord(raw.layout) && isRecord(raw.layout.shared_character_bus)
+      && isRecord(raw.layout.shared_character_bus.position)
+      && Number.isFinite(raw.layout.shared_character_bus.position.x)
+      && Number.isFinite(raw.layout.shared_character_bus.position.y)
+      ? {
+          layout: {
+            shared_character_bus: {
+              position: {
+                x: Number(raw.layout.shared_character_bus.position.x),
+                y: Number(raw.layout.shared_character_bus.position.y),
+              },
+              position_mode: raw.layout.shared_character_bus.position_mode === 'auto' ? 'auto' : 'manual',
+            },
+          },
+        }
+      : {}),
   }
 }
 

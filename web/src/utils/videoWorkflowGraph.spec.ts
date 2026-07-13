@@ -59,6 +59,7 @@ describe('video workflow graph v2', () => {
     const timeline = graph.nodes.find((node) => node.type === 'timeline')!
     expect(graph.schema_version).toBe(2)
     expect(graph.nodes).toHaveLength(19)
+    expect(graph.nodes.every((node) => node.position_mode === 'auto')).toBe(true)
     expect(graph.settings).toMatchObject({
       resolution: '1080p',
       scene_duration_ms: 15_000,
@@ -294,6 +295,25 @@ describe('video workflow graph migration', () => {
     expect(migrated.edges[0].route).toEqual([{ x: 240, y: 80 }, { x: 320, y: 80 }])
     expect(migrated.edges[1].curve).toBeUndefined()
     expect(migrated.edges[1].route).toBeUndefined()
+  })
+
+  it('protects legacy positions and preserves a valid shared asset bus anchor', () => {
+    const graph = createStarterVideoWorkflowGraph() as any
+    delete graph.nodes[0].position_mode
+    graph.layout = {
+      shared_character_bus: {
+        position: { x: 720, y: 420 },
+        position_mode: 'manual',
+      },
+    }
+
+    const migrated = migrateVideoWorkflowGraph(graph)
+
+    expect(migrated.nodes[0].position_mode).toBe('manual')
+    expect(migrated.layout?.shared_character_bus).toEqual({
+      position: { x: 720, y: 420 },
+      position_mode: 'manual',
+    })
   })
 
   it('restores missing protected system nodes and their connection', () => {

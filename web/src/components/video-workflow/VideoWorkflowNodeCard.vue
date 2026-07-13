@@ -21,6 +21,7 @@ import { nodeStatusLabel, videoWorkflowModelLabel, videoWorkflowNodePreviewURL }
 const props = defineProps<{
   node: VideoWorkflowNode
   selected?: boolean
+  collapsedInputPortIDs?: string[]
 }>()
 const emit = defineEmits<{
   'preview-media': [node: VideoWorkflowNode]
@@ -29,6 +30,8 @@ const emit = defineEmits<{
 const mediaNode = computed(() => ['background', 'image', 'video'].includes(props.node.type))
 const previewURL = computed(() => videoWorkflowNodePreviewURL(props.node))
 const status = computed(() => props.node.status || 'idle')
+const visibleInputs = computed(() => (props.node.inputs || []).filter((port) => !props.collapsedInputPortIDs?.includes(port.id)))
+const sharedCharacterCount = computed(() => props.collapsedInputPortIDs?.length || 0)
 const statusText = computed(() => {
   if (props.node.enabled === false) return '已停用'
   if (status.value === 'stale') return '需更新'
@@ -69,7 +72,7 @@ const summary = computed(() => {
     tabindex="0"
   >
     <Handle
-      v-for="(port, index) in node.inputs || []"
+      v-for="(port, index) in visibleInputs"
       :id="port.id"
       :key="`input-${port.id}`"
       type="target"
@@ -77,6 +80,16 @@ const summary = computed(() => {
       :style="{ top: `${48 + index * 24}px` }"
       class="node-port input"
       :title="`${port.label || port.id} · ${port.type}`"
+    />
+    <Handle
+      v-if="sharedCharacterCount"
+      id="__shared_characters"
+      type="target"
+      :position="Position.Left"
+      :connectable="false"
+      :style="{ top: `${48 + visibleInputs.length * 24}px` }"
+      class="node-port input shared-character-port"
+      :title="`公共角色资产 · ${sharedCharacterCount} 个角色`"
     />
     <Handle
       v-for="(port, index) in node.outputs || []"

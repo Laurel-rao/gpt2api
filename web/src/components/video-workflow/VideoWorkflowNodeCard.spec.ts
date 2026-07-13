@@ -73,4 +73,29 @@ describe('VideoWorkflowNodeCard image preview', () => {
     await wrapper.find('.node-preview-button').trigger('click')
     expect(wrapper.emitted('preview-media')?.[0]).toEqual([node])
   })
+
+  it('collapses character inputs into one shared asset handle in smart mode', () => {
+    const node: VideoWorkflowNode = {
+      id: 'video_shared',
+      type: 'video',
+      title: '共享角色视频',
+      position: { x: 0, y: 0 },
+      config: {},
+      inputs: [
+        { id: 'background', type: 'image', label: '背景' },
+        { id: 'character_1', type: 'image', label: '角色一' },
+        { id: 'character_2', type: 'image', label: '角色二' },
+      ],
+    }
+    const wrapper = mount(VideoWorkflowNodeCard, {
+      props: { node, collapsedInputPortIDs: ['character_1', 'character_2'] },
+      global: { stubs: { Handle: true } },
+    })
+
+    const inputs = wrapper.findAll('.node-port.input')
+    expect(inputs).toHaveLength(2)
+    expect(inputs[0].attributes('title')).toContain('背景')
+    expect(inputs[1].classes()).toContain('shared-character-port')
+    expect(inputs[1].attributes('title')).toBe('公共角色资产 · 2 个角色')
+  })
 })

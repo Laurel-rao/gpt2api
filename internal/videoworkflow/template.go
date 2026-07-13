@@ -141,6 +141,7 @@ func UpgradeGraphV1ToV2(source Graph) (Graph, error) {
 	graph.Settings.CharacterApprovalPolicy = ApprovalManual
 	graph.Settings.StoryboardApprovalPolicy = ApprovalManual
 	for i := range graph.Nodes {
+		graph.Nodes[i].PositionMode = PositionAuto
 		if graph.Nodes[i].Type != NodeTimeline {
 			continue
 		}
@@ -175,6 +176,9 @@ func blankVideoCanvasTemplate() Template {
 		{ID: "video_1", Type: NodeVideo, SceneID: "scene_1", DurationSeconds: SceneDuration, Position: Position{X: 800, Y: 160}, Inputs: []Port{{ID: "scene", Type: PortScene, Required: true}, {ID: "background", Type: PortImage, Required: true}}, Outputs: []Port{{ID: "video", Type: PortVideo}}},
 		{ID: "timeline", Type: NodeTimeline, Locked: true, Position: Position{X: 1060, Y: 160}, Config: timelineConfig, Inputs: []Port{{ID: "clip_1", Type: PortVideo, Required: true}}, Outputs: []Port{{ID: "videos", Type: PortVideoList}}},
 		{ID: "compose", Type: NodeCompose, Locked: true, Position: Position{X: 1300, Y: 160}, Inputs: []Port{{ID: "videos", Type: PortVideoList, Required: true}}, Outputs: []Port{{ID: "video", Type: PortVideo}}},
+	}
+	for i := range graph.Nodes {
+		graph.Nodes[i].PositionMode = PositionAuto
 	}
 	graph.Edges = []Edge{
 		{ID: "e_brief_scene", Source: "brief", SourcePort: "text", Target: "scene_1", TargetPort: "script"},

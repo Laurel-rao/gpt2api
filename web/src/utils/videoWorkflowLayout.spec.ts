@@ -5,7 +5,7 @@ import { autoLayoutVideoWorkflowGraph, diagnoseVideoWorkflowLayout, videoWorkflo
 describe('video workflow automatic layout', () => {
   it('lays out nodes, scene groups and curves without visual overlaps', () => {
     const source = createStarterVideoWorkflowGraph()
-    source.nodes.forEach((node) => { node.position = { x: 0, y: 0 } })
+    source.nodes.filter((node) => !node.locked).forEach((node) => { node.position = { x: 0, y: 0 } })
 
     const result = autoLayoutVideoWorkflowGraph(source)
     const diagnostics = diagnoseVideoWorkflowLayout(result)
@@ -14,7 +14,20 @@ describe('video workflow automatic layout', () => {
     expect(diagnostics.groupOverlaps).toEqual([])
     expect(diagnostics.edgeNodeOverlaps).toEqual([])
     expect(result.edges.some((edge) => edge.route?.length)).toBe(true)
-    expect(source.nodes.every((node) => node.position.x === 0 && node.position.y === 0)).toBe(true)
+    expect(source.nodes.filter((node) => !node.locked).every((node) => node.position.x === 0 && node.position.y === 0)).toBe(true)
+  })
+
+  it('never moves locked nodes even when their saved positions overlap', () => {
+    const source = createStarterVideoWorkflowGraph()
+    const locked = source.nodes.filter((node) => node.locked)
+    locked.forEach((node) => { node.position = { x: 400, y: 240 } })
+
+    const result = autoLayoutVideoWorkflowGraph(source)
+
+    expect(result.nodes.filter((node) => node.locked).map((node) => node.position)).toEqual([
+      { x: 400, y: 240 },
+      { x: 400, y: 240 },
+    ])
   })
 
   it('keeps every scene node inside its recalculated group bounds', () => {
