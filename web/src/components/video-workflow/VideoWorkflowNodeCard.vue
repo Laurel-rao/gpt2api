@@ -18,11 +18,14 @@ import {
 import type { VideoWorkflowNode } from '@/api/videoWorkflow'
 import {
   nodeStatusLabel,
+  videoWorkflowDisplayNodeTitle,
   videoWorkflowModelLabel,
   videoWorkflowNodeCatalogColor,
   videoWorkflowNodePreviewURL,
+  videoWorkflowPortTypeLabel,
 } from '@/utils/videoWorkflowGraph'
 import { formatErrorCode } from '@/utils/format'
+import { videoWorkflowNodeSize } from '@/utils/videoWorkflowLayout'
 
 const props = defineProps<{
   node: VideoWorkflowNode
@@ -65,7 +68,15 @@ const statusIcon = computed(() => ({
   stale: WarningFilled,
   failed: WarningFilled,
 } as Record<string, any>)[status.value] || Clock)
-const nodeTitle = computed(() => props.node.title || props.node.config?.title || props.node.config?.name || props.node.id)
+const nodeTitle = computed(() => videoWorkflowDisplayNodeTitle(props.node))
+const cardSize = computed(() => {
+  const visible = (props.node.inputs || []).filter((port) => !props.collapsedInputPortIDs?.includes(port.id))
+  const sharedExtra = props.collapsedInputPortIDs?.length ? [{ id: '__shared_characters' }] : []
+  return videoWorkflowNodeSize({
+    ...props.node,
+    inputs: [...visible, ...sharedExtra] as VideoWorkflowNode['inputs'],
+  })
+})
 const runErrorTitle = computed(() => {
   if (status.value !== 'failed' && !props.node.run_error && !props.node.run_error_code) return undefined
   const codeLabel = formatErrorCode(props.node.run_error_code)
@@ -84,12 +95,16 @@ const summary = computed(() => {
 })
 const HEADER_PORT_TOP = 28
 const PORT_GAP = 22
+
+function portTitle(port: { id: string; label?: string; type: string }) {
+  return `${port.label || port.id} · ${videoWorkflowPortTypeLabel(port.type)}`
+}
 </script>
 
 <template>
   <article
     :class="['workflow-node-card', node.type, status, { selected, media: mediaNode, collapsed: node.collapsed, disabled: node.enabled === false }]"
-    :style="{ '--node-catalog-color': catalogColor }"
+    :style="{ '--node-catalog-color': catalogColor, width: `${cardSize.width}px`, height: `${cardSize.height}px` }"
     :aria-label="`${nodeTitle}，${statusText}`"
     :title="runErrorTitle"
     tabindex="0"
@@ -102,7 +117,7 @@ const PORT_GAP = 22
       :position="Position.Left"
       :style="{ top: `${HEADER_PORT_TOP + index * PORT_GAP}px` }"
       :class="['node-port', 'input', `port-type-${port.type}`]"
-      :title="`${port.label || port.id} · ${port.type}`"
+      :title="portTitle(port)"
     />
     <Handle
       v-if="sharedCharacterCount"
@@ -122,7 +137,7 @@ const PORT_GAP = 22
       :position="Position.Right"
       :style="{ top: `${HEADER_PORT_TOP + index * PORT_GAP}px` }"
       :class="['node-port', 'output', `port-type-${port.type}`]"
-      :title="`${port.label || port.id} · ${port.type}`"
+      :title="portTitle(port)"
     />
 
     <header>
@@ -181,6 +196,7 @@ const PORT_GAP = 22
 .workflow-node-card {
   position: relative;
   width: 188px;
+  min-height: 96px;
   height: 96px;
   box-sizing: border-box;
   display: flex;

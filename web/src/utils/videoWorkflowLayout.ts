@@ -46,7 +46,10 @@ export interface VideoWorkflowLayoutDiagnostics {
 export function videoWorkflowNodeSize(node: VideoWorkflowNode) {
   if (node.collapsed) return { width: 188, height: 36 }
   if (['character', 'background', 'image', 'video'].includes(node.type)) return { width: 208, height: 196 }
-  return { width: 188, height: 96 }
+  const portRows = Math.max(node.inputs?.length || 0, node.outputs?.length || 0, 1)
+  const portDriven = 28 + Math.max(0, portRows - 1) * 22 + 56
+  const contentMin = node.type === 'script' ? 156 : node.type === 'story_brief' ? 120 : 96
+  return { width: 188, height: Math.max(contentMin, portDriven) }
 }
 
 export function cloneLayoutGraph(graph: VideoWorkflowGraph): VideoWorkflowGraph {

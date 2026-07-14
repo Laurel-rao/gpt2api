@@ -619,7 +619,7 @@ describe('generated image asset binding', () => {
       character: '#fbbf24',
     })
     expect(videoWorkflowPortColor('image')).toBe('#a78bfa')
-    expect(videoWorkflowPortColor('script')).toBe('#8b96a5')
+    expect(videoWorkflowPortColor('script')).toBe('#34d399')
     expect(videoWorkflowNodeCatalogColor('video')).toBe('#60a5fa')
     expect(videoWorkflowNodeCatalogColor('unknown')).toBe('#64748b')
     expect(resolveVideoWorkflowEdgeStroke({ portType: 'video' })).toBe('#38bdf8')

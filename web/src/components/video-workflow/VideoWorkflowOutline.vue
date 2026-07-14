@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { VideoWorkflowNode } from '@/api/videoWorkflow'
-import { VIDEO_WORKFLOW_NODE_CATALOG, nodeStatusLabel } from '@/utils/videoWorkflowGraph'
+import { VIDEO_WORKFLOW_NODE_CATALOG, nodeStatusLabel, videoWorkflowDisplayNodeTitle, videoWorkflowNodeTypeLabel } from '@/utils/videoWorkflowGraph'
 
 defineProps<{
   modelValue: boolean
@@ -15,7 +15,7 @@ const emit = defineEmits<{
 }>()
 
 function nodeTitle(node: VideoWorkflowNode) {
-  return node.title || node.config?.title || node.config?.name
+  return videoWorkflowDisplayNodeTitle(node)
     || VIDEO_WORKFLOW_NODE_CATALOG.find((item) => item.type === node.type)?.label || node.id || '未命名节点'
 }
 
@@ -49,7 +49,7 @@ function selectNode(nodeID: string) {
   >
     <div class="outline-summary"><b>{{ nodes.length }}</b> 节点 · <b>{{ edgeCount }}</b> 连线 · <b>{{ clipCount }}</b> 片段</div>
     <button v-for="node in nodes" :key="node.id" class="outline-node" @click="selectNode(node.id)">
-      <span>{{ node.type }}</span>
+      <span>{{ videoWorkflowNodeTypeLabel(node.type) }}</span>
       <b>{{ nodeTitle(node) }}</b>
       <em :class="statusClass(node)">{{ statusText(node) }}</em>
     </button>
@@ -58,7 +58,7 @@ function selectNode(nodeID: string) {
 
 <style scoped>
 .outline-summary { margin-bottom: 12px; padding: 10px; color: #64748b; background: #f8fafc; border-radius: 6px; font-size: 11px; }
-.outline-node { width: 100%; min-height: 42px; display: grid; grid-template-columns: 70px minmax(0, 1fr) auto; align-items: center; gap: 7px; margin-bottom: 6px; padding: 0 9px; text-align: left; background: #fff; border: 1px solid #e2e8f0; border-radius: 5px; cursor: pointer; font-family: inherit; }
+.outline-node { width: 100%; min-height: 42px; display: grid; grid-template-columns: 4.5em minmax(0, 1fr) auto; align-items: center; gap: 7px; margin-bottom: 6px; padding: 0 9px; text-align: left; background: #fff; border: 1px solid #e2e8f0; border-radius: 5px; cursor: pointer; font-family: inherit; }
 .outline-node > span { color: #94a3b8; font-size: 9px; }
 .outline-node b { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .outline-node em { color: #64748b; font-size: 9px; font-style: normal; }

@@ -39,6 +39,7 @@ export const VIDEO_WORKFLOW_NODE_CATALOG = [
   { type: 'story_brief', label: '故事简报', group: '文本', color: '#67e8f9' },
   { type: 'character', label: '角色护照', group: '角色', color: '#fbbf24' },
   { type: 'script', label: '分镜剧本', group: '文本', color: '#a7f3d0' },
+  { type: 'scene', label: '场景描述', group: '文本', color: '#86efac' },
   { type: 'background', label: '场景图片', group: '图像', color: '#fb7185' },
   { type: 'video', label: '场景视频', group: '视频', color: '#60a5fa' },
   { type: 'timeline', label: '顺序时间线', group: '合成', color: '#c4b5fd' },
@@ -51,6 +52,51 @@ export const VIDEO_WORKFLOW_PORT_COLORS: Record<string, string> = {
   image: '#a78bfa',
   video: '#38bdf8',
   character: '#fbbf24',
+  script: '#34d399',
+  scene: '#86efac',
+  video_list: '#38bdf8',
+}
+
+const NODE_TYPE_LABELS: Record<string, string> = {
+  story_brief: '故事简报',
+  character: '角色护照',
+  script: '分镜剧本',
+  scene: '场景描述',
+  background: '场景图片',
+  image: '图片',
+  video: '场景视频',
+  timeline: '顺序时间线',
+  compose: '成片输出',
+}
+
+const PORT_TYPE_LABELS: Record<string, string> = {
+  text: '文本',
+  image: '图片',
+  video: '视频',
+  character: '角色',
+  script: '分镜剧本',
+  scene: '场景描述',
+  video_list: '视频列表',
+}
+
+export function videoWorkflowNodeTypeLabel(type?: string | null) {
+  if (!type) return '节点'
+  return VIDEO_WORKFLOW_NODE_CATALOG.find((item) => item.type === type)?.label
+    || NODE_TYPE_LABELS[type]
+    || type
+}
+
+export function videoWorkflowPortTypeLabel(type?: string | null) {
+  if (!type) return ''
+  return PORT_TYPE_LABELS[type] || type
+}
+
+export function videoWorkflowDisplayNodeTitle(node: Pick<VideoWorkflowNode, 'id' | 'type' | 'title' | 'config'>) {
+  const raw = String(node.title || node.config?.title || node.config?.name || '').trim()
+  if (!raw || raw === node.type || raw === node.id || NODE_TYPE_LABELS[raw] || PORT_TYPE_LABELS[raw]) {
+    return videoWorkflowNodeTypeLabel(node.type)
+  }
+  return raw
 }
 
 export function videoWorkflowPortColor(type?: string | null, fallback = '#8b96a5'): string {

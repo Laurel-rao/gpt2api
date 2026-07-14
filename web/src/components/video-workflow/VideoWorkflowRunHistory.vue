@@ -8,7 +8,7 @@ import type {
   VideoWorkflowRunStatus,
 } from '@/api/videoWorkflow'
 import { formatErrorCode } from '@/utils/format'
-import { VIDEO_WORKFLOW_NODE_CATALOG, nodeStatusLabel } from '@/utils/videoWorkflowGraph'
+import { VIDEO_WORKFLOW_NODE_CATALOG, nodeStatusLabel, videoWorkflowNodeTypeLabel } from '@/utils/videoWorkflowGraph'
 
 const props = defineProps<{
   modelValue: boolean
@@ -78,7 +78,7 @@ function completedNodes(run: VideoWorkflowRun) {
   return `${nodes.filter((item) => item.status === 'succeeded').length}/${nodes.length}`
 }
 function nodeTypeLabel(type?: string) {
-  return VIDEO_WORKFLOW_NODE_CATALOG.find((item) => item.type === type)?.label || type || '节点'
+  return videoWorkflowNodeTypeLabel(type)
 }
 function nodeRunTitle(run: VideoWorkflowRun, node: VideoWorkflowNodeRun) {
   const graphNode = run.graph_snapshot?.nodes?.find((item) => item.id === node.node_id)

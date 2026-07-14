@@ -27,7 +27,7 @@ import type {
   VideoWorkflowNodeStatus,
   VideoWorkflowTimelineClip,
 } from '@/api/videoWorkflow'
-import { VIDEO_WORKFLOW_NODE_CATALOG, nodeStatusLabel, videoWorkflowNodePreviewURL } from '@/utils/videoWorkflowGraph'
+import { VIDEO_WORKFLOW_NODE_CATALOG, nodeStatusLabel, videoWorkflowNodePreviewURL, videoWorkflowNodeTypeLabel } from '@/utils/videoWorkflowGraph'
 import { formatErrorCode } from '@/utils/format'
 import {
   resolveDefaultInspectorTab,
@@ -217,7 +217,7 @@ function statusLabel(status?: VideoWorkflowNodeStatus) {
 }
 
 function nodeTypeLabel(type?: string) {
-  return VIDEO_WORKFLOW_NODE_CATALOG.find((item) => item.type === type)?.label || type || '节点'
+  return videoWorkflowNodeTypeLabel(type)
 }
 
 function outputLabel(key: string) {
