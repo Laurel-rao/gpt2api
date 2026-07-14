@@ -96,6 +96,7 @@ func (s *Service) EnsureBuiltinTemplate(ctx context.Context) error {
 		return err
 	}
 	for i := range templates {
+		NormalizeBackgroundEnvironmentPorts(&templates[i].Graph)
 		if errs := ValidateGraph(templates[i].Graph, true); len(errs) != 0 {
 			return &GraphValidationError{Errors: errs}
 		}
@@ -125,6 +126,7 @@ func (s *Service) CreateWorkflow(ctx context.Context, input CreateWorkflowInput)
 	if err != nil {
 		return nil, fmt.Errorf("clone video workflow template: %w", err)
 	}
+	NormalizeBackgroundEnvironmentPorts(&graph)
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
 		name = template.Name
@@ -156,6 +158,7 @@ type UpdateWorkflowInput struct {
 }
 
 func (s *Service) UpdateWorkflow(ctx context.Context, input UpdateWorkflowInput) (*Workflow, error) {
+	NormalizeBackgroundEnvironmentPorts(&input.Graph)
 	if errs := ValidateGraph(input.Graph, false); len(errs) != 0 {
 		return nil, &GraphValidationError{Errors: errs}
 	}
@@ -222,6 +225,7 @@ func (s *Service) validateWorkflow(ctx context.Context, userID uint64, workflowI
 	if graph != nil {
 		target = *graph
 	}
+	NormalizeBackgroundEnvironmentPorts(&target)
 	return ValidateGraph(target, true), nil
 }
 
@@ -264,6 +268,7 @@ func (s *Service) StartRunWithInput(ctx context.Context, userID uint64, workflow
 	if err != nil {
 		return nil, err
 	}
+	NormalizeBackgroundEnvironmentPorts(&workflow.Graph)
 	if errs := ValidateGraph(workflow.Graph, true); len(errs) != 0 {
 		return nil, &GraphValidationError{Errors: errs}
 	}
@@ -487,6 +492,7 @@ func (s *Service) EstimateRunWithInput(ctx context.Context, userID uint64, workf
 	if err != nil {
 		return nil, err
 	}
+	NormalizeBackgroundEnvironmentPorts(&workflow.Graph)
 	if errs := ValidateGraph(workflow.Graph, true); len(errs) != 0 {
 		return nil, &GraphValidationError{Errors: errs}
 	}

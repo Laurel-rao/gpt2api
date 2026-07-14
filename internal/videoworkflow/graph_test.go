@@ -131,6 +131,64 @@ func TestBuiltinTemplateV1_CompleteAndCloned(t *testing.T) {
 	}
 }
 
+func TestNormalizeBackgroundEnvironmentPorts(t *testing.T) {
+	g := Graph{
+		SchemaVersion: SchemaVersionV2,
+		Settings: Settings{
+			AspectRatio: AspectRatioPortrait, Resolution: Resolution720p, FPS: DefaultFPS,
+			SceneDurationMS: SceneDurationMS, CharacterApprovalPolicy: ApprovalManual,
+			StoryboardApprovalPolicy: ApprovalManual,
+		},
+		Nodes: []Node{
+			{ID: "scene_1", Type: NodeScene, DurationSeconds: SceneDuration, Outputs: []Port{{ID: "scene", Type: PortScene}}},
+			{ID: "background_1", Type: NodeBackground, Inputs: []Port{{ID: "scene", Label: "场景描述", Type: PortScene, Required: true}}, Outputs: []Port{{ID: "image", Type: PortImage}}},
+			{ID: "timeline", Type: NodeTimeline, Locked: true, Config: json.RawMessage(`{"clips":[]}`), Outputs: []Port{{ID: "videos", Type: PortVideoList}}},
+			{ID: "compose", Type: NodeCompose, Locked: true, Inputs: []Port{{ID: "videos", Type: PortVideoList, Required: true}}, Outputs: []Port{{ID: "video", Type: PortVideo}}},
+		},
+		Edges: []Edge{
+			{ID: "e1", Source: "scene_1", SourcePort: "scene", Target: "background_1", TargetPort: "scene"},
+			{ID: "e2", Source: "timeline", SourcePort: "videos", Target: "compose", TargetPort: "videos"},
+		},
+	}
+	NormalizeBackgroundEnvironmentPorts(&g)
+	bg := g.Nodes[findNodeIndex(g, "background_1")]
+	if len(bg.Inputs) != 1 || bg.Inputs[0].ID != backgroundEnvironmentPortID {
+		t.Fatalf("background inputs=%+v", bg.Inputs)
+	}
+	if bg.Inputs[0].Label != backgroundEnvironmentPortLabel {
+		t.Fatalf("background label=%q", bg.Inputs[0].Label)
+	}
+	if g.Edges[0].TargetPort != backgroundEnvironmentPortID {
+		t.Fatalf("edge target_port=%q", g.Edges[0].TargetPort)
+	}
+	NormalizeBackgroundEnvironmentPorts(&g) // idempotent
+	bgAfter := g.Nodes[findNodeIndex(g, "background_1")]
+	if len(bgAfter.Inputs) != 1 || bgAfter.Inputs[0].ID != backgroundEnvironmentPortID || g.Edges[0].TargetPort != backgroundEnvironmentPortID {
+		t.Fatal("normalize is not idempotent")
+	}
+	if errs := ValidateGraph(g, false); len(errs) != 0 {
+		t.Fatalf("normalized graph invalid: %v", errs)
+	}
+
+	blank := blankVideoCanvasTemplate().Graph
+	bgBlank := blank.Nodes[findNodeIndex(blank, "background_1")]
+	if len(bgBlank.Inputs) == 0 || bgBlank.Inputs[0].ID != backgroundEnvironmentPortID {
+		t.Fatalf("blank background inputs=%+v", bgBlank.Inputs)
+	}
+	found := false
+	for _, edge := range blank.Edges {
+		if edge.Target == "background_1" {
+			found = true
+			if edge.TargetPort != backgroundEnvironmentPortID {
+				t.Fatalf("blank edge target_port=%q", edge.TargetPort)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("blank template missing scene→background edge")
+	}
+}
+
 func TestInvalidation_RoleChanged(t *testing.T) {
 	g := MustBuiltinTemplateV1().Graph
 	got := InvalidatedNodeIDs(g, "role_hero", ChangeRoleSelection)

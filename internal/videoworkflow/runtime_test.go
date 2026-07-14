@@ -868,6 +868,63 @@ func TestIncomingEdgesKeepVideoReferencesInDeclaredPortOrder(t *testing.T) {
 	}
 }
 
+func TestBuildNodePromptBackgroundStripsPerformanceFields(t *testing.T) {
+	sceneJSON := json.RawMessage(`{
+		"location":"江南小镇石桥边",
+		"time":"清晨",
+		"lighting":[{"start":"00:00","end":"00:15","description":"清晨柔光，薄雾漫反射，水面微亮"}],
+		"action":[{"start":"00:00","end":"00:05","description":"沈砚在桥边拾起手札，低头翻看"}],
+		"camera":[{"start":"00:00","end":"00:05","shot":"远景平移","description":"晨雾中的石桥与临水书肆缓缓展开"}],
+		"dialogue":[{"speaker":"柳青","line":"公子且慢，你手中的手札，可不是寻常旧纸。"}],
+		"conflict":"沈砚误拿柳青珍藏手札，引发初见误会。",
+		"audio":[{"start":"00:00","end":"00:05","description":"轻柔古筝与晨间水声、鸟鸣"}],
+		"props":["静置手札","水雲書肆门额"]
+	}`)
+	background := Node{
+		ID:   "background_1",
+		Type: NodeBackground,
+		Config: json.RawMessage(`{"prompt":"二维国风动画场景背景；江南石桥清晨；无人空镜；9:16单镜头、非拼贴。"}`),
+	}
+	prompt := buildNodePrompt(background, []Edge{{Source: "scene_1", Target: "background_1"}}, map[string]runtimeNodeOutput{
+		"scene_1": {JSON: sceneJSON},
+	})
+	for _, banned := range []string{"沈砚在桥边拾起手札", "公子且慢", "\"action\"", "\"dialogue\"", "\"camera\"", "\"audio\"", "\"conflict\"", "\"台词\"", "\"镜头\"", "\"声音\""} {
+		if strings.Contains(prompt, banned) {
+			t.Fatalf("background prompt still contains %q:\n%s", banned, prompt)
+		}
+	}
+	for _, want := range []string{"江南小镇石桥边", "清晨", "清晨柔光", "静置手札", "水雲書肆门额", backgroundEmptyShotConstraint, "环境输入（仅地点/时间/灯光/静物）"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("background prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "上游输入：") {
+		t.Fatalf("background prompt should not use generic upstream header:\n%s", prompt)
+	}
+
+	// scenes[].description 若含表演句，不得因全局保留 description 而泄漏。
+	nestedScene := json.RawMessage(`{"scenes":[{"location":"石桥","description":"沈砚追出并拾起手札"}]}`)
+	nestedPrompt := buildNodePrompt(background, []Edge{{Source: "scene_1", Target: "background_1"}}, map[string]runtimeNodeOutput{
+		"scene_1": {JSON: nestedScene},
+	})
+	if strings.Contains(nestedPrompt, "沈砚追出") {
+		t.Fatalf("background prompt leaked nested scene description:\n%s", nestedPrompt)
+	}
+	if !strings.Contains(nestedPrompt, "石桥") {
+		t.Fatalf("background prompt missing nested location:\n%s", nestedPrompt)
+	}
+
+	video := Node{ID: "video_1", Type: NodeVideo, Config: json.RawMessage(`{"prompt":"生成15秒剧情视频"}`)}
+	videoPrompt := buildNodePrompt(video, []Edge{{Source: "scene_1", Target: "video_1"}}, map[string]runtimeNodeOutput{
+		"scene_1": {JSON: sceneJSON},
+	})
+	for _, want := range []string{"沈砚在桥边拾起手札", "公子且慢", "conflict"} {
+		if !strings.Contains(videoPrompt, want) {
+			t.Fatalf("video prompt should keep performance fields, missing %q:\n%s", want, videoPrompt)
+		}
+	}
+}
+
 func TestIncomingEdgesUseSourceAndPortAsStableTieBreakers(t *testing.T) {
 	graph := Graph{
 		Nodes: []Node{

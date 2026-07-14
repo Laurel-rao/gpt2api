@@ -44,6 +44,7 @@ func (d *SQLDAO) EnsureBuiltinTemplate(ctx context.Context) error {
 		return err
 	}
 	for i := range templates {
+		NormalizeBackgroundEnvironmentPorts(&templates[i].Graph)
 		if errs := ValidateGraph(templates[i].Graph, true); len(errs) != 0 {
 			return &GraphValidationError{Errors: errs}
 		}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 type ValidationCode string
@@ -316,6 +317,64 @@ func findPort(ports []Port, id string) (Port, bool) {
 		}
 	}
 	return Port{}, false
+}
+
+const (
+	backgroundEnvironmentPortID   = "environment"
+	backgroundLegacyScenePortID   = "scene"
+	backgroundEnvironmentPortLabel = "环境（地点/灯光/静物）"
+)
+
+// NormalizeBackgroundEnvironmentPorts 将背景节点输入口 scene 归一为 environment，
+// 并把指向该口的边 TargetPort 一并改写。已规范图可安全重复调用。
+func NormalizeBackgroundEnvironmentPorts(g *Graph) {
+	if g == nil {
+		return
+	}
+	backgroundIDs := make(map[string]struct{})
+	for i := range g.Nodes {
+		node := &g.Nodes[i]
+		if node.Type != NodeBackground {
+			continue
+		}
+		backgroundIDs[node.ID] = struct{}{}
+		hasEnvironment := false
+		inputs := make([]Port, 0, len(node.Inputs))
+		for _, port := range node.Inputs {
+			if port.ID == backgroundLegacyScenePortID {
+				port.ID = backgroundEnvironmentPortID
+				if strings.TrimSpace(port.Label) == "" || port.Label == "场景描述" {
+					port.Label = backgroundEnvironmentPortLabel
+				}
+			}
+			if port.ID == backgroundEnvironmentPortID {
+				if hasEnvironment {
+					continue
+				}
+				hasEnvironment = true
+				if strings.TrimSpace(port.Label) == "" {
+					port.Label = backgroundEnvironmentPortLabel
+				}
+			}
+			inputs = append(inputs, port)
+		}
+		if !hasEnvironment {
+			inputs = append(inputs, Port{
+				ID: backgroundEnvironmentPortID, Label: backgroundEnvironmentPortLabel,
+				Type: PortScene, Required: true,
+			})
+		}
+		node.Inputs = inputs
+	}
+	for i := range g.Edges {
+		edge := &g.Edges[i]
+		if _, ok := backgroundIDs[edge.Target]; !ok {
+			continue
+		}
+		if edge.TargetPort == backgroundLegacyScenePortID {
+			edge.TargetPort = backgroundEnvironmentPortID
+		}
+	}
 }
 
 func hasCycle(indegree map[string]int, adj map[string][]string) bool {

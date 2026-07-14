@@ -48,6 +48,7 @@ type timelineRuntimeClip struct {
 }
 
 func (r *Runtime) executeRun(ctx context.Context, run *Run) error {
+	NormalizeBackgroundEnvironmentPorts(&run.GraphSnapshot)
 	if errs := ValidateGraph(run.GraphSnapshot, true); len(errs) > 0 {
 		return &GraphValidationError{Errors: errs}
 	}
@@ -1170,7 +1171,10 @@ func buildNodePrompt(node Node, incoming []Edge, outputs map[string]runtimeNodeO
 	var contextParts []string
 	for _, edge := range incoming {
 		if raw := outputs[edge.Source].JSON; len(raw) > 0 {
-			text := string(raw)
+			text := formatUpstreamPromptContext(node.Type, raw)
+			if text == "" {
+				continue
+			}
 			if len(text) > 8000 {
 				text = text[:8000]
 			}
@@ -1178,9 +1182,168 @@ func buildNodePrompt(node Node, incoming []Edge, outputs map[string]runtimeNodeO
 		}
 	}
 	if len(contextParts) > 0 {
-		prompt += "\n\n上游输入：\n" + strings.Join(contextParts, "\n")
+		header := "上游输入："
+		if node.Type == NodeBackground {
+			header = "环境输入（仅地点/时间/灯光/静物）："
+		}
+		prompt += "\n\n" + header + "\n" + strings.Join(contextParts, "\n")
+	}
+	if node.Type == NodeBackground {
+		prompt = ensureBackgroundEmptyShotConstraint(prompt)
 	}
 	return strings.TrimSpace(prompt)
+}
+
+const backgroundEmptyShotConstraint = "约束：无人空镜或仅远景不可辨识剪影；禁止近中景可辨识人物、肢体动作、追逐/拾取/抬手等表演；道具仅可静置；非拼贴。"
+
+func ensureBackgroundEmptyShotConstraint(prompt string) string {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return backgroundEmptyShotConstraint
+	}
+	if strings.Contains(prompt, backgroundEmptyShotConstraint) {
+		return prompt
+	}
+	return prompt + "\n" + backgroundEmptyShotConstraint
+}
+
+func formatUpstreamPromptContext(nodeType NodeType, raw json.RawMessage) string {
+	raw = json.RawMessage(bytes.TrimSpace(raw))
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	if nodeType != NodeBackground {
+		return string(raw)
+	}
+	filtered, ok := filterBackgroundUpstreamJSON(raw)
+	if !ok {
+		return ""
+	}
+	encoded, err := json.Marshal(filtered)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
+}
+
+var backgroundUpstreamKeepKeys = map[string]struct{}{
+	"location": {}, "地点": {}, "place": {}, "场所": {},
+	"time": {}, "时间": {},
+	"lighting": {}, "灯光": {}, "light": {},
+	"duration": {}, "时长": {},
+	"start": {}, "end": {},
+	"scene": {}, "scene_id": {}, "index": {}, "id": {},
+	"image_prompt": {}, "背景提示": {}, "background_prompt": {},
+	"props": {}, "物料": {}, "prop": {}, "objects": {}, "静物": {},
+	"environment": {}, "环境": {}, "setting": {}, "weather": {}, "天气": {},
+	"summary": {}, // 仅作空间摘要；动作词在文案层面仍受空镜约束压制
+}
+
+// 仅在灯光/环境等 keep 字段内部保留 description，避免 scenes[].description 动作句泄漏。
+var backgroundUpstreamEnvDescriptionKeys = map[string]struct{}{
+	"description": {}, "描述": {},
+}
+
+var backgroundUpstreamEnvKeys = map[string]struct{}{
+	"lighting": {}, "灯光": {}, "light": {},
+	"environment": {}, "环境": {}, "setting": {}, "weather": {}, "天气": {},
+}
+
+var backgroundUpstreamDropKeys = map[string]struct{}{
+	"action": {}, "动作": {}, "actions": {},
+	"dialogue": {}, "台词": {}, "dialogues": {}, "line": {}, "lines": {}, "speaker": {},
+	"conflict": {}, "冲突": {},
+	"audio": {}, "声音": {}, "sound": {}, "sounds": {}, "music": {},
+	"camera": {}, "镜头": {}, "shot": {}, "cameras": {},
+	"expression": {}, "表情": {}, "expressions": {},
+	"video_prompt": {}, "角色": {}, "characters": {}, "character": {},
+	"cast": {}, "表演": {},
+}
+
+func filterBackgroundUpstreamJSON(raw json.RawMessage) (any, bool) {
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, false
+	}
+	filtered := filterBackgroundUpstreamValue(value, false)
+	if filtered == nil {
+		return nil, false
+	}
+	if object, ok := filtered.(map[string]any); ok && len(object) == 0 {
+		return nil, false
+	}
+	if list, ok := filtered.([]any); ok && len(list) == 0 {
+		return nil, false
+	}
+	return filtered, true
+}
+
+func filterBackgroundUpstreamValue(value any, keepEnvDescription bool) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, child := range typed {
+			if _, drop := backgroundUpstreamDropKeys[key]; drop {
+				continue
+			}
+			if keepEnvDescription {
+				if _, ok := backgroundUpstreamEnvDescriptionKeys[key]; ok {
+					if filtered := filterBackgroundUpstreamValue(child, true); filtered != nil {
+						out[key] = filtered
+					}
+					continue
+				}
+			}
+			if _, keep := backgroundUpstreamKeepKeys[key]; keep {
+				childKeepDesc := keepEnvDescription
+				if _, env := backgroundUpstreamEnvKeys[key]; env {
+					childKeepDesc = true
+				}
+				if filtered := filterBackgroundUpstreamValue(child, childKeepDesc); filtered != nil {
+					out[key] = filtered
+				}
+				continue
+			}
+			// 嵌套容器（如 scenes / result）继续下钻，叶子未知字段丢弃，避免动作句漏网。
+			switch child.(type) {
+			case map[string]any, []any:
+				if filtered := filterBackgroundUpstreamValue(child, false); filtered != nil {
+					if object, ok := filtered.(map[string]any); ok && len(object) == 0 {
+						continue
+					}
+					if list, ok := filtered.([]any); ok && len(list) == 0 {
+						continue
+					}
+					out[key] = filtered
+				}
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	case []any:
+		out := make([]any, 0, len(typed))
+		for _, child := range typed {
+			if filtered := filterBackgroundUpstreamValue(child, keepEnvDescription); filtered != nil {
+				out = append(out, filtered)
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	case string:
+		text := strings.TrimSpace(typed)
+		if text == "" {
+			return nil
+		}
+		return text
+	case float64, bool:
+		return typed
+	default:
+		return nil
+	}
 }
 
 func attachPromptToNodeOutput(raw json.RawMessage, prompt string) json.RawMessage {

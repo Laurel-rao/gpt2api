@@ -51,6 +51,7 @@ func upgradeAncientTemplate(template Template) (Template, error) {
 	if err := applyAncientDramaV3Defaults(&graph); err != nil {
 		return Template{}, err
 	}
+	NormalizeBackgroundEnvironmentPorts(&graph)
 	template.Code = "ancient_drama_seedance"
 	template.Version = 3
 	template.Name = "古风多角色短剧 · 本地 Seedance"
@@ -101,7 +102,7 @@ func applyAncientDramaV3Defaults(graph *Graph) error {
 		case backgroundPrompts[node.ID] != "":
 			prompt = backgroundPrompts[node.ID]
 		case node.Type == NodeBackground:
-			prompt = "生成二维国风动画场景背景；若出现人物仅限虚构成年人；非照片、非写实、非真人；9:16单镜头、非拼贴，保持统一古风美术与清晰空间层次。"
+			prompt = "生成二维国风动画场景背景；无人空镜或仅远景不可辨识剪影；禁止近中景人物与肢体动作；道具仅可静置；非照片、非写实、非真人；9:16单镜头、非拼贴，保持统一古风美术与清晰空间层次。"
 		case videoPrompts[node.ID] != "":
 			prompt = videoPrompts[node.ID]
 		case node.Type == NodeVideo:
@@ -206,7 +207,7 @@ func blankVideoCanvasTemplate() Template {
 	graph.Nodes = []Node{
 		{ID: "brief", Type: NodeStoryBrief, Position: Position{X: 40, Y: 160}, Config: json.RawMessage(`{"title":"创意简报","prompt":"描述主题、人物、场景和镜头"}`), Outputs: []Port{{ID: "text", Type: PortText}}},
 		{ID: "scene_1", Type: NodeScene, SceneID: "scene_1", DurationSeconds: SceneDuration, Position: Position{X: 300, Y: 160}, Inputs: []Port{{ID: "script", Type: PortText, Required: true}}, Outputs: []Port{{ID: "scene", Type: PortScene}}},
-		{ID: "background_1", Type: NodeBackground, SceneID: "scene_1", Position: Position{X: 540, Y: 160}, Inputs: []Port{{ID: "scene", Type: PortScene, Required: true}}, Outputs: []Port{{ID: "image", Type: PortImage}}},
+		{ID: "background_1", Type: NodeBackground, SceneID: "scene_1", Position: Position{X: 540, Y: 160}, Inputs: []Port{{ID: "environment", Label: "环境（地点/灯光/静物）", Type: PortScene, Required: true}}, Outputs: []Port{{ID: "image", Type: PortImage}}},
 		{ID: "video_1", Type: NodeVideo, SceneID: "scene_1", DurationSeconds: SceneDuration, Position: Position{X: 800, Y: 160}, Inputs: []Port{{ID: "scene", Type: PortScene, Required: true}, {ID: "background", Type: PortImage, Required: true}}, Outputs: []Port{{ID: "video", Type: PortVideo}}},
 		{ID: "timeline", Type: NodeTimeline, Locked: true, Position: Position{X: 1060, Y: 160}, Config: timelineConfig, Inputs: []Port{{ID: "clip_1", Type: PortVideo, Required: true}}, Outputs: []Port{{ID: "videos", Type: PortVideoList}}},
 		{ID: "compose", Type: NodeCompose, Locked: true, Position: Position{X: 1300, Y: 160}, Inputs: []Port{{ID: "videos", Type: PortVideoList, Required: true}}, Outputs: []Port{{ID: "video", Type: PortVideo}}},
@@ -216,7 +217,7 @@ func blankVideoCanvasTemplate() Template {
 	}
 	graph.Edges = []Edge{
 		{ID: "e_brief_scene", Source: "brief", SourcePort: "text", Target: "scene_1", TargetPort: "script"},
-		{ID: "e_scene_background", Source: "scene_1", SourcePort: "scene", Target: "background_1", TargetPort: "scene"},
+		{ID: "e_scene_background", Source: "scene_1", SourcePort: "scene", Target: "background_1", TargetPort: "environment"},
 		{ID: "e_scene_video", Source: "scene_1", SourcePort: "scene", Target: "video_1", TargetPort: "scene"},
 		{ID: "e_background_video", Source: "background_1", SourcePort: "image", Target: "video_1", TargetPort: "background"},
 		{ID: "e_video_timeline", Source: "video_1", SourcePort: "video", Target: "timeline", TargetPort: "clip_1"},
