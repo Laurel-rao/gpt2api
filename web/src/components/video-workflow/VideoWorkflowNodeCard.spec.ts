@@ -1,6 +1,7 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import type { VideoWorkflowNode } from '@/api/videoWorkflow'
+import { makeVideoWorkflowNode } from '@/utils/videoWorkflowGraph'
 import VideoWorkflowNodeCard from './VideoWorkflowNodeCard.vue'
 
 function imageNode(): VideoWorkflowNode {
@@ -56,8 +57,49 @@ describe('VideoWorkflowNodeCard image preview', () => {
       output: { preview_url: '/generated.mp4' },
     }
     const wrapper = mount(VideoWorkflowNodeCard, { props: { node } })
-    expect(wrapper.find('.node-media video').attributes('src')).toBe('/generated.mp4')
+    const video = wrapper.find('.node-media video')
+    expect(video.attributes('src')).toBe('/generated.mp4')
+    expect(video.attributes('poster')).toBe('/poster.jpg')
+    expect(video.attributes('preload')).toBe('none')
     expect(wrapper.find('.node-preview-button').classes()).toContain('video')
+    await wrapper.find('.node-preview-button').trigger('click')
+    expect(wrapper.emitted('preview-media')?.[0]).toEqual([node])
+  })
+
+  it('keeps metadata preload when video has no poster', () => {
+    const node: VideoWorkflowNode = {
+      id: 'video_2',
+      type: 'video',
+      title: 'S02 视频',
+      position: { x: 0, y: 0 },
+      config: {},
+      output: { preview_url: '/generated.mp4' },
+    }
+    const wrapper = mount(VideoWorkflowNodeCard, { props: { node } })
+    const video = wrapper.find('.node-media video')
+    expect(video.attributes('src')).toBe('/generated.mp4')
+    expect(video.attributes('poster')).toBeUndefined()
+    expect(video.attributes('preload')).toBe('metadata')
+  })
+
+  it('renders character passport thumbnails from run output', async () => {
+    const node: VideoWorkflowNode = {
+      id: 'role_heroine',
+      type: 'character',
+      title: '女主',
+      position: { x: 0, y: 0 },
+      status: 'succeeded',
+      config: { name: '女主' },
+      output: {
+        selected_version_id: 'vwv_heroine',
+        output_url: '/p/vwf/vwv_heroine?purpose=preview',
+        candidates: [{ id: 'vwv_heroine', preview_url: '/p/vwf/vwv_heroine?purpose=preview' }],
+      },
+    }
+    const wrapper = mount(VideoWorkflowNodeCard, { props: { node } })
+    const img = wrapper.find('.node-media img')
+    expect(img.exists()).toBe(true)
+    expect(img.attributes('src')).toContain('/p/vwf/vwv_heroine')
     await wrapper.find('.node-preview-button').trigger('click')
     expect(wrapper.emitted('preview-media')?.[0]).toEqual([node])
   })
@@ -97,5 +139,72 @@ describe('VideoWorkflowNodeCard image preview', () => {
     expect(inputs[0].attributes('title')).toContain('背景')
     expect(inputs[1].classes()).toContain('shared-character-port')
     expect(inputs[1].attributes('title')).toBe('公共角色资产 · 2 个角色')
+  })
+
+  it('keeps connection handles above the node body', () => {
+    const node = makeVideoWorkflowNode('character')
+    const wrapper = mount(VideoWorkflowNodeCard, {
+      props: { node },
+      global: { stubs: { Handle: true } },
+    })
+    expect(wrapper.find('.workflow-node-card').classes()).toContain('character')
+    expect(wrapper.findAll('.node-port')).toHaveLength(2)
+  })
+
+  it('colors ports by type and shows catalog accent plus running progress', () => {
+    const node = makeVideoWorkflowNode('character')
+    node.status = 'running'
+    node.progress = 42
+    const wrapper = mount(VideoWorkflowNodeCard, {
+      props: { node },
+      global: { stubs: { Handle: true } },
+    })
+    expect(wrapper.find('.workflow-node-card').attributes('style')).toContain('--node-catalog-color: #fbbf24')
+    expect(wrapper.find('.node-port.input').classes()).toContain('port-type-text')
+    expect(wrapper.find('.node-port.output').classes()).toContain('port-type-image')
+    expect(wrapper.find('.node-progress').attributes('style')).toContain('width: 42%')
+    expect(wrapper.find('footer b').text()).toBe('42%')
+  })
+
+  it('summarizes timeline clip count from clips before falling back to clip_node_ids', () => {
+    const withClips = makeVideoWorkflowNode('timeline')
+    withClips.config = {
+      title: '顺序时间线',
+      clips: [
+        { id: 'clip_1', source_node_id: 'video_1', source_port: 'video', trim_in_ms: 0, trim_out_ms: 15_000 },
+        { id: 'clip_2', source_node_id: 'video_2', source_port: 'video', trim_in_ms: 0, trim_out_ms: 15_000 },
+      ],
+      clip_node_ids: ['video_1'],
+    }
+    expect(mount(VideoWorkflowNodeCard, {
+      props: { node: withClips },
+      global: { stubs: { Handle: true } },
+    }).find('p').text()).toBe('2 个片段 · 单轨')
+
+    const legacyOnly = makeVideoWorkflowNode('timeline')
+    legacyOnly.config = { title: '顺序时间线', clip_node_ids: ['video_1', 'video_2', 'video_3'] }
+    expect(mount(VideoWorkflowNodeCard, {
+      props: { node: legacyOnly },
+      global: { stubs: { Handle: true } },
+    }).find('p').text()).toBe('3 个片段 · 单轨')
+
+    const emptyClips = makeVideoWorkflowNode('timeline')
+    emptyClips.config = { title: '顺序时间线', clips: [], clip_node_ids: ['video_1', 'video_2'] }
+    expect(mount(VideoWorkflowNodeCard, {
+      props: { node: emptyClips },
+      global: { stubs: { Handle: true } },
+    }).find('p').text()).toBe('0 个片段 · 单轨')
+  })
+
+  it('exposes translated run errors on the card title', () => {
+    const failed = makeVideoWorkflowNode('video')
+    failed.status = 'failed'
+    failed.run_error_code = 'runtime_failed'
+    failed.run_error = '上游超时'
+    const wrapper = mount(VideoWorkflowNodeCard, {
+      props: { node: failed },
+      global: { stubs: { Handle: true } },
+    })
+    expect(wrapper.find('article').attributes('title')).toBe('工作流运行失败：上游超时')
   })
 })

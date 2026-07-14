@@ -81,11 +81,17 @@ function elkGraph(source: VideoWorkflowGraph): ElkNode {
       'elk.padding': '[top=52,left=52,bottom=52,right=52]',
       'elk.spacing.nodeNode': '48',
       'elk.spacing.edgeNode': '24',
+      'elk.spacing.edgeEdge': '16',
       'elk.layered.spacing.nodeNodeBetweenLayers': '72',
+      'elk.layered.spacing.edgeNodeBetweenLayers': '24',
+      'elk.layered.spacing.edgeEdgeBetweenLayers': '16',
       'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
+      'elk.layered.crossingMinimization.forceNodeModelOrder': 'true',
       'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
       'elk.layered.nodePlacement.favorStraightEdges': 'true',
       'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
+      'elk.layered.thoroughness': '7',
+      'elk.portAlignment.default': 'CENTER',
     },
   }
 }

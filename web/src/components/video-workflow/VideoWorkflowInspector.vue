@@ -25,10 +25,15 @@ import type {
   VideoWorkflowNodeHistoryEntry,
   VideoWorkflowNodeRun,
   VideoWorkflowNodeStatus,
+  VideoWorkflowTimelineClip,
 } from '@/api/videoWorkflow'
 import { VIDEO_WORKFLOW_NODE_CATALOG, nodeStatusLabel, videoWorkflowNodePreviewURL } from '@/utils/videoWorkflowGraph'
-
-type InspectorTab = 'upstream' | 'status' | 'history' | 'output' | 'settings'
+import { formatErrorCode } from '@/utils/format'
+import {
+  resolveDefaultInspectorTab,
+  type InspectorTab,
+} from '@/utils/videoWorkflowInspectorTabs'
+import VideoWorkflowTimelineEditor from './VideoWorkflowTimelineEditor.vue'
 
 interface InspectorUpstreamSource {
   id: string
@@ -63,6 +68,7 @@ const props = withDefaults(defineProps<{
   modelOptions?: InspectorModelOption[]
   revision?: number
   running?: boolean
+  timelineSourceTitles?: Record<string, string>
 }>(), {
   upstreams: () => [],
   latestRun: null,
@@ -72,12 +78,14 @@ const props = withDefaults(defineProps<{
   modelOptions: () => [],
   revision: 0,
   running: false,
+  timelineSourceTitles: () => ({}),
 })
 
 const emit = defineEmits<{
   'update-title': [value: string]
   'update-config': [key: string, value: any]
   'update-model': [value: string]
+  'update-timeline-clips': [clips: VideoWorkflowTimelineClip[]]
   'transform': [patch: Record<string, any>]
   'select-version': [versionID: string]
   'replace-file': [file: File]
@@ -85,7 +93,7 @@ const emit = defineEmits<{
   'regenerate': []
   'run': []
   'delete': []
-  'add-connection': [portID: string]
+  'add-connection': [portID?: string]
   'add-to-timeline': []
   'preview-media': [node: VideoWorkflowNode]
   'preview-output': []
@@ -104,12 +112,14 @@ const tabs: Array<{ id: InspectorTab; label: string; icon: any }> = [
 ]
 
 const activeTab = ref<InspectorTab>('settings')
+const tabTouchedForNode = ref(false)
 const selectedHistoryRunID = ref('')
 const fileInput = ref<HTMLInputElement | null>(null)
 const cropping = ref(false)
 const crop = reactive({ x: 0, y: 0, width: 100, height: 100 })
-const imageNode = computed(() => Boolean(props.node && ['background', 'image'].includes(props.node.type)))
+const imageNode = computed(() => Boolean(props.node && ['character', 'background', 'image'].includes(props.node.type)))
 const videoNode = computed(() => props.node?.type === 'video')
+const mediaNode = computed(() => imageNode.value || videoNode.value)
 const systemNode = computed(() => ['timeline', 'compose'].includes(props.node?.type || ''))
 const selectedHistoryEntry = computed(() => props.history.find((entry) => entry.run_id === selectedHistoryRunID.value) || null)
 const effectiveOutput = computed(() => {
@@ -123,9 +133,13 @@ const effectiveOutputObject = computed<Record<string, any>>(() => {
   if (!output || typeof output !== 'object' || Array.isArray(output)) return {}
   return output
 })
-const previewURL = computed(() => selectedHistoryEntry.value
-  ? String(effectiveOutputObject.value.preview_url || effectiveOutputObject.value.url || effectiveOutputObject.value.output_url || '')
-  : videoWorkflowNodePreviewURL(props.node))
+const previewURL = computed(() => {
+  if (!props.node) return ''
+  return videoWorkflowNodePreviewURL({
+    ...props.node,
+    output: effectiveOutputObject.value,
+  })
+})
 const relatedAsset = computed(() => props.assets.find((asset) => asset.id === props.node?.config?.asset_id))
 const versions = computed<VideoAssetVersion[]>(() => {
   const remote = relatedAsset.value?.versions || []
@@ -156,6 +170,19 @@ const hasOutput = computed(() => Boolean(previewURL.value || outputRows.value.le
 const timelineDuration = computed(() => (props.node?.config?.clips || []).reduce((total: number, clip: any) => (
   total + Math.max(0, Number(clip.trim_out_ms || 0) - Number(clip.trim_in_ms || 0))
 ), 0))
+const displayRunErrorCode = computed(() => props.node?.run_error_code || props.latestRun?.error_code || '')
+const displayRunError = computed(() => (
+  props.node?.run_error
+  || props.latestRun?.error_message
+  || props.latestRun?.error
+  || ''
+))
+const displayRunErrorLabel = computed(() => (
+  formatErrorCode(displayRunErrorCode.value) || (displayRunError.value ? '运行错误' : '')
+))
+const timelineClips = computed<VideoWorkflowTimelineClip[]>(() => (
+  Array.isArray(props.node?.config?.clips) ? props.node!.config.clips : []
+))
 
 watch(() => [props.node?.id, props.node?.config?.selected_version_id, props.node?.config?.asset_version_id], () => {
   const current = props.node?.config?.image_transform?.crop
@@ -167,15 +194,21 @@ watch(() => [props.node?.id, props.node?.config?.selected_version_id, props.node
   if (activeTab.value === 'history') emit('request-history')
 }, { immediate: true })
 
-watch(() => props.node?.id, () => { selectedHistoryRunID.value = '' })
+watch(() => props.node?.id, () => {
+  selectedHistoryRunID.value = ''
+  tabTouchedForNode.value = false
+  activeTab.value = resolveDefaultInspectorTab(props.node)
+}, { immediate: true })
 
 function activateTab(tab: InspectorTab) {
+  tabTouchedForNode.value = true
   activeTab.value = tab
   if (tab === 'history') emit('request-history')
 }
 
 function showHistoryOutput(entry: VideoWorkflowNodeHistoryEntry) {
   selectedHistoryRunID.value = entry.run_id
+  tabTouchedForNode.value = true
   activeTab.value = 'output'
 }
 
@@ -228,10 +261,11 @@ function applyCrop() {
   })
   cropping.value = false
 }
+
 </script>
 
 <template>
-  <aside class="workflow-inspector" aria-label="节点检查器">
+  <aside class="workflow-inspector" :class="{ 'has-pinned-preview': mediaNode }" aria-label="节点检查器">
     <template v-if="node">
       <header class="inspector-header">
         <div><strong>{{ node.title || node.config?.title || '节点设置' }}</strong><span>{{ nodeTypeLabel(node.type) }} · {{ node.id }}</span></div>
@@ -249,6 +283,25 @@ function applyCrop() {
         ><component :is="tab.icon" /><span>{{ tab.label }}</span></button>
       </nav>
 
+      <!-- 媒体预览钉在滚动区外，避免长表单把预览/底部操作挤出视口 -->
+      <div v-if="mediaNode" class="inspector-media-preview">
+        <div class="image-preview">
+          <video v-if="previewURL && videoNode" :src="previewURL" muted playsinline preload="metadata" :aria-label="`${node.title || node.id} 视频缩略预览`" />
+          <img v-else-if="previewURL" :src="previewURL" :alt="node.title || '生成图片预览'" draggable="false" />
+          <span v-else><component :is="videoNode ? VideoCamera : Picture" /><small>尚未生成{{ videoNode ? '视频' : '图片' }}</small></span>
+          <button
+            v-if="!selectedHistoryEntry"
+            :class="['inspector-preview-button', { video: videoNode }]"
+            type="button"
+            :aria-label="`全屏预览：${node.title || node.id}`"
+            @keydown.stop
+            @keyup.stop
+            @click="emit('preview-media', node)"
+          ><component :is="videoNode ? VideoPlay : ZoomIn" /><span>全屏预览</span></button>
+          <em>{{ videoNode ? '15.000s' : '媒体输出' }}</em>
+        </div>
+      </div>
+
       <div class="inspector-scroll">
         <section v-show="activeTab === 'upstream'" class="inspector-panel ports-section" aria-label="上游输入">
           <header class="panel-heading"><div><strong>上游输入</strong><span>{{ upstreams.length }} 个输入端口</span></div></header>
@@ -258,17 +311,26 @@ function applyCrop() {
               <div v-for="source in group.sources" :key="source.id" class="upstream-source">
                 <b>{{ source.node_title }}</b><span>{{ source.port_label }}</span><small :class="source.status">{{ statusLabel(source.status) }}</small>
               </div>
-              <div v-if="!group.sources.length" class="unconnected"><span>未连接</span><button @click="emit('add-connection', group.id)">添加</button></div>
-              <button v-else class="replace-connection" @click="emit('add-connection', group.id)">更换输入</button>
+              <div v-if="!group.sources.length" class="unconnected"><span>未连接</span><button type="button" @click="emit('add-connection', group.id)">添加</button></div>
+              <button v-else class="replace-connection" type="button" @click="emit('add-connection', group.id)">更换输入</button>
             </article>
           </div>
-          <div v-else class="panel-empty"><Connection /><b>无上游输入</b><span>该节点是当前流程的起点</span></div>
+          <div v-else class="panel-empty">
+            <Connection />
+            <b>暂无上游输入</b>
+            <span>可从兼容节点的输出端口接入，或点击下方按钮手动选择</span>
+            <button type="button" class="empty-action" @click="emit('add-connection')">添加上游连接</button>
+          </div>
         </section>
 
         <section v-show="activeTab === 'status'" class="inspector-panel status-panel" aria-label="节点状态">
           <header class="panel-heading"><div><strong>运行状态</strong><span>当前工作流 R{{ revision }}</span></div><b :class="['status-badge', node.status || 'idle']"><i />{{ statusText }}</b></header>
           <div class="progress-block"><div><span>进度</span><b>{{ progress }}%</b></div><i><em :style="{ width: `${progress}%` }" /></i></div>
           <p v-if="node.stale_reason" class="status-message" :class="node.status || 'idle'">{{ node.stale_reason }}</p>
+          <div v-if="displayRunError || displayRunErrorCode" class="run-error" role="alert">
+            <b :title="displayRunErrorCode || undefined">{{ displayRunErrorLabel }}<small v-if="displayRunErrorCode && formatErrorCode(displayRunErrorCode) !== displayRunErrorCode">（{{ displayRunErrorCode }}）</small></b>
+            <span>{{ displayRunError }}</span>
+          </div>
           <div class="status-grid">
             <div><span>节点开关</span><b>{{ node.enabled === false ? '已停用' : '已启用' }}</b></div>
             <div><span>位置锁定</span><b>{{ node.locked ? '已锁定' : '可编辑' }}</b></div>
@@ -277,7 +339,6 @@ function applyCrop() {
             <div><span>消耗</span><b>{{ latestRun?.credit_cost ?? '--' }}</b></div>
             <div><span>输入哈希</span><code>{{ latestRun?.input_hash?.slice(0, 10) || '--' }}</code></div>
           </div>
-          <div v-if="latestRun?.error_message || latestRun?.error" class="run-error"><b>{{ latestRun.error_code || '运行错误' }}</b><span>{{ latestRun.error_message || latestRun.error }}</span></div>
         </section>
 
         <section v-show="activeTab === 'history'" class="inspector-panel history-panel" aria-label="节点历史">
@@ -296,21 +357,6 @@ function applyCrop() {
 
         <section v-show="activeTab === 'output'" class="inspector-panel output-panel" aria-label="节点输出">
           <header class="panel-heading"><div><strong>节点输出</strong><span>{{ selectedHistoryEntry ? `历史 R${selectedHistoryEntry.workflow_revision}` : `当前 R${revision}` }} · {{ (node.outputs || []).length }} 个输出端口</span></div></header>
-          <div v-if="imageNode || videoNode" class="image-preview">
-            <video v-if="previewURL && videoNode" :src="previewURL" muted playsinline preload="metadata" :aria-label="`${node.title || node.id} 视频缩略预览`" />
-            <img v-else-if="previewURL" :src="previewURL" :alt="node.title || '生成图片预览'" draggable="false" />
-            <span v-else><component :is="videoNode ? VideoCamera : Picture" /><small>尚未生成{{ videoNode ? '视频' : '图片' }}</small></span>
-            <button
-              v-if="!selectedHistoryEntry"
-              :class="['inspector-preview-button', { video: videoNode }]"
-              type="button"
-              :aria-label="`全屏预览：${node.title || node.id}`"
-              @keydown.stop
-              @keyup.stop
-              @click="emit('preview-media', node)"
-            ><component :is="videoNode ? VideoPlay : ZoomIn" /><span>全屏预览</span></button>
-            <em>{{ videoNode ? '15.000s' : '媒体输出' }}</em>
-          </div>
 
           <div v-if="imageNode && !selectedHistoryEntry" class="version-field">
             <label class="field-label" for="image-version">输出版本</label>
@@ -395,9 +441,15 @@ function applyCrop() {
             <div><span>节点类型</span><b>{{ nodeTypeLabel(node.type) }}</b></div>
             <div v-if="node.duration_seconds || node.config?.duration_seconds"><span>片段时长</span><b>{{ node.duration_seconds || node.config.duration_seconds }} 秒</b></div>
             <div v-if="['video', 'compose'].includes(node.type)"><span>输出帧率</span><b>30 fps</b></div>
-            <div v-if="node.type === 'timeline'"><span>片段数量</span><b>{{ node.config?.clips?.length || 0 }}</b></div>
+            <div v-if="node.type === 'timeline'"><span>片段数量</span><b>{{ timelineClips.length }}</b></div>
             <div v-if="node.type === 'timeline'"><span>合计时长</span><b>{{ (timelineDuration / 1000).toFixed(1) }} 秒</b></div>
           </div>
+          <VideoWorkflowTimelineEditor
+            v-if="node.type === 'timeline'"
+            :clips="timelineClips"
+            :source-titles="timelineSourceTitles"
+            @update:clips="emit('update-timeline-clips', $event)"
+          />
           <button v-if="node.type === 'video'" class="timeline-add" @click="emit('add-to-timeline')">添加到顺序时间线</button>
         </section>
       </div>
@@ -421,19 +473,50 @@ function applyCrop() {
 </template>
 
 <style scoped lang="scss">
-.workflow-inspector { height: 100%; min-width: 0; display: grid; grid-template-rows: 54px 42px minmax(0, 1fr) 58px; color: #0f172a; background: #fff; }
+/* 全高分区：header | tabs | [可选钉住预览] | 中段滚动 | 固定 footer */
+.workflow-inspector {
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  display: grid;
+  grid-template-rows: 54px 42px minmax(0, 1fr) 58px;
+  overflow: hidden;
+  color: #0f172a;
+  background: #fff;
+}
+.workflow-inspector.has-pinned-preview { grid-template-rows: 54px 42px auto minmax(0, 1fr) 58px; }
 .inspector-header { display: flex; align-items: center; justify-content: space-between; padding: 0 12px 0 14px; border-bottom: 1px solid #e2e8f0; }
 .inspector-header > div { min-width: 0; display: grid; gap: 2px; }.inspector-header strong { overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }.inspector-header span { overflow: hidden; color: #64748b; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .inspector-header button, .inspector-footer button, .inspector-tabs button { border: 0; cursor: pointer; }.inspector-header button { width: 34px; height: 34px; display: grid; place-items: center; color: #64748b; background: transparent; border-radius: 5px; }.inspector-header button:hover { background: #f1f5f9; }.inspector-header svg { width: 15px; }
 .inspector-tabs { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-bottom: 1px solid #e2e8f0; background: #f8fafc; }
 .inspector-tabs button { position: relative; min-width: 0; display: flex; align-items: center; justify-content: center; gap: 4px; padding: 0 3px; color: #64748b; background: transparent; font-size: 9px; }.inspector-tabs button::after { position: absolute; left: 8px; right: 8px; bottom: -1px; height: 2px; content: ''; background: transparent; }.inspector-tabs button.active { color: #1d4ed8; background: #fff; font-weight: 650; }.inspector-tabs button.active::after { background: #2563eb; }.inspector-tabs button:hover { color: #2563eb; }.inspector-tabs button:focus-visible { z-index: 1; outline: 2px solid #2563eb; outline-offset: -2px; }.inspector-tabs svg { width: 13px; flex: 0 0 auto; }
-.inspector-scroll { min-height: 0; overflow-y: auto; }.inspector-panel { min-height: 100%; box-sizing: border-box; }.panel-heading { min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 14px; border-bottom: 1px solid #eef2f7; }.panel-heading > div { min-width: 0; display: grid; gap: 2px; }.panel-heading strong { color: #334155; font-size: 12px; }.panel-heading span { color: #64748b; font-size: 9px; }.heading-action { height: 28px; display: flex; align-items: center; gap: 4px; padding: 0 7px; color: #2563eb; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 4px; cursor: pointer; font-size: 9px; }.heading-action svg { width: 12px; }
-.panel-empty { min-height: 250px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; padding: 20px; color: #64748b; text-align: center; }.panel-empty svg { width: 28px; color: #94a3b8; }.panel-empty b { color: #334155; font-size: 12px; }.panel-empty span { font-size: 9px; }
+.inspector-header,
+.inspector-tabs,
+.inspector-footer { min-height: 0; }
+.inspector-media-preview { border-bottom: 1px solid #eef2f7; background: #fff; }
+.inspector-media-preview .image-preview { margin: 10px 14px; }
+.inspector-scroll { min-height: 0; overflow-x: hidden; overflow-y: auto; }
+.inspector-panel { min-height: 100%; box-sizing: border-box; }
+.panel-heading { min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 14px; border-bottom: 1px solid #eef2f7; }.panel-heading > div { min-width: 0; display: grid; gap: 2px; }.panel-heading strong { color: #334155; font-size: 12px; }.panel-heading span { color: #64748b; font-size: 9px; }.heading-action { height: 28px; display: flex; align-items: center; gap: 4px; padding: 0 7px; color: #2563eb; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 4px; cursor: pointer; font-size: 9px; }.heading-action svg { width: 12px; }
+.panel-empty { min-height: 250px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; padding: 20px; color: #64748b; text-align: center; }.panel-empty svg { width: 28px; color: #94a3b8; }.panel-empty b { color: #334155; font-size: 12px; }.panel-empty span { max-width: 220px; font-size: 9px; line-height: 1.5; }.panel-empty .empty-action { height: 32px; margin-top: 6px; padding: 0 12px; color: #fff; background: #2563eb; border: 0; border-radius: 5px; cursor: pointer; font-size: 11px; font-weight: 650; }.panel-empty .empty-action:hover { background: #1d4ed8; }
 .upstream-list { display: grid; }.upstream-port { padding: 12px 14px; border-bottom: 1px solid #eef2f7; }.upstream-port > header { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 6px; }.upstream-port > header span { min-width: 0; display: flex; align-items: center; gap: 6px; color: #334155; font-size: 10px; font-weight: 650; }.upstream-port i.input { width: 7px; height: 7px; border: 1px solid #2563eb; border-radius: 50%; }.upstream-port code { color: #64748b; font-size: 8px; }.upstream-port em { color: #b45309; font-size: 8px; font-style: normal; }.upstream-source { min-height: 36px; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 7px; margin-top: 7px; padding: 0 8px; background: #f8fafc; border-left: 2px solid #60a5fa; }.upstream-source b { overflow: hidden; color: #334155; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }.upstream-source span { color: #64748b; font-size: 8px; }.upstream-source small { color: #64748b; font-size: 8px; }.upstream-source small.succeeded { color: #15803d; }.upstream-source small.stale { color: #b45309; }.upstream-source small.failed { color: #b91c1c; }.unconnected { min-height: 34px; display: flex; align-items: center; justify-content: space-between; margin-top: 7px; padding: 0 8px; color: #b45309; background: #fffbeb; font-size: 9px; }.unconnected button, .replace-connection { color: #2563eb; background: transparent; border: 0; cursor: pointer; font-size: 9px; }.replace-connection { margin-top: 7px; padding: 0; }
 .status-badge { display: flex; align-items: center; gap: 5px; color: #64748b; font-size: 10px; }.status-badge i { width: 7px; height: 7px; background: #94a3b8; border-radius: 50%; }.status-badge.succeeded { color: #15803d; }.status-badge.succeeded i { background: #22c55e; }.status-badge.stale { color: #b45309; }.status-badge.stale i { background: #f59e0b; }.status-badge.failed { color: #b91c1c; }.status-badge.failed i { background: #ef4444; }.status-badge.running, .status-badge.queued { color: #1d4ed8; }.status-badge.running i, .status-badge.queued i { background: #3b82f6; }
-.progress-block { padding: 14px; border-bottom: 1px solid #eef2f7; }.progress-block > div { display: flex; justify-content: space-between; margin-bottom: 7px; color: #64748b; font-size: 9px; }.progress-block > div b { color: #334155; }.progress-block > i { position: relative; height: 6px; display: block; overflow: hidden; background: #e2e8f0; border-radius: 999px; }.progress-block em { position: absolute; inset: 0 auto 0 0; background: #2563eb; border-radius: inherit; }.status-message { margin: 0; padding: 10px 14px; color: #b45309; background: #fffbeb; border-bottom: 1px solid #fde68a; font-size: 9px; line-height: 1.5; }.status-message.failed { color: #b91c1c; background: #fef2f2; border-color: #fecaca; }.status-grid { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid #eef2f7; }.status-grid > div { min-width: 0; display: grid; gap: 4px; padding: 11px 14px; border-right: 1px solid #eef2f7; border-bottom: 1px solid #eef2f7; }.status-grid > div:nth-child(even) { border-right: 0; }.status-grid span { color: #64748b; font-size: 8px; }.status-grid b, .status-grid code { overflow: hidden; color: #334155; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }.run-error { display: grid; gap: 4px; margin: 12px 14px; padding: 10px; color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; border-radius: 5px; font-size: 9px; }
+.progress-block { padding: 14px; border-bottom: 1px solid #eef2f7; }.progress-block > div { display: flex; justify-content: space-between; margin-bottom: 7px; color: #64748b; font-size: 9px; }.progress-block > div b { color: #334155; }.progress-block > i { position: relative; height: 6px; display: block; overflow: hidden; background: #e2e8f0; border-radius: 999px; }.progress-block em { position: absolute; inset: 0 auto 0 0; background: #2563eb; border-radius: inherit; }.status-message { margin: 0; padding: 10px 14px; color: #b45309; background: #fffbeb; border-bottom: 1px solid #fde68a; font-size: 9px; line-height: 1.5; }.status-message.failed { color: #b91c1c; background: #fef2f2; border-color: #fecaca; }.status-grid { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid #eef2f7; }.status-grid > div { min-width: 0; display: grid; gap: 4px; padding: 11px 14px; border-right: 1px solid #eef2f7; border-bottom: 1px solid #eef2f7; }.status-grid > div:nth-child(even) { border-right: 0; }.status-grid span { color: #64748b; font-size: 8px; }.status-grid b, .status-grid code { overflow: hidden; color: #334155; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }.run-error { display: grid; gap: 4px; margin: 12px 14px; padding: 10px; color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; border-radius: 5px; font-size: 9px; }.run-error b { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; }.run-error b small { color: #9f1239; font-size: 8px; font-weight: 500; }.run-error span { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
 .history-loading { display: grid; gap: 8px; padding: 14px; }.history-loading i { height: 52px; background: #f1f5f9; border-radius: 5px; }.node-history-list article { min-height: 54px; display: grid; grid-template-columns: 8px minmax(0, 1fr) auto auto; align-items: center; gap: 7px; padding: 0 14px; border-bottom: 1px solid #eef2f7; }.node-history-list article > i { width: 7px; height: 7px; background: #94a3b8; border-radius: 50%; }.node-history-list article > i.succeeded { background: #22c55e; }.node-history-list article > i.failed { background: #ef4444; }.node-history-list article > i.running, .node-history-list article > i.queued { background: #3b82f6; }.node-history-list article > div { min-width: 0; display: grid; gap: 3px; }.node-history-list b { color: #334155; font-size: 10px; }.node-history-list span { color: #64748b; font-size: 8px; }.node-history-list em { color: #64748b; font-size: 8px; font-style: normal; }.history-output-button { height: 24px; padding: 0 6px; color: #2563eb; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 4px; cursor: pointer; font-size: 8px; }.history-output-button:disabled { color: #94a3b8; background: #f8fafc; border-color: #e2e8f0; cursor: not-allowed; }
-.output-panel { padding-bottom: 14px; }.image-preview { position: relative; height: 170px; display: grid; place-items: center; overflow: hidden; margin: 14px; background: #111318; border-radius: 6px; }.image-preview img, .image-preview video { width: 100%; height: 100%; object-fit: contain; pointer-events: none; }.image-preview > span { display: grid; place-items: center; gap: 8px; color: #94a3b8; }.image-preview > span svg { width: 30px; }.image-preview small { font-size: 10px; }.image-preview > em { position: absolute; right: 7px; bottom: 7px; padding: 2px 5px; color: #e2e8f0; background: rgba(15, 23, 42, .75); border-radius: 3px; font-size: 9px; font-style: normal; }.inspector-preview-button { position: absolute; z-index: 2; left: 50%; top: 50%; height: 34px; display: flex; align-items: center; gap: 6px; padding: 0 11px; color: #fff; background: rgba(15, 23, 42, .88); border: 1px solid rgba(255, 255, 255, .7); border-radius: 5px; opacity: 0; cursor: pointer; transform: translate(-50%, -50%); transition: opacity .18s ease, background .18s ease; font-size: 10px; }.inspector-preview-button.video, .image-preview:hover .inspector-preview-button, .image-preview:focus-within .inspector-preview-button { opacity: 1; }.inspector-preview-button:hover { background: #2563eb; }.inspector-preview-button svg { width: 14px; }.version-field { padding: 0 14px 12px; border-bottom: 1px solid #eef2f7; }.output-ports { padding: 8px 14px; border-bottom: 1px solid #eef2f7; }.output-ports > div { min-height: 28px; display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; gap: 7px; }.output-ports i { width: 7px; height: 7px; background: #16a34a; border-radius: 50%; }.output-ports span { color: #334155; font-size: 9px; }.output-ports code { color: #64748b; font-size: 8px; }.output-fields > div { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 8px; padding: 9px 14px; border-bottom: 1px solid #eef2f7; }.output-fields > div span { color: #64748b; font-size: 8px; }.output-fields p { min-width: 0; margin: 0; overflow-wrap: anywhere; color: #334155; font-size: 9px; line-height: 1.5; }.output-fields details { margin: 10px 14px; }.output-fields summary { color: #2563eb; cursor: pointer; font-size: 9px; }.output-fields pre { max-height: 280px; overflow: auto; padding: 10px; color: #334155; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 5px; white-space: pre-wrap; overflow-wrap: anywhere; font: 9px/1.5 "SFMono-Regular", Consolas, monospace; }.output-empty { min-height: 180px; }.output-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; padding: 12px 14px 0; }.output-actions button { height: 34px; display: flex; align-items: center; justify-content: center; gap: 5px; color: #2563eb; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 5px; cursor: pointer; font-size: 9px; }.output-actions svg { width: 13px; }
+.output-panel { padding-bottom: 14px; }
+.image-preview {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  height: 170px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  margin: 14px;
+  background: #111318;
+  border-radius: 6px;
+}
+.image-preview img, .image-preview video { width: 100%; height: 100%; object-fit: contain; pointer-events: none; }.image-preview > span { display: grid; place-items: center; gap: 8px; color: #94a3b8; }.image-preview > span svg { width: 30px; }.image-preview small { font-size: 10px; }.image-preview > em { position: absolute; right: 7px; bottom: 7px; padding: 2px 5px; color: #e2e8f0; background: rgba(15, 23, 42, .75); border-radius: 3px; font-size: 9px; font-style: normal; }.inspector-preview-button { position: absolute; z-index: 2; left: 50%; top: 50%; height: 34px; display: flex; align-items: center; gap: 6px; padding: 0 11px; color: #fff; background: rgba(15, 23, 42, .88); border: 1px solid rgba(255, 255, 255, .7); border-radius: 5px; opacity: 0; cursor: pointer; transform: translate(-50%, -50%); transition: opacity .18s ease, background .18s ease; font-size: 10px; }.inspector-preview-button.video, .image-preview:hover .inspector-preview-button, .image-preview:focus-within .inspector-preview-button { opacity: 1; }.inspector-preview-button:hover { background: #2563eb; }.inspector-preview-button svg { width: 14px; }.version-field { padding: 0 14px 12px; border-bottom: 1px solid #eef2f7; }.output-ports { padding: 8px 14px; border-bottom: 1px solid #eef2f7; }.output-ports > div { min-height: 28px; display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; gap: 7px; }.output-ports i { width: 7px; height: 7px; background: #16a34a; border-radius: 50%; }.output-ports span { color: #334155; font-size: 9px; }.output-ports code { color: #64748b; font-size: 8px; }.output-fields > div { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 8px; padding: 9px 14px; border-bottom: 1px solid #eef2f7; }.output-fields > div span { color: #64748b; font-size: 8px; }.output-fields p { min-width: 0; margin: 0; overflow-wrap: anywhere; color: #334155; font-size: 9px; line-height: 1.5; }.output-fields details { margin: 10px 14px; }.output-fields summary { color: #2563eb; cursor: pointer; font-size: 9px; }.output-fields pre { max-height: 280px; overflow: auto; padding: 10px; color: #334155; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 5px; white-space: pre-wrap; overflow-wrap: anywhere; font: 9px/1.5 "SFMono-Regular", Consolas, monospace; }.output-empty { min-height: 180px; }.output-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; padding: 12px 14px 0; }.output-actions button { height: 34px; display: flex; align-items: center; justify-content: center; gap: 5px; color: #2563eb; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 5px; cursor: pointer; font-size: 9px; }.output-actions svg { width: 13px; }
 .settings-panel { padding-bottom: 14px; }.form-section, .model-section, .media-operations, .parameter-list, .split-fields { padding: 12px 14px; border-bottom: 1px solid #eef2f7; }.form-section { position: relative; }.field-label { display: block; margin: 10px 0 6px; color: #475569; font-size: 10px; }.form-section > .field-label:first-child, .model-section > .field-label:first-child { margin-top: 0; } input, textarea, select { width: 100%; box-sizing: border-box; color: #0f172a; background: #fff; border: 1px solid #cbd5e1; border-radius: 5px; outline: 0; font: inherit; font-size: 11px; } input, select { height: 34px; padding: 0 9px; } textarea { padding: 8px 9px; resize: vertical; line-height: 1.55; } input:focus, textarea:focus, select:focus { border-color: #60a5fa; box-shadow: 0 0 0 2px rgba(37, 99, 235, .1); }.form-section > small { position: absolute; right: 18px; bottom: 15px; color: #64748b; font-size: 8px; }.readonly-value { min-height: 34px; display: flex; align-items: center; justify-content: space-between; color: #64748b; font-size: 9px; }.readonly-value b { color: #334155; }.split-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }.split-fields label { display: grid; gap: 5px; color: #475569; font-size: 9px; }.action-grid { display: grid; gap: 8px; }.action-grid.two { grid-template-columns: 1fr 1fr; }.action-grid button, .asset-button, .transform-grid button { min-height: 34px; display: flex; align-items: center; justify-content: center; gap: 5px; color: #334155; background: #fff; border: 1px solid #cbd5e1; border-radius: 5px; cursor: pointer; font-size: 9px; }.action-grid button:hover, .asset-button:hover, .transform-grid button:hover, .transform-grid button.active { color: #2563eb; background: #eff6ff; border-color: #93c5fd; }.action-grid svg, .asset-button svg, .transform-grid svg { width: 13px; }.asset-button { width: 100%; margin-top: 8px; }.transform-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-top: 9px; }.transform-grid button { min-width: 0; padding: 0 3px; }.flip-icon { width: 13px; font-size: 14px; }.crop-editor { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 9px; padding: 8px; background: #f8fafc; }.crop-editor label { display: grid; gap: 3px; color: #64748b; font-size: 8px; }.crop-editor input { height: 27px; padding: 0 3px; }.crop-editor button { grid-column: 1 / -1; height: 30px; color: #fff; background: #2563eb; border: 0; border-radius: 4px; cursor: pointer; }.parameter-list > div { min-height: 30px; display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #64748b; font-size: 9px; }.parameter-list b, .parameter-list code { max-width: 180px; overflow: hidden; color: #334155; text-overflow: ellipsis; white-space: nowrap; }.timeline-add { width: calc(100% - 28px); height: 34px; margin: 12px 14px 0; color: #2563eb; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 5px; cursor: pointer; font-size: 9px; }
 .inspector-footer { display: grid; grid-template-columns: 34px minmax(0, 1fr) 34px; align-items: center; gap: 8px; padding: 0 12px; border-top: 1px solid #e2e8f0; box-shadow: 0 -4px 12px rgba(15, 23, 42, .04); }.inspector-footer button { height: 36px; display: grid; place-items: center; border-radius: 5px; }.inspector-footer svg { width: 15px; }.delete-button, .history-button { color: #64748b; background: #f8fafc; }.delete-button:hover { color: #dc2626; background: #fef2f2; }.history-button:hover { color: #2563eb; background: #eff6ff; }.run-button { display: flex !important; align-items: center; justify-content: center; gap: 6px; color: #fff; background: #2563eb; font-size: 10px; font-weight: 650; }.run-button:disabled { opacity: .5; cursor: wait; }
 .empty-header { grid-row: 1; }.empty-inspector { grid-row: 2 / -1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #64748b; text-align: center; }.empty-inspector svg { width: 34px; color: #cbd5e1; }.empty-inspector b { color: #334155; font-size: 12px; }.empty-inspector span { font-size: 9px; }

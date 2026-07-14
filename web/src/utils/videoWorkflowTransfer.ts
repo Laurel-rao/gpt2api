@@ -1,6 +1,7 @@
 import type {
   VideoWorkflowGraph,
   VideoWorkflowNode,
+  VideoWorkflowValidationIssue,
 } from '@/api/videoWorkflow'
 import {
   VIDEO_WORKFLOW_MAX_EDGES,
@@ -34,9 +35,12 @@ export interface ImportedVideoWorkflowGraph {
 }
 
 export class VideoWorkflowTransferError extends Error {
-  constructor(message: string) {
+  issues?: VideoWorkflowValidationIssue[]
+
+  constructor(message: string, issues?: VideoWorkflowValidationIssue[]) {
     super(message)
     this.name = 'VideoWorkflowTransferError'
+    this.issues = issues
   }
 }
 
@@ -236,7 +240,7 @@ function assertRawGraphShape(value: unknown): asserts value is VideoWorkflowGrap
     }
     const rawIssues = validateVideoWorkflowGraph(value as VideoWorkflowGraph, { requireComplete: false })
     if (rawIssues.length) {
-      throw new VideoWorkflowTransferError(formatValidationIssues(rawIssues))
+      throw new VideoWorkflowTransferError(formatValidationIssues(rawIssues), rawIssues)
     }
   }
 }

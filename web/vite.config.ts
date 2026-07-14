@@ -29,6 +29,7 @@ export default defineConfig(({ mode }) => {
         '/api': { target: apiBase, changeOrigin: true },
         '/v1': { target: apiBase, changeOrigin: true },
         '/p/img': { target: apiBase, changeOrigin: true },
+        '/p/vwf': { target: apiBase, changeOrigin: true },
         '/site-assets': { target: apiBase, changeOrigin: true },
         '/healthz': { target: apiBase, changeOrigin: true },
       },

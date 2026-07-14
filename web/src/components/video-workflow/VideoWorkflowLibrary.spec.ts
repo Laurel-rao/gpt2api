@@ -25,4 +25,19 @@ describe('VideoWorkflowLibrary', () => {
     await wrapper.findAll('.library-tabs button')[0].trigger('click')
     expect(wrapper.emitted('update:tab')?.[0]).toEqual(['nodes'])
   })
+
+  it('emits close when collapsing the library panel', async () => {
+    const wrapper = mount(VideoWorkflowLibrary, { props: { tab: 'nodes', assets } })
+    await wrapper.find('button[aria-label="隐藏节点侧边栏"]').trigger('click')
+    expect(wrapper.emitted('close')).toHaveLength(1)
+  })
+
+  it('emits upload for library files without requiring a selected node', async () => {
+    const wrapper = mount(VideoWorkflowLibrary, { props: { tab: 'assets', assets } })
+    const input = wrapper.find('input[type="file"]')
+    const file = new File(['fake'], 'clip.mp4', { type: 'video/mp4' })
+    Object.defineProperty(input.element, 'files', { value: [file] })
+    await input.trigger('change')
+    expect(wrapper.emitted('upload')?.[0]?.[0]).toMatchObject({ name: 'clip.mp4', type: 'video/mp4' })
+  })
 })

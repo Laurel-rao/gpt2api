@@ -4,28 +4,36 @@ import {
   DEFAULT_VIDEO_WORKFLOW_VIDEO_MODEL,
   VIDEO_WORKFLOW_MAX_EDGES,
   VIDEO_WORKFLOW_MAX_NODES,
+  VIDEO_WORKFLOW_PORT_COLORS,
   clearVideoWorkflowImageAssetBinding,
   cloneWorkflowGraph,
   connectionError,
+  createEmptyVideoWorkflowGraph,
   createStarterVideoWorkflowGraph,
+  ensureVideoWorkflowNodePorts,
   makeVideoWorkflowNode,
   migrateVideoWorkflowGraph,
   moveTimelineClip,
   nextVideoWorkflowImageTransform,
   normalizeImageTransform,
   normalizeTimelineClip,
+  normalizeVideoWorkflowConnection,
   removeNodeFromGraph,
   resolveVideoWorkflowAssetBinding,
   resolveVideoWorkflowDisplayedStatus,
+  resolveVideoWorkflowEdgeStroke,
   resolveVideoWorkflowVideoModel,
   rotateImageTransform,
   toggleImageTransformFlip,
   updateTimelineClipTrim,
   validateVideoWorkflowGraph,
   videoWorkflowImageVersionTransformState,
+  videoWorkflowNodeCatalogColor,
+  videoWorkflowNodeDefaultInputPort,
   videoWorkflowNodePreviewURL,
   videoWorkflowNodeRunOutputVersionID,
   videoWorkflowModelLabel,
+  videoWorkflowPortColor,
 } from './videoWorkflowGraph'
 
 function withoutEdge(graph: VideoWorkflowGraph, predicate: (edge: VideoWorkflowEdge) => boolean) {
@@ -50,6 +58,30 @@ describe('video workflow graph v2', () => {
     expect(videoWorkflowNodePreviewURL(image)).toBe('/image-version')
     expect(videoWorkflowNodePreviewURL(video)).toBe('/generated-video.mp4')
     expect(videoWorkflowNodePreviewURL(null)).toBe('')
+  })
+
+  it('resolves character previews from output_url or selected candidates', () => {
+    const byOutput = makeVideoWorkflowNode('character')
+    byOutput.output = { output_url: '/p/vwf/character-selected', selected_version_id: 'v1' }
+    expect(videoWorkflowNodePreviewURL(byOutput)).toBe('/p/vwf/character-selected')
+
+    const byCandidate = makeVideoWorkflowNode('character')
+    byCandidate.output = {
+      selected_version_id: 'v2',
+      candidates: [
+        { id: 'v1', preview_url: '/p/vwf/v1' },
+        { id: 'v2', preview_url: '/p/vwf/v2' },
+      ],
+    }
+    expect(videoWorkflowNodePreviewURL(byCandidate)).toBe('/p/vwf/v2')
+  })
+
+  it('creates an empty graph without preset nodes', () => {
+    const graph = createEmptyVideoWorkflowGraph()
+    expect(graph.schema_version).toBe(2)
+    expect(graph.nodes).toEqual([])
+    expect(graph.edges).toEqual([])
+    expect(graph.groups).toEqual([])
   })
 
   it('creates the 19-node starter graph with v2 output and four full clips', () => {
@@ -88,6 +120,60 @@ describe('video workflow graph v2', () => {
       target: 'video_1',
       target_port: 'background',
     })).toBe('text 不能连接 image')
+  })
+
+  it('normalizes reverse handle drags from target to source', () => {
+    const graph = createStarterVideoWorkflowGraph()
+    expect(normalizeVideoWorkflowConnection(graph, {
+      source: 'script',
+      sourceHandle: 'brief',
+      target: 'brief',
+      targetHandle: 'text',
+    })).toEqual({
+      source: 'brief',
+      sourceHandle: 'text',
+      target: 'script',
+      targetHandle: 'brief',
+    })
+    expect(normalizeVideoWorkflowConnection(graph, {
+      source: 'brief',
+      sourceHandle: 'text',
+      target: 'script',
+      targetHandle: 'brief',
+    })).toEqual({
+      source: 'brief',
+      sourceHandle: 'text',
+      target: 'script',
+      targetHandle: 'brief',
+    })
+  })
+
+  it('ensures story brief nodes expose an optional context input', () => {
+    const node = makeVideoWorkflowNode('story_brief')
+    expect(node.inputs?.map((port) => port.id)).toEqual(['context'])
+    expect(node.outputs?.map((port) => port.id)).toEqual(['text'])
+
+    const legacy = makeVideoWorkflowNode('story_brief')
+    legacy.inputs = []
+    ensureVideoWorkflowNodePorts(legacy)
+    expect(legacy.inputs?.map((port) => port.id)).toEqual(['context'])
+    expect(videoWorkflowNodeDefaultInputPort(legacy)?.id).toBe('context')
+  })
+
+  it('returns null when neither forward nor reverse port direction is valid', () => {
+    const graph = createStarterVideoWorkflowGraph()
+    expect(normalizeVideoWorkflowConnection(graph, {
+      source: 'brief',
+      sourceHandle: 'text',
+      target: 'script',
+      targetHandle: 'script',
+    })).toBeNull()
+    expect(normalizeVideoWorkflowConnection(graph, {
+      source: 'brief',
+      sourceHandle: 'missing',
+      target: 'script',
+      targetHandle: 'brief',
+    })).toBeNull()
   })
 
   it('enforces single-value inputs and uses distinct timeline clip ports', () => {
@@ -192,6 +278,38 @@ describe('video workflow graph v2', () => {
     expect(timeline.config.clips!.some((clip: any) => clip.source_node_id === 'video_2')).toBe(false)
   })
 
+  it('rebuilds timeline inbound edges one-to-one with remaining clips and drops orphans', () => {
+    const starter = createStarterVideoWorkflowGraph()
+    const timeline = starter.nodes.find((node) => node.type === 'timeline')!
+    const preserved = starter.edges.find((edge) => edge.source === 'video_1' && edge.target === timeline.id)!
+    preserved.curve = { x: 12, y: -8 }
+    starter.edges.push({
+      id: 'orphan-timeline-edge',
+      source: 'video_1',
+      source_port: 'video',
+      target: timeline.id,
+      target_port: 'clip_missing',
+    })
+    const graph = removeNodeFromGraph(starter, 'video_2')
+    const nextTimeline = graph.nodes.find((node) => node.type === 'timeline')!
+    const clips = nextTimeline.config.clips as Array<{ id: string; source_node_id: string; source_port: string }>
+    const inbound = graph.edges.filter((edge) => edge.target === nextTimeline.id)
+    expect(clips.map((clip) => clip.source_node_id)).toEqual(['video_1', 'video_3', 'video_4'])
+    expect(inbound).toHaveLength(clips.length)
+    expect(inbound.map((edge) => edge.target_port).sort()).toEqual(clips.map((clip) => clip.id).sort())
+    expect(inbound.every((edge) => clips.some((clip) => (
+      clip.id === edge.target_port
+      && clip.source_node_id === edge.source
+      && clip.source_port === edge.source_port
+    )))).toBe(true)
+    expect(inbound.find((edge) => edge.source === 'video_1')).toMatchObject({
+      id: preserved.id,
+      curve: { x: 12, y: -8 },
+    })
+    expect(graph.edges.some((edge) => edge.id === 'timeline-compose')).toBe(true)
+    expect(graph.edges.some((edge) => edge.target_port === 'clip_missing')).toBe(false)
+  })
+
   it('clones graph without sharing nested configuration', () => {
     const graph = createStarterVideoWorkflowGraph()
     const copy = cloneWorkflowGraph(graph)
@@ -212,16 +330,16 @@ describe('video workflow graph v2', () => {
     })
     expect(video.config.duration_ms).toBe(15_000)
     expect(video.config.model).toBe(DEFAULT_VIDEO_WORKFLOW_VIDEO_MODEL)
-    expect(videoWorkflowModelLabel(video.config.model)).toBe('Wan2.7-r2v')
+    expect(videoWorkflowModelLabel(video.config.model)).toBe('本地 Seedance/Motion')
     expect(resolveVideoWorkflowVideoModel('backend-video-model', video.config.model)).toBe('backend-video-model')
   })
 
-  it('maps legacy default aliases to Wan2.7 while preserving explicit models', () => {
+  it('maps legacy default aliases to local Seedance while preserving explicit models', () => {
     expect(resolveVideoWorkflowVideoModel('seedance-2.0', 'provider-video-model')).toBe(DEFAULT_VIDEO_WORKFLOW_VIDEO_MODEL)
     expect(resolveVideoWorkflowVideoModel('default')).toBe(DEFAULT_VIDEO_WORKFLOW_VIDEO_MODEL)
     expect(resolveVideoWorkflowVideoModel(undefined, 'Seedance 2.0')).toBe(DEFAULT_VIDEO_WORKFLOW_VIDEO_MODEL)
     expect(resolveVideoWorkflowVideoModel(undefined, 'provider-video-model')).toBe('provider-video-model')
-    expect(videoWorkflowModelLabel('seedance-2.0')).toBe('Wan2.7-r2v')
+    expect(videoWorkflowModelLabel('seedance-2.0')).toBe('本地 Seedance/Motion')
   })
 
   it('normalizes, rotates and flips image transforms without mutating the input', () => {
@@ -326,6 +444,30 @@ describe('video workflow graph migration', () => {
     expect(compose.locked).toBe(true)
     expect(migrated.edges).toContainEqual(expect.objectContaining({ source: timeline.id, target: compose.id }))
   })
+
+  it('drops every old timeline inbound edge before rebuilding from clips', () => {
+    const graph = createStarterVideoWorkflowGraph() as any
+    const timeline = graph.nodes.find((node: any) => node.type === 'timeline')
+    graph.edges.push({
+      id: 'stale-timeline-inbound',
+      source: 'brief',
+      source_port: 'text',
+      target: timeline.id,
+      target_port: 'legacy_clip',
+    })
+    const migrated = migrateVideoWorkflowGraph(graph)
+    const migratedTimeline = migrated.nodes.find((node) => node.type === 'timeline')!
+    const clips = migratedTimeline.config.clips as Array<{ id: string; source_node_id: string; source_port: string }>
+    const inbound = migrated.edges.filter((edge) => edge.target === migratedTimeline.id)
+    expect(inbound).toHaveLength(clips.length)
+    expect(migrated.edges.some((edge) => edge.id === 'stale-timeline-inbound')).toBe(false)
+    expect(inbound.every((edge) => clips.some((clip) => (
+      clip.id === edge.target_port
+      && clip.source_node_id === edge.source
+      && clip.source_port === edge.source_port
+    )))).toBe(true)
+    expect(migrated.edges.some((edge) => edge.source === migratedTimeline.id && edge.target === 'compose')).toBe(true)
+  })
 })
 
 describe('video timeline', () => {
@@ -365,6 +507,24 @@ describe('video timeline', () => {
       .not.toContain('timeline_clip_count')
     expect(validateVideoWorkflowGraph(graph, { requireComplete: true }).map((issue) => issue.code))
       .toContain('timeline_clip_count')
+  })
+
+  it('requires each clip edge when complete and keeps drafts incomplete-safe', () => {
+    const graph = createStarterVideoWorkflowGraph()
+    const timeline = graph.nodes.find((node) => node.type === 'timeline')!
+    const clip = timeline.config.clips![1]
+    graph.edges = graph.edges.filter((edge) => !(
+      edge.target === timeline.id && edge.target_port === clip.id
+    ))
+
+    expect(validateVideoWorkflowGraph(graph, { requireComplete: false }).map((issue) => issue.code))
+      .not.toContain('invalid_timeline')
+    const completeIssues = validateVideoWorkflowGraph(graph, { requireComplete: true })
+    expect(completeIssues).toContainEqual({
+      code: 'invalid_timeline',
+      message: `时间线片段未连接对应视频输出: ${clip.id}`,
+      node_id: timeline.id,
+    })
   })
 })
 
@@ -444,5 +604,32 @@ describe('generated image asset binding', () => {
   it('keeps current stale state ahead of a historical successful run', () => {
     expect(resolveVideoWorkflowDisplayedStatus('stale', 'succeeded')).toBe('stale')
     expect(resolveVideoWorkflowDisplayedStatus('idle', 'succeeded')).toBe('succeeded')
+  })
+
+  it('keeps running or queued ahead of local stale while the node is still executing', () => {
+    expect(resolveVideoWorkflowDisplayedStatus('stale', 'running')).toBe('running')
+    expect(resolveVideoWorkflowDisplayedStatus('stale', 'queued')).toBe('queued')
+  })
+
+  it('maps port types and run status to edge stroke colors', () => {
+    expect(VIDEO_WORKFLOW_PORT_COLORS).toMatchObject({
+      text: '#64748b',
+      image: '#a78bfa',
+      video: '#38bdf8',
+      character: '#fbbf24',
+    })
+    expect(videoWorkflowPortColor('image')).toBe('#a78bfa')
+    expect(videoWorkflowPortColor('script')).toBe('#8b96a5')
+    expect(videoWorkflowNodeCatalogColor('video')).toBe('#60a5fa')
+    expect(videoWorkflowNodeCatalogColor('unknown')).toBe('#64748b')
+    expect(resolveVideoWorkflowEdgeStroke({ portType: 'video' })).toBe('#38bdf8')
+    expect(resolveVideoWorkflowEdgeStroke({ portType: 'video', runStatus: 'succeeded' })).toBe('#4ade80')
+    expect(resolveVideoWorkflowEdgeStroke({ portType: 'video', runStatus: 'failed' })).toBe('#ef4444')
+    expect(resolveVideoWorkflowEdgeStroke({ portType: 'video', runStatus: 'running' })).toBe('#38bdf8')
+    expect(resolveVideoWorkflowEdgeStroke({
+      portType: 'video',
+      runStatus: 'failed',
+      selected: true,
+    })).toBe('#60a5fa')
   })
 })

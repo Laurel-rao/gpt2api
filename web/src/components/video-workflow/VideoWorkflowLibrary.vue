@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import {
+  ArrowLeft,
   Clock,
   Document,
   Film,
@@ -27,6 +28,7 @@ const emit = defineEmits<{
   'add-node': [type: string]
   'upload': [file: File]
   'select-asset': [asset: VideoAsset]
+  close: []
 }>()
 
 const query = ref('')
@@ -62,7 +64,7 @@ function pickFile(event: Event) {
 </script>
 
 <template>
-  <aside class="workflow-library" aria-label="节点与素材库">
+  <aside id="node-library" class="workflow-library" aria-label="节点与素材库">
     <div class="library-tabs" role="tablist" aria-label="资源类型">
       <button role="tab" :aria-selected="tab === 'nodes'" :class="{ active: tab === 'nodes' }" @click="emit('update:tab', 'nodes')">
         <Grid />节点
@@ -70,6 +72,13 @@ function pickFile(event: Event) {
       <button role="tab" :aria-selected="tab === 'assets'" :class="{ active: tab === 'assets' }" @click="emit('update:tab', 'assets')">
         <FolderOpened />素材
       </button>
+      <button
+        class="library-collapse"
+        type="button"
+        title="隐藏节点侧边栏"
+        aria-label="隐藏节点侧边栏"
+        @click="emit('close')"
+      ><ArrowLeft /></button>
     </div>
 
     <label class="library-search">
@@ -117,12 +126,16 @@ function pickFile(event: Event) {
 
 <style scoped lang="scss">
 .workflow-library { height: 100%; display: grid; grid-template-rows: 44px 48px minmax(0, 1fr) 34px; color: #0f172a; background: #fff; }
-.library-tabs { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid #e2e8f0; }
+.library-tabs { display: grid; grid-template-columns: 1fr 1fr 36px; border-bottom: 1px solid #e2e8f0; }
 .library-tabs button { position: relative; display: flex; align-items: center; justify-content: center; gap: 7px; color: #64748b; background: #fff; border: 0; cursor: pointer; font-size: 13px; }
 .library-tabs button::after { position: absolute; left: 20px; right: 20px; bottom: -1px; height: 2px; content: ''; background: transparent; }
 .library-tabs button.active { color: #2563eb; font-weight: 650; }
 .library-tabs button.active::after { background: #2563eb; }
 .library-tabs svg { width: 16px; }
+.library-collapse { color: #64748b; border-left: 1px solid #e2e8f0; }
+.library-collapse:hover { color: #2563eb; background: #f8fbff; }
+.library-collapse::after { display: none; }
+.library-collapse svg { width: 14px; }
 .library-search { height: 32px; display: flex; align-items: center; gap: 7px; margin: 8px 12px; padding: 0 9px; color: #94a3b8; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; }
 .library-search:focus-within { border-color: #93c5fd; box-shadow: 0 0 0 2px rgba(37, 99, 235, .1); }
 .library-search svg { width: 14px; }

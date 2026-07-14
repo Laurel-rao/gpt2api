@@ -16,7 +16,13 @@ import {
   ZoomIn,
 } from '@element-plus/icons-vue'
 import type { VideoWorkflowNode } from '@/api/videoWorkflow'
-import { nodeStatusLabel, videoWorkflowModelLabel, videoWorkflowNodePreviewURL } from '@/utils/videoWorkflowGraph'
+import {
+  nodeStatusLabel,
+  videoWorkflowModelLabel,
+  videoWorkflowNodeCatalogColor,
+  videoWorkflowNodePreviewURL,
+} from '@/utils/videoWorkflowGraph'
+import { formatErrorCode } from '@/utils/format'
 
 const props = defineProps<{
   node: VideoWorkflowNode
@@ -27,11 +33,14 @@ const emit = defineEmits<{
   'preview-media': [node: VideoWorkflowNode]
 }>()
 
-const mediaNode = computed(() => ['background', 'image', 'video'].includes(props.node.type))
+const mediaNode = computed(() => ['character', 'background', 'image', 'video'].includes(props.node.type))
 const previewURL = computed(() => videoWorkflowNodePreviewURL(props.node))
+const videoPosterURL = computed(() => (props.node.type === 'video' ? String(props.node.config?.preview_url || '') : ''))
 const status = computed(() => props.node.status || 'idle')
 const visibleInputs = computed(() => (props.node.inputs || []).filter((port) => !props.collapsedInputPortIDs?.includes(port.id)))
 const sharedCharacterCount = computed(() => props.collapsedInputPortIDs?.length || 0)
+const showProgress = computed(() => props.node.progress !== undefined && (status.value === 'running' || status.value === 'queued'))
+const catalogColor = computed(() => videoWorkflowNodeCatalogColor(props.node.type))
 const statusText = computed(() => {
   if (props.node.enabled === false) return '已停用'
   if (status.value === 'stale') return '需更新'
@@ -57,10 +66,20 @@ const statusIcon = computed(() => ({
   failed: WarningFilled,
 } as Record<string, any>)[status.value] || Clock)
 const nodeTitle = computed(() => props.node.title || props.node.config?.title || props.node.config?.name || props.node.id)
+const runErrorTitle = computed(() => {
+  if (status.value !== 'failed' && !props.node.run_error && !props.node.run_error_code) return undefined
+  const codeLabel = formatErrorCode(props.node.run_error_code)
+  const parts = [codeLabel, props.node.run_error].filter(Boolean)
+  return parts.length ? parts.join('：') : undefined
+})
 const summary = computed(() => {
   if (props.node.type === 'video') return `${videoWorkflowModelLabel(props.node.config?.model)} · 15 秒`
   if (props.node.type === 'compose') return 'H.264 · 30fps · AAC'
-  if (props.node.type === 'timeline') return `${props.node.config?.clip_node_ids?.length || 0} 个片段 · 单轨`
+  if (props.node.type === 'timeline') {
+    const clips = props.node.config?.clips
+    const count = Array.isArray(clips) ? clips.length : (props.node.config?.clip_node_ids?.length || 0)
+    return `${count} 个片段 · 单轨`
+  }
   return props.node.config?.prompt || statusText.value
 })
 </script>
@@ -68,7 +87,9 @@ const summary = computed(() => {
 <template>
   <article
     :class="['workflow-node-card', node.type, status, { selected, media: mediaNode, collapsed: node.collapsed, disabled: node.enabled === false }]"
+    :style="{ '--node-catalog-color': catalogColor }"
     :aria-label="`${nodeTitle}，${statusText}`"
+    :title="runErrorTitle"
     tabindex="0"
   >
     <Handle
@@ -78,7 +99,7 @@ const summary = computed(() => {
       type="target"
       :position="Position.Left"
       :style="{ top: `${48 + index * 24}px` }"
-      class="node-port input"
+      :class="['node-port', 'input', `port-type-${port.type}`]"
       :title="`${port.label || port.id} · ${port.type}`"
     />
     <Handle
@@ -88,7 +109,7 @@ const summary = computed(() => {
       :position="Position.Left"
       :connectable="false"
       :style="{ top: `${48 + visibleInputs.length * 24}px` }"
-      class="node-port input shared-character-port"
+      class="node-port input shared-character-port port-type-character"
       :title="`公共角色资产 · ${sharedCharacterCount} 个角色`"
     />
     <Handle
@@ -98,7 +119,7 @@ const summary = computed(() => {
       type="source"
       :position="Position.Right"
       :style="{ top: `${48 + index * 24}px` }"
-      class="node-port output"
+      :class="['node-port', 'output', `port-type-${port.type}`]"
       :title="`${port.label || port.id} · ${port.type}`"
     />
 
@@ -111,11 +132,19 @@ const summary = computed(() => {
 
     <template v-if="!node.collapsed">
       <div v-if="mediaNode" class="node-media">
-        <video v-if="previewURL && node.type === 'video'" :src="previewURL" muted playsinline preload="metadata" aria-hidden="true" />
+        <video
+          v-if="previewURL && node.type === 'video'"
+          :src="previewURL"
+          :poster="videoPosterURL || undefined"
+          muted
+          playsinline
+          :preload="videoPosterURL ? 'none' : 'metadata'"
+          aria-hidden="true"
+        />
         <img v-else-if="previewURL" :src="previewURL" :alt="nodeTitle" draggable="false" />
         <div v-else class="media-placeholder" aria-hidden="true">
-          <component :is="node.type === 'video' ? VideoCamera : Picture" />
-          <span>{{ node.scene_id?.replace('scene_', 'S') || '9:16' }}</span>
+          <component :is="node.type === 'video' ? VideoCamera : node.type === 'character' ? User : Picture" />
+          <span>{{ node.scene_id?.replace('scene_', 'S') || (node.type === 'character' ? '角色' : '9:16') }}</span>
         </div>
         <button
           :class="['node-preview-button', 'nodrag', 'nopan', 'nowheel', { video: node.type === 'video' }]"
@@ -138,11 +167,17 @@ const summary = computed(() => {
         <span v-else>{{ node.scene_id?.replace('scene_', 'S') || '全局' }}</span>
       </footer>
     </template>
+    <div
+      v-if="showProgress"
+      class="node-progress"
+      :style="{ width: `${Math.min(100, Math.max(0, node.progress || 0))}%` }"
+    />
   </article>
 </template>
 
 <style scoped lang="scss">
 .workflow-node-card {
+  position: relative;
   width: 188px;
   height: 108px;
   box-sizing: border-box;
@@ -153,6 +188,18 @@ const summary = computed(() => {
   border-radius: 8px;
   box-shadow: 0 10px 24px rgba(0, 0, 0, .28);
   transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+.workflow-node-card::before {
+  content: '';
+  position: absolute;
+  z-index: 1;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  border-radius: 8px 0 0 8px;
+  background: var(--node-catalog-color, #64748b);
+  pointer-events: none;
 }
 .workflow-node-card.media { width: 208px; height: 176px; }
 .workflow-node-card.collapsed { height: 44px; }
@@ -223,14 +270,28 @@ footer { height: 22px; display: flex; align-items: center; justify-content: spac
 .node-status.stale { color: #fbbf24; }
 .node-status.failed { color: #f87171; }
 footer b { color: #60a5fa; }
+.node-progress {
+  position: absolute;
+  z-index: 2;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  background: #38bdf8;
+  border-radius: 0 0 8px 8px;
+  pointer-events: none;
+}
 
 :global(.vue-flow__handle.node-port) {
+  z-index: 6;
   width: 24px;
   height: 24px;
   display: grid;
   place-items: center;
   background: transparent;
   border: 0;
+}
+:global(.vue-flow__handle.node-port.connectable) {
+  pointer-events: all;
 }
 :global(.vue-flow__handle.node-port::after) {
   content: '';
@@ -242,6 +303,10 @@ footer b { color: #60a5fa; }
   border-radius: 50%;
   transition: background .15s ease, border-color .15s ease, transform .15s ease;
 }
+:global(.vue-flow__handle.node-port.port-type-text::after) { border-color: #64748b; }
+:global(.vue-flow__handle.node-port.port-type-image::after) { border-color: #a78bfa; }
+:global(.vue-flow__handle.node-port.port-type-video::after) { border-color: #38bdf8; }
+:global(.vue-flow__handle.node-port.port-type-character::after) { border-color: #fbbf24; }
 :global(.vue-flow__handle.node-port:hover::after) { background: #2563eb; border-color: #93c5fd; transform: scale(1.2); }
 :global(.vue-flow__handle.node-port.connecting::after) { border-color: #22c55e; }
 

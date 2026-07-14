@@ -104,6 +104,25 @@ const ERROR_CODE_LABEL: Record<string, string> = {
   account_cooldown: '账号冷却中,请稍后重试',
   proxy_unhealthy: '代理不健康',
 
+  // 视频工作流
+  insufficient: '积分不足',
+  insufficient_quota: '配额不足',
+  invalid_graph: '画布图校验未通过',
+  'videoworkflow: invalid graph': '画布图校验未通过',
+  revision_conflict: '修订冲突，请刷新后重试',
+  'videoworkflow: revision conflict': '修订冲突，请刷新后重试',
+  request_conflict: '运行请求冲突，请勿重复提交',
+  'videoworkflow: request_id conflicts with an existing run': '运行请求冲突，请勿重复提交',
+  runtime_failed: '工作流运行失败',
+  invalid_estimate: '估价已过期，请重新确认费用',
+  'videoworkflow: invalid or expired estimate token': '估价已过期，请重新确认费用',
+  asset_quota_exceeded: '素材存储配额已用完',
+  'video workflow asset quota exceeded': '素材存储配额已用完',
+  invalid_media_purpose: '媒体签名用途无效',
+  'invalid media purpose': '媒体签名用途无效',
+  invalid_media_sign: '媒体签名无效或已过期',
+  'invalid or expired media signature': '媒体签名无效或已过期',
+
   // 其它
   internal_error: '服务器内部错误',
   canceled: '请求已取消',

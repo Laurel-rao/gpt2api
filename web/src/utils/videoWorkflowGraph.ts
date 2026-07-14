@@ -26,7 +26,7 @@ export const VIDEO_WORKFLOW_MAX_TIMELINE_CLIPS = 4
 export const VIDEO_WORKFLOW_SCENE_DURATION_MS = 15_000
 export const VIDEO_WORKFLOW_TIMELINE_STEP_MS = 100
 export const VIDEO_WORKFLOW_MIN_CLIP_DURATION_MS = 1_000
-export const DEFAULT_VIDEO_WORKFLOW_VIDEO_MODEL = 'wan2.7-r2v'
+export const DEFAULT_VIDEO_WORKFLOW_VIDEO_MODEL = 'doubao-seedance-2-0-fast-260128'
 
 export const DEFAULT_VIDEO_WORKFLOW_IMAGE_TRANSFORM: VideoWorkflowImageTransform = {
   crop: { x: 0, y: 0, width: 1, height: 1 },
@@ -45,6 +45,38 @@ export const VIDEO_WORKFLOW_NODE_CATALOG = [
   { type: 'compose', label: '成片输出', group: '合成', color: '#34d399' },
 ] as const
 
+/** 端口/连线类型色：text 灰蓝、image 紫、video 青、character 琥珀 */
+export const VIDEO_WORKFLOW_PORT_COLORS: Record<string, string> = {
+  text: '#64748b',
+  image: '#a78bfa',
+  video: '#38bdf8',
+  character: '#fbbf24',
+}
+
+export function videoWorkflowPortColor(type?: string | null, fallback = '#8b96a5'): string {
+  if (!type) return fallback
+  return VIDEO_WORKFLOW_PORT_COLORS[type] || fallback
+}
+
+export function videoWorkflowNodeCatalogColor(type?: string | null, fallback = '#64748b'): string {
+  const entry = VIDEO_WORKFLOW_NODE_CATALOG.find((item) => item.type === type)
+  return entry?.color || fallback
+}
+
+/** 选中蓝 > 运行青 > 失败红 / 成功绿 > 端口类型色 */
+export function resolveVideoWorkflowEdgeStroke(options: {
+  selected?: boolean
+  runStatus?: string | null
+  portType?: string | null
+  fallback?: string
+}): string {
+  if (options.selected) return '#60a5fa'
+  if (options.runStatus === 'running') return '#38bdf8'
+  if (options.runStatus === 'failed') return '#ef4444'
+  if (options.runStatus === 'succeeded') return '#4ade80'
+  return videoWorkflowPortColor(options.portType, options.fallback ?? '#8b96a5')
+}
+
 interface PortDefinition {
   id: string
   label: string
@@ -58,7 +90,10 @@ interface NodePortDefinition {
 }
 
 const ports: Record<string, NodePortDefinition> = {
-  story_brief: { inputs: [], outputs: [{ id: 'text', label: '故事要求', type: 'text' }] },
+  story_brief: {
+    inputs: [{ id: 'context', label: '参考文本', type: 'text' }],
+    outputs: [{ id: 'text', label: '故事要求', type: 'text' }],
+  },
   character: {
     inputs: [{ id: 'brief', label: '故事要求', type: 'text' }],
     outputs: [{ id: 'selected', label: '角色定妆', type: 'image' }],
@@ -194,6 +229,7 @@ export function resolveVideoWorkflowDisplayedStatus(
   nodeStatus: VideoWorkflowNode['status'],
   runStatus: VideoWorkflowNode['status'],
 ) {
+  if (runStatus === 'running' || runStatus === 'queued') return runStatus
   if (nodeStatus === 'stale') return 'stale' as const
   return runStatus || nodeStatus
 }
@@ -235,7 +271,10 @@ export function resolveVideoWorkflowVideoModel(settingsValue?: unknown, nodeValu
 
 export function videoWorkflowModelLabel(value?: unknown) {
   const model = resolveVideoWorkflowVideoModel(undefined, value)
-  return model.replace(/^wan2\.7(?=-|$)/i, 'Wan2.7')
+  if (/doubao-seedance-2-0-fast/i.test(model)) return '本地 Seedance/Motion'
+  if (/doubao-seedance-2-0-260128/i.test(model)) return '本地 Seedance Std'
+  if (/^wan2\.7/i.test(model)) return model.replace(/^wan2\.7(?=-|$)/i, 'Wan2.7')
+  return model
 }
 
 export function makeVideoWorkflowNode(
@@ -286,9 +325,19 @@ export function videoWorkflowNodeRunOutputVersionID(nodeRun?: VideoWorkflowNodeR
 
 export function videoWorkflowNodePreviewURL(node?: VideoWorkflowNode | null) {
   if (!node) return ''
-  const outputURL = node.output?.preview_url || node.output?.url || node.output?.output_url
-  const configURL = node.config?.preview_url
-  return String(['background', 'image'].includes(node.type)
+  const output = node.output && typeof node.output === 'object' && !Array.isArray(node.output)
+    ? node.output as Record<string, any>
+    : {}
+  const selectedID = String(output.selected_version_id || node.config?.selected_version_id || '')
+  const candidates = Array.isArray(output.candidates) ? output.candidates : []
+  const selectedCandidate = candidates.find((item: any) => String(item?.id || item?.version_id || '') === selectedID)
+    || candidates[0]
+  const candidateURL = typeof selectedCandidate === 'object' && selectedCandidate
+    ? String(selectedCandidate.preview_url || selectedCandidate.url || '')
+    : ''
+  const outputURL = String(output.preview_url || output.url || output.output_url || candidateURL || '')
+  const configURL = String(node.config?.preview_url || '')
+  return String(['character', 'background', 'image'].includes(node.type)
     ? configURL || outputURL || ''
     : outputURL || configURL || '')
 }
@@ -353,6 +402,25 @@ export function updateTimelineClipTrim(
   trimOutMS: number,
 ): VideoWorkflowTimelineClip {
   return normalizeTimelineClip({ ...clip, trim_in_ms: trimInMS, trim_out_ms: trimOutMS })
+}
+
+export function createEmptyVideoWorkflowGraph(): VideoWorkflowGraph {
+  return {
+    schema_version: VIDEO_WORKFLOW_SCHEMA_VERSION,
+    settings: {
+      aspect_ratio: '9:16',
+      resolution: '1080p',
+      fps: 30,
+      scene_duration_ms: VIDEO_WORKFLOW_SCENE_DURATION_MS,
+      scene_duration_seconds: 15,
+      character_approval_policy: 'manual',
+      storyboard_approval_policy: 'manual',
+      video_model: DEFAULT_VIDEO_WORKFLOW_VIDEO_MODEL,
+    },
+    nodes: [],
+    edges: [],
+    groups: [],
+  }
 }
 
 export function createStarterVideoWorkflowGraph(): VideoWorkflowGraph {
@@ -477,11 +545,29 @@ function isRecord(value: unknown): value is Record<string, any> {
 }
 
 function normalizeNodePorts(node: VideoWorkflowNode): VideoWorkflowNode {
+  return ensureVideoWorkflowNodePorts(node)
+}
+
+/** Merges catalog port definitions onto a node without removing existing custom ports. */
+export function ensureVideoWorkflowNodePorts(node: VideoWorkflowNode): VideoWorkflowNode {
   const definition = ports[node.type]
   if (!definition) return node
-  if (!node.inputs?.length && definition.inputs.length) node.inputs = definition.inputs.map(portFromDefinition)
-  if (!node.outputs?.length && definition.outputs.length) node.outputs = definition.outputs.map(portFromDefinition)
+  const inputs = [...(node.inputs || [])]
+  for (const port of definition.inputs) {
+    if (!inputs.some((item) => item.id === port.id)) inputs.push(portFromDefinition(port))
+  }
+  const outputs = [...(node.outputs || [])]
+  for (const port of definition.outputs) {
+    if (!outputs.some((item) => item.id === port.id)) outputs.push(portFromDefinition(port))
+  }
+  node.inputs = inputs
+  node.outputs = outputs
   return node
+}
+
+export function videoWorkflowNodeDefaultInputPort(node: VideoWorkflowNode) {
+  ensureVideoWorkflowNodePorts(node)
+  return node.inputs?.[0] || null
 }
 
 /** Upgrades a saved Graph v1 draft to the editable Graph v2 shape without changing node IDs. */
@@ -575,7 +661,7 @@ export function migrateVideoWorkflowGraph(value: unknown): VideoWorkflowGraph {
     clip_node_ids: clips.map((clip) => clip.source_node_id),
   }
   timeline.inputs = clips.map((clip, index) => ({ id: clip.id, label: `片段 ${index + 1}`, type: 'video', required: true }))
-  const nonTimelineEdges = edges.filter((edge) => edge.target !== timeline!.id || edge.source_port !== 'video')
+  const nonTimelineEdges = edges.filter((edge) => edge.target !== timeline!.id)
   edges.length = 0
   edges.push(...nonTimelineEdges)
   clips.forEach((clip, index) => {
@@ -777,6 +863,19 @@ export function validateVideoWorkflowGraph(
     ) {
       add('invalid_timeline_trim', '裁剪点须按 100ms 对齐，片段时长为 1000–15000ms', { node_id: timeline?.id })
     }
+    if (
+      options.requireComplete
+      && timeline
+      && clip.id
+      && !graph.edges.some((edge) => (
+        edge.source === clip.source_node_id
+        && edge.source_port === clip.source_port
+        && edge.target === timeline.id
+        && edge.target_port === clip.id
+      ))
+    ) {
+      add('invalid_timeline', `时间线片段未连接对应视频输出: ${clip.id}`, { node_id: timeline.id })
+    }
   }
   return issues
 }
@@ -813,6 +912,36 @@ export function connectionError(graph: VideoWorkflowGraph, edge: Omit<VideoWorkf
   return ''
 }
 
+/** Normalizes Vue Flow loose-mode drags that start from a target handle. */
+export function normalizeVideoWorkflowConnection(
+  graph: VideoWorkflowGraph,
+  connection: { source?: string | null; target?: string | null; sourceHandle?: string | null; targetHandle?: string | null },
+) {
+  if (!connection.source || !connection.target || !connection.sourceHandle || !connection.targetHandle) return null
+  const sourceNode = graph.nodes.find((node) => node.id === connection.source)
+  const targetNode = graph.nodes.find((node) => node.id === connection.target)
+  if (!sourceNode || !targetNode) return null
+  const forwardOK = sourceNode.outputs?.some((port) => port.id === connection.sourceHandle)
+    && targetNode.inputs?.some((port) => port.id === connection.targetHandle)
+  if (forwardOK) {
+    return {
+      source: connection.source,
+      sourceHandle: connection.sourceHandle,
+      target: connection.target,
+      targetHandle: connection.targetHandle,
+    }
+  }
+  const reversedOK = sourceNode.inputs?.some((port) => port.id === connection.sourceHandle)
+    && targetNode.outputs?.some((port) => port.id === connection.targetHandle)
+  if (!reversedOK) return null
+  return {
+    source: connection.target,
+    sourceHandle: connection.targetHandle,
+    target: connection.source,
+    targetHandle: connection.sourceHandle,
+  }
+}
+
 export function removeNodeFromGraph(graph: VideoWorkflowGraph, nodeID: string): VideoWorkflowGraph {
   const next = cloneWorkflowGraph(graph)
   const target = next.nodes.find((node) => node.id === nodeID)
@@ -820,14 +949,33 @@ export function removeNodeFromGraph(graph: VideoWorkflowGraph, nodeID: string): 
   next.nodes = next.nodes.filter((node) => node.id !== nodeID)
   next.edges = next.edges.filter((edge) => edge.source !== nodeID && edge.target !== nodeID)
   const timeline = next.nodes.find((node) => node.type === 'timeline')
-  if (Array.isArray(timeline?.config.clip_node_ids)) {
-    timeline!.config.clip_node_ids = timeline!.config.clip_node_ids.filter((id: string) => id !== nodeID)
-  }
-  if (Array.isArray(timeline?.config.clips)) {
-    timeline!.config.clips = (timeline!.config.clips as VideoWorkflowTimelineClip[])
-      .filter((clip) => clip.source_node_id !== nodeID)
-    timeline!.inputs = (timeline!.config.clips as VideoWorkflowTimelineClip[])
-      .map((clip, index) => ({ id: clip.id, label: `片段 ${index + 1}`, type: 'video', required: true }))
+  if (timeline) {
+    if (Array.isArray(timeline.config.clip_node_ids)) {
+      timeline.config.clip_node_ids = timeline.config.clip_node_ids.filter((id: string) => id !== nodeID)
+    }
+    if (Array.isArray(timeline.config.clips)) {
+      const clips = (timeline.config.clips as VideoWorkflowTimelineClip[])
+        .filter((clip) => clip.source_node_id !== nodeID)
+      timeline.config.clips = clips
+      timeline.config.clip_node_ids = clips.map((clip) => clip.source_node_id)
+      timeline.inputs = clips.map((clip, index) => ({ id: clip.id, label: `片段 ${index + 1}`, type: 'video', required: true }))
+      const inbound = next.edges.filter((edge) => edge.target === timeline.id)
+      next.edges = next.edges.filter((edge) => edge.target !== timeline.id)
+      clips.forEach((clip, index) => {
+        const existing = inbound.find((edge) => (
+          edge.source === clip.source_node_id
+          && edge.source_port === clip.source_port
+          && edge.target_port === clip.id
+        ))
+        next.edges.push(existing || {
+          id: `timeline_${clip.id}_${index + 1}`,
+          source: clip.source_node_id,
+          source_port: clip.source_port,
+          target: timeline.id,
+          target_port: clip.id,
+        })
+      })
+    }
   }
   next.groups = next.groups.map((group) => ({ ...group, node_ids: group.node_ids.filter((id) => id !== nodeID) }))
   return next

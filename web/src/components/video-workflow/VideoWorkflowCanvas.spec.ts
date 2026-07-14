@@ -15,7 +15,6 @@ const graphNodes: VideoWorkflowNode[] = [{
 
 const baseProps = {
   backendAvailable: true,
-  conflictDraftKey: '',
   activeTool: 'select' as const,
   modKeyCode: 'Control',
   nodes: [],
@@ -28,6 +27,10 @@ const baseProps = {
   selectedNodeLocked: false,
   edgeDisplayMode: 'smart' as const,
   layoutBusy: false,
+  autoArrange: false,
+  canUndo: false,
+  canRedo: false,
+  canOperateWorkflow: true,
   zoom: 1,
   viewport: { x: 0, y: 0, zoom: 1 },
 }
@@ -47,10 +50,19 @@ const SlotStub = defineComponent({
 })
 const dropdownStubs = {
   'el-dropdown': defineComponent({
-    setup(_, { slots }) { return () => h('div', [slots.default?.(), slots.dropdown?.()]) },
+    emits: ['command'],
+    setup(_, { slots, emit }) {
+      return () => h('div', { class: 'el-dropdown-stub' }, [
+        slots.default?.(),
+        h('div', { class: 'dropdown-menu-stub' }, slots.dropdown?.()),
+      ])
+    },
   }),
   'el-dropdown-menu': SlotStub,
   'el-dropdown-item': SlotStub,
+  'el-tooltip': defineComponent({
+    setup(_, { slots }) { return () => slots.default?.() ?? null },
+  }),
 }
 
 describe('VideoWorkflowCanvas', () => {
@@ -58,35 +70,46 @@ describe('VideoWorkflowCanvas', () => {
     const wrapper = shallowMount(VideoWorkflowCanvas, { props: baseProps, global: { stubs: dropdownStubs } })
     expect(wrapper.find('.canvas-minimap i').classes()).toContain('selected')
     expect(wrapper.find('.zoom-controls b').text()).toBe('100%')
+    expect(wrapper.find('.canvas-nav-stack .canvas-minimap').exists()).toBe(true)
+    expect(wrapper.find('.canvas-nav-stack .zoom-controls').exists()).toBe(true)
+    expect(wrapper.find('.edge-display-controls').exists()).toBe(false)
+    expect(wrapper.find('.draft-recovery-banner').exists()).toBe(false)
 
-    await wrapper.find('button[title="抓手（H/空格）"]').trigger('click')
-    await wrapper.find('button[title="建立分组（⌘/Ctrl+G）"]').trigger('click')
-    await wrapper.find('button[title="删除选中项"]').trigger('click')
+    await wrapper.find('button[aria-label="抓手"]').trigger('click')
+    await wrapper.find('button[aria-label="删除选中项"]').trigger('click')
     expect(wrapper.emitted('update:activeTool')?.[0]).toEqual(['pan'])
-    expect(wrapper.emitted('group-selected')).toHaveLength(1)
     expect(wrapper.emitted('delete-selected')).toHaveLength(1)
 
-    await wrapper.find('button[aria-label="显示全部连线"]').trigger('click')
-    await wrapper.find('button[aria-label="隐藏非相关连线"]').trigger('click')
+    await wrapper.setProps({ canUndo: true, canRedo: true })
+    await wrapper.find('button[aria-label="撤销"]').trigger('click')
+    await wrapper.find('button[aria-label="重做"]').trigger('click')
+    expect(wrapper.emitted('undo')).toHaveLength(1)
+    expect(wrapper.emitted('redo')).toHaveLength(1)
+
+    const layoutButton = wrapper.find('button[aria-label="整理画布"]')
+    expect(layoutButton.exists()).toBe(true)
+    expect(layoutButton.attributes('title')).toContain('整理画布')
+    expect(wrapper.find('.canvas-layout-host').exists()).toBe(false)
+
+    await wrapper.find('.canvas-tools button[aria-label="显示全部连线"]').trigger('click')
+    await wrapper.find('.canvas-tools button[aria-label="隐藏非相关连线"]').trigger('click')
     expect(wrapper.emitted('update:edgeDisplayMode')).toEqual([['all'], ['hidden']])
   })
 
-  it('keeps recovery and compatible-node creation outside the page shell', async () => {
+  it('keeps offline and compatible-node creation outside the page shell', async () => {
     const wrapper = shallowMount(VideoWorkflowCanvas, {
       props: {
         ...baseProps,
         backendAvailable: false,
-        conflictDraftKey: 'draft-key',
         quickConnectMenu: { x: 80, y: 120 },
         quickConnectTypes: [{ type: 'video', label: '视频生成' }],
       },
       global: { stubs: dropdownStubs },
     })
     expect(wrapper.find('.offline-banner').exists()).toBe(true)
-    await wrapper.find('.draft-recovery-banner button').trigger('click')
+    expect(wrapper.find('.draft-recovery-banner').exists()).toBe(false)
     await wrapper.find('.quick-connect-menu button:not(.cancel)').trigger('click')
     await wrapper.find('.quick-connect-menu button.cancel').trigger('click')
-    expect(wrapper.emitted('recover-conflict-draft')).toHaveLength(1)
     expect(wrapper.emitted('create-connected-node')?.[0]).toEqual(['video'])
     expect(wrapper.emitted('cancel-quick-connect')).toHaveLength(1)
   })

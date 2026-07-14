@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
+  MarkerType,
   useVueFlow,
   type Connection,
   type Edge,
@@ -14,6 +15,7 @@ import {
 import {
   Aim,
   ArrowLeft,
+  ArrowRight,
   Check,
   Clock,
   Download,
@@ -21,8 +23,6 @@ import {
   Menu,
   MoreFilled,
   Plus,
-  RefreshLeft,
-  RefreshRight,
   Upload,
   VideoPause,
   VideoPlay,
@@ -42,6 +42,7 @@ import {
   approveVideoWorkflowStoryboard,
   cancelVideoWorkflowRun,
   createVideoWorkflow,
+  deleteVideoWorkflow,
   estimateVideoWorkflowRun,
   getVideoWorkflow,
   getVideoWorkflowRun,
@@ -51,6 +52,7 @@ import {
   listVideoWorkflowTemplates,
   listVideoWorkflows,
   runVideoWorkflow,
+  seedVideoWorkflowStaleEpochBaseline,
   signVideoAssetVersion,
   transformVideoAssetVersion,
   updateVideoWorkflow,
@@ -69,6 +71,7 @@ import {
   type VideoWorkflowRunMode,
   type VideoWorkflowTemplate,
   type VideoWorkflowTimelineClip,
+  type VideoWorkflowValidationIssue,
 } from '@/api/videoWorkflow'
 import {
   DEFAULT_VIDEO_WORKFLOW_VIDEO_MODEL,
@@ -79,22 +82,34 @@ import {
   cloneWorkflowGraph,
   connectionError,
   createTimelineClip,
-  createStarterVideoWorkflowGraph,
+  createEmptyVideoWorkflowGraph,
+  ensureVideoWorkflowNodePorts,
   migrateVideoWorkflowGraph,
   makeVideoWorkflowNode,
   nextVideoWorkflowImageTransform,
   normalizeImageTransform,
+  normalizeVideoWorkflowConnection,
   removeNodeFromGraph,
   resolveVideoWorkflowAssetBinding,
   resolveVideoWorkflowDisplayedStatus,
+  resolveVideoWorkflowEdgeStroke,
   resolveVideoWorkflowVideoModel,
   validateVideoWorkflowGraph,
   videoWorkflowImageVersionTransformState,
+  videoWorkflowNodeDefaultInputPort,
   videoWorkflowNodePreviewURL,
   videoWorkflowNodeRunOutputVersionID,
 } from '@/utils/videoWorkflowGraph'
 import { updateVideoWorkflowGroupBounds, videoWorkflowMovableNodeIDs } from '@/utils/videoWorkflowLayout'
 import { layoutVideoWorkflowGraph } from '@/utils/videoWorkflowLayoutEngine'
+import {
+  applyLayoutPreset,
+  clampPanelLeft,
+  clampPanelRight,
+  togglePanelFocusMode,
+  type VideoWorkflowLayoutPresetID,
+  type VideoWorkflowPanelVisibility,
+} from '@/utils/videoWorkflowPanelLayout'
 import {
   SHARED_CHARACTER_BUS_ID,
   ensureSharedCharacterBusLayout,
@@ -105,10 +120,12 @@ import {
 import { SerialVideoWorkflowOperationQueue, runConfirmedVideoWorkflowMutation } from '@/utils/videoWorkflowAsync'
 import {
   VIDEO_WORKFLOW_TRANSFER_MAX_BYTES,
+  VideoWorkflowTransferError,
   parseVideoWorkflowTransfer,
   serializeVideoWorkflowTransfer,
   videoWorkflowTransferFilename,
 } from '@/utils/videoWorkflowTransfer'
+import VideoWorkflowValidationIssues from '@/components/video-workflow/VideoWorkflowValidationIssues.vue'
 
 type PanelTab = 'nodes' | 'assets'
 type CanvasTool = 'select' | 'pan' | 'connect'
@@ -118,7 +135,23 @@ type FlowData = {
   bus?: { sourceCount: number; targetCount: number }
   collapsedInputPortIDs?: string[]
 }
-type WorkspaceMenuCommand = 'outline' | 'import_json' | 'export_json'
+type WorkspaceMenuCommand =
+  | 'outline'
+  | 'import_json'
+  | 'export_json'
+  | 'delete_workflow'
+  | 'preview'
+  | 'history'
+  | 'create_workflow'
+  | 'aspect_9_16'
+  | 'aspect_16_9'
+  | 'aspect_1_1'
+  | 'resolution_720p'
+  | 'resolution_1080p'
+  | 'layout_edit'
+  | 'layout_compose'
+  | 'layout_review'
+type OutputSettingCommand = 'aspect_9_16' | 'aspect_16_9' | 'aspect_1_1' | 'resolution_720p' | 'resolution_1080p'
 
 const POLL_INTERVAL = 2500
 const AUTO_SAVE_DELAY = 800
@@ -142,12 +175,12 @@ const workflows = ref<VideoWorkflow[]>([])
 const assets = ref<VideoAsset[]>([])
 const workflowVideoModels = ref<VideoWorkflowModelOption[]>([])
 const activeWorkflow = ref<VideoWorkflow | null>(null)
-const graph = ref<VideoWorkflowGraph>(createStarterVideoWorkflowGraph())
+const graph = ref<VideoWorkflowGraph>(createEmptyVideoWorkflowGraph())
 const activeRun = ref<VideoWorkflowRun | null>(null)
 const panelTab = ref<PanelTab>('nodes')
 const activeTool = ref<CanvasTool>('select')
-const selectedNodeID = ref('background_2')
-const selectedNodeIDs = ref<string[]>(['background_2'])
+const selectedNodeID = ref('')
+const selectedNodeIDs = ref<string[]>([])
 const selectedEdgeIDs = ref<string[]>([])
 const selectedSummaryEdgeID = ref('')
 const dirty = ref(false)
@@ -159,11 +192,15 @@ const clipboard = ref<{ nodes: VideoWorkflowNode[]; edges: VideoWorkflowEdge[] }
 const flowNodes = ref<Node<FlowData>[]>([])
 const flowEdges = ref<Edge[]>([])
 const layoutBusy = ref(false)
+const autoArrange = ref(false)
 const edgeDisplayMode = ref<VideoWorkflowEdgeDisplayMode>('smart')
 const createDialogVisible = ref(false)
 const characterDialogVisible = ref(false)
 const storyboardDialogVisible = ref(false)
+const approvalBusy = ref(false)
 const outlineVisible = ref(false)
+const validationIssuesVisible = ref(false)
+const validationIssues = ref<VideoWorkflowValidationIssue[]>([])
 const connectionDialogVisible = ref(false)
 const connectionTarget = ref<{ nodeID: string; portID: string } | null>(null)
 const connectionSource = ref('')
@@ -193,13 +230,17 @@ const mediaPreviewNode = ref<VideoWorkflowNode | null>(null)
 const mediaPreviewURL = ref('')
 const mediaPreviewLoading = ref(false)
 const mediaPreviewError = ref('')
-const panelLayout = reactive({ left: 248, right: 320, inspectorOpen: true })
+const panelLayout = reactive({ left: 248, right: 320, libraryOpen: true, inspectorOpen: true })
+const lastNonFocusLayout = ref<VideoWorkflowPanelVisibility | null>(null)
 const canvasViewport = reactive({ x: 0, y: 0, zoom: 1 })
+const headerCompact = ref(false)
+const headerPhone = ref(false)
 
 let saveTimer: number | null = null
 let retryTimer: number | null = null
 let pollingTimer: number | null = null
 let deletionTimer: number | null = null
+let autoArrangeTimer: number | null = null
 let resizing: { kind: 'left' | 'right'; start: number; value: number } | null = null
 let activeSavePromise: Promise<VideoWorkflow | null> | null = null
 let restoredLocalDraft = false
@@ -213,6 +254,21 @@ let mediaPreviewGeneration = 0
 let componentUnmounted = false
 let edgeCurveHistorySnapshot: VideoWorkflowGraph | null = null
 let visualEdgeLogicalIDs = new Map<string, string[]>()
+let headerCompactQuery: MediaQueryList | null = null
+let headerPhoneQuery: MediaQueryList | null = null
+
+function syncHeaderLayoutMode() {
+  headerCompact.value = headerCompactQuery?.matches ?? false
+  headerPhone.value = headerPhoneQuery?.matches ?? false
+}
+/** 本地标记 stale 的递增世代；轮询仅清除「标记世代 ≤ 本次运行启动世代」的节点，避免抹掉运行后编辑产生的合法 stale。 */
+let staleEpoch = 0
+const nodeStaleEpoch = new Map<string, number>()
+let activeRunStaleEpoch = 0
+let refreshRunFailCount = 0
+let refreshRunFailWarned = false
+let assetsRefreshFailed = false
+let ensureAssetBindingWarned = false
 
 const {
   fitView,
@@ -221,6 +277,7 @@ const {
   setViewport,
   setCenter,
   screenToFlowCoordinate,
+  updateNodeInternals,
 } = useVueFlow('video-workflow-flow')
 
 const selectedNode = computed(() => graph.value.nodes.find((node) => node.id === selectedNodeID.value) || null)
@@ -228,13 +285,18 @@ const timelineNode = computed(() => graph.value.nodes.find((node) => node.type =
 const timelineClips = computed<VideoWorkflowTimelineClip[]>(() => Array.isArray(timelineNode.value?.config.clips)
   ? timelineNode.value!.config.clips as VideoWorkflowTimelineClip[]
   : [])
+const timelineSourceTitles = computed(() => Object.fromEntries(
+  graph.value.nodes.map((node) => [node.id, nodeTitle(node)]),
+))
+/** 严格 revision 对齐：仅用于 stale 清除等需要与当前图一致的逻辑，不用于展示。 */
 const activeRunMatchesWorkflow = computed(() => Boolean(
   activeRun.value
   && activeWorkflow.value
   && activeRun.value.workflow_revision === activeWorkflow.value.revision,
 ))
+/** 展示层始终使用最近一次运行的 node_runs，避免保存 revision+1 后输出/进度瞬间消失。 */
 const activeRunNodeMap = computed(() => new Map(
-  (activeRunMatchesWorkflow.value ? activeRun.value?.node_runs || [] : []).map((item) => [item.node_id, item]),
+  (activeRun.value?.node_runs || []).map((item) => [item.node_id, item]),
 ))
 const selectedNodeRun = computed(() => activeRunNodeMap.value.get(selectedNodeID.value) || null)
 const selectedNodeUpstreams = computed(() => {
@@ -292,7 +354,8 @@ const selectedNodeModelOptions = computed(() => {
   const defaults = ['story_brief', 'script', 'scene'].includes(type)
     ? [{ value: 'default', label: '系统默认文本模型' }]
     : ['character', 'background', 'image'].includes(type)
-      ? [{ value: 'gpt-image-2', label: 'GPT Image 2' }]
+      // 对外兼容名仍是 gpt-image-2；当前 imagegen 网关指向本机 SD-Turbo
+      ? [{ value: 'gpt-image-2', label: 'SD-Turbo (本地)' }]
       : type === 'video'
         ? videoModelOptionsWithCurrent(selectedNodeModel.value)
         : []
@@ -304,7 +367,7 @@ const selectedNodeModelOptions = computed(() => {
 function videoModelOptionsWithCurrent(current: string) {
   const items = workflowVideoModels.value.length
     ? workflowVideoModels.value
-    : [{ value: DEFAULT_VIDEO_WORKFLOW_VIDEO_MODEL, label: 'Wan2.7-r2v', channel_type: 'apiyi_wan27' }]
+    : [{ value: DEFAULT_VIDEO_WORKFLOW_VIDEO_MODEL, label: '本地 Seedance/Motion', channel_type: 'apiyi_seedance2' }]
   const options = items.map((item) => ({
     value: item.value,
     label: item.label || item.value,
@@ -314,19 +377,106 @@ function videoModelOptionsWithCurrent(current: string) {
     : options
 }
 const isRunActive = computed(() => ['queued', 'running', 'awaiting_character_approval', 'awaiting_storyboard_approval', 'cancel_pending'].includes(activeRun.value?.status || ''))
+const awaitingApproval = computed(() => {
+  const status = activeRun.value?.status
+  return status === 'awaiting_character_approval' || status === 'awaiting_storyboard_approval'
+})
+const workspaceLifecycle = computed(() => {
+  if (loading.value) return 'loading'
+  if (!activeWorkflow.value) return 'unbound'
+  if (revisionConflict.value) return 'conflict'
+  if (saving.value) return 'saving'
+  if (dirty.value) return 'dirty'
+  return 'ready'
+})
 const saveState = computed(() => {
+  if (!activeWorkflow.value) return '未关联工作流'
   if (revisionConflict.value) return '修订冲突 · 已保留本地副本'
   if (saving.value) return '保存中…'
   if (dirty.value && !backendAvailable.value) return '离线草稿已保留'
   if (dirty.value) return '待保存'
-  return `已保存 · R${activeWorkflow.value?.revision || 0}`
+  return `已加载 · R${activeWorkflow.value.revision}`
 })
+const workspaceLifecycleHint = computed(() => ({
+  loading: '正在加载工作区…',
+  unbound: '当前为空白预览画布，请从模板创建工作流后再编辑和生成',
+  conflict: '服务器版本与本地草稿冲突，请先处理修订',
+  saving: '正在保存到服务器…',
+  dirty: '本地修改尚未保存',
+  ready: '工作流已关联服务器，可正常编辑和生成',
+} as Record<string, string>)[workspaceLifecycle.value] || '')
+const canOperateWorkflow = computed(() => Boolean(activeWorkflow.value) && !revisionConflict.value)
+const outputSettingsLabel = computed(() => `${graph.value.settings.aspect_ratio} · ${graph.value.settings.resolution}`)
 const runStatus = computed(() => ({
   queued: '排队中', running: '生成中', awaiting_character_approval: '待选角色', awaiting_storyboard_approval: '待确认分镜',
   cancel_pending: '停止中', canceled: '已停止', succeeded: '已完成', failed: '运行失败',
 } as Record<string, string>)[activeRun.value?.status || ''] || '')
+type WorkspaceContextBar = {
+  kind: 'conflict' | 'approval' | 'running' | 'draft'
+  text: string
+  progress?: number
+  showLoadServer?: boolean
+  showRecoverDraft?: boolean
+  showContinueApproval?: boolean
+}
+const workspaceContextBar = computed<WorkspaceContextBar | null>(() => {
+  if (revisionConflict.value) {
+    return {
+      kind: 'conflict',
+      text: '修订冲突：请先加载服务器版本，再决定是否恢复本地草稿',
+      showLoadServer: true,
+      showRecoverDraft: Boolean(conflictDraftKey.value),
+    }
+  }
+  if (awaitingApproval.value) {
+    return {
+      kind: 'approval',
+      text: runStatus.value || '待审批',
+      showContinueApproval: true,
+    }
+  }
+  if (isRunActive.value) {
+    return {
+      kind: 'running',
+      text: runStatus.value || '运行中',
+      progress: activeRun.value?.progress,
+    }
+  }
+  if (conflictDraftKey.value) {
+    return {
+      kind: 'draft',
+      text: '检测到旧修订的本地草稿；恢复前请确认已加载最新服务器版本',
+      showRecoverDraft: true,
+    }
+  }
+  return null
+})
+const showHeaderRunProgress = computed(() => Boolean(runStatus.value || awaitingApproval.value))
+const headerRunStats = computed(() => {
+  const nodeRuns = activeRun.value?.node_runs || []
+  const total = nodeRuns.length
+  let done = 0
+  let active = 0
+  let anyRunning = false
+  for (const nodeRun of nodeRuns) {
+    const status = String(nodeRun.status || '')
+    if (status === 'succeeded') done += 1
+    if (status === 'running' || status === 'queued') active += 1
+    if (status === 'running') anyRunning = true
+  }
+  const progress = Math.max(0, Math.min(100, Number(activeRun.value?.progress ?? 0)))
+  const label = runStatus.value || '运行中'
+  const indeterminate = activeRun.value?.status === 'queued' && progress === 0 && !anyRunning
+  const nodeText = total > 0
+    ? (headerPhone.value ? `${done}/${total}` : `进行中 ${active} · ${done}/${total}`)
+    : (headerPhone.value ? '—' : '进行中 — · —')
+  const ariaLabel = total > 0
+    ? `${label}，进度 ${progress}%，进行中 ${active} 个节点，已完成 ${done}/${total}`
+    : `${label}，进度 ${progress}%`
+  return { progress, active, done, total, label, indeterminate, nodeText, ariaLabel }
+})
 const workspaceStyle = computed(() => ({
-  '--left-panel': `${panelLayout.left}px`,
+  '--left-panel': panelLayout.libraryOpen ? `${panelLayout.left}px` : '0px',
   '--right-panel': panelLayout.inspectorOpen ? `${panelLayout.right}px` : '0px',
 }))
 const modKeyCode = computed(() => typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? 'Meta' : 'Control')
@@ -355,10 +505,19 @@ const characterCandidates = computed(() => (activeRun.value?.node_runs || [])
   .map((item) => {
     const node = graph.value.nodes.find((entry) => entry.id === item.node_id)
     const raw = item.output?.candidates || item.output?.images || item.output?.candidate_version_ids || []
-    const candidates = (Array.isArray(raw) ? raw : []).map((candidate: any, index: number) => ({
-      id: typeof candidate === 'string' ? candidate : String(candidate.asset_version_id || candidate.version_id || candidate.id || `${item.node_id}_${index}`),
-      url: typeof candidate === 'string' ? '' : String(candidate.preview_url || candidate.url || ''),
-    }))
+    const candidates = (Array.isArray(raw) ? raw : []).map((candidate: any, index: number) => {
+      const id = typeof candidate === 'string'
+        ? candidate
+        : String(candidate.asset_version_id || candidate.version_id || candidate.id || `${item.node_id}_${index}`)
+      const directURL = typeof candidate === 'string' ? '' : String(candidate.preview_url || candidate.url || '')
+      const fromAsset = assets.value
+        .flatMap((asset) => asset.versions || [])
+        .find((version) => version.id === id)
+      return {
+        id,
+        url: directURL || String(fromAsset?.preview_url || ''),
+      }
+    })
     return { nodeID: item.node_id, nodeRunID: item.id, title: nodeTitle(node), hash: item.input_hash || '', candidates }
   }).filter((item) => item.candidates.length))
 const canApproveCharacters = computed(() => characterCandidates.value.length > 0 && characterCandidates.value.every((item) => characterSelections.value[item.nodeID]))
@@ -383,19 +542,45 @@ function assetBindingForNode(node: VideoWorkflowNode | null) {
 
 function invalidateImageTransformContext() { imageTransformContextGeneration += 1 }
 
-async function refreshAssets() {
-  const items = await listVideoAssets({ limit: 100 })
-  assets.value = items
-  return items
+async function refreshAssets(options: { silent?: boolean } = {}) {
+  const pageSize = 100
+  const maxTotal = 1000
+  const items: Awaited<ReturnType<typeof listVideoAssets>> = []
+  try {
+    for (let offset = 0; offset < maxTotal; offset += pageSize) {
+      const page = await listVideoAssets({ limit: pageSize, offset })
+      items.push(...page)
+      if (page.length < pageSize) break
+      if (offset + pageSize >= maxTotal) {
+        console.warn(`视频工作流素材超过 ${maxTotal} 个，已停止继续拉取`)
+        break
+      }
+    }
+    assets.value = items
+    assetsRefreshFailed = false
+    return items
+  } catch (error) {
+    if (!options.silent && !assetsRefreshFailed) {
+      ElMessage.warning('素材列表刷新失败，缩略图可能不是最新')
+    }
+    assetsRefreshFailed = true
+    throw error
+  }
 }
 
-async function ensureAssetBinding(nodeID: string) {
+async function ensureAssetBinding(nodeID: string, options: { warnMissing?: boolean } = {}) {
   let node = graph.value.nodes.find((item) => item.id === nodeID) || null
   let binding = assetBindingForNode(node)
   if (!binding && nodeRunOutputVersionID(nodeID)) {
-    try { await refreshAssets() } catch { /* 后续给出明确的素材绑定错误。 */ }
+    try {
+      await refreshAssets({ silent: !options.warnMissing })
+    } catch { /* 保留旧素材列表；下方按需提示缺绑定。 */ }
     node = graph.value.nodes.find((item) => item.id === nodeID) || null
     binding = assetBindingForNode(node)
+  }
+  if (!binding && options.warnMissing && !ensureAssetBindingWarned) {
+    ensureAssetBindingWarned = true
+    ElMessage.warning('当前节点缺少可用素材绑定，请先运行生成或重新选择素材')
   }
   return binding
 }
@@ -447,7 +632,7 @@ function mediaBindingForNode(node: VideoWorkflowNode) {
 async function openMediaPreview(sourceNode: VideoWorkflowNode) {
   const graphNode = graph.value.nodes.find((node) => node.id === sourceNode.id)
   const node = graphNode ? displayNode(graphNode) : sourceNode
-  if (!['background', 'image', 'video'].includes(node.type)) return
+  if (!['character', 'background', 'image', 'video'].includes(node.type)) return
 
   const requestGeneration = ++mediaPreviewGeneration
   const openingWorkspaceGeneration = workspaceGeneration
@@ -478,9 +663,8 @@ async function openMediaPreview(sourceNode: VideoWorkflowNode) {
 
   if (!binding && versionID) {
     try {
-      const freshAssets = await listVideoAssets({ limit: 100 })
+      await ensureAssetBinding(node.id, { warnMissing: true })
       if (!contextIsCurrent()) return
-      assets.value = freshAssets
       binding = mediaBindingForNode(node)
     } catch { /* 仍可回退到节点已有的预览地址。 */ }
   }
@@ -489,7 +673,9 @@ async function openMediaPreview(sourceNode: VideoWorkflowNode) {
   if (binding) {
     fallbackURL = binding.previewURL || fallbackURL
     try {
-      const signed = await signVideoAssetVersion(binding.assetID, binding.versionID, 'preview')
+      // 视频 preview 指向封面帧；全屏播放需 download/seedance 取原片。
+      const purpose = node.type === 'video' ? 'seedance' : 'preview'
+      const signed = await signVideoAssetVersion(binding.assetID, binding.versionID, purpose)
       if (!contextIsCurrent()) return
       mediaPreviewURL.value = signed.url
       mediaPreviewLoading.value = false
@@ -500,7 +686,11 @@ async function openMediaPreview(sourceNode: VideoWorkflowNode) {
   if (!contextIsCurrent()) return
   mediaPreviewURL.value = fallbackURL
   mediaPreviewLoading.value = false
-  if (!fallbackURL) mediaPreviewError.value = binding ? '最新预览地址获取失败，请重试。' : '当前节点尚未生成可预览的媒体。'
+  if (!fallbackURL) {
+    mediaPreviewError.value = binding
+      ? '预览签名失败，请重试'
+      : '当前节点尚未生成可预览的媒体'
+  }
 }
 
 function retryMediaPreview() {
@@ -518,25 +708,33 @@ function displayNode(node: VideoWorkflowNode): VideoWorkflowNode {
     : node
   const runNode = activeRunNodeMap.value.get(node.id)
   const binding = assetBindingForNode(node)
-  const enriched = binding ? {
+  const runPreview = videoWorkflowNodePreviewURL({
     ...displayed,
-    asset_id: binding.assetID,
-    asset_version_id: binding.versionID,
+    output: runNode?.output || displayed.output,
+  })
+  const bakedPreview = binding?.version?.preview_url || runPreview || displayed.config.preview_url
+  const enriched = {
+    ...displayed,
+    ...(binding ? { asset_id: binding.assetID, asset_version_id: binding.versionID } : {}),
     config: {
       ...displayed.config,
-      asset_id: binding.assetID,
-      asset_version_id: binding.versionID,
-      preview_url: binding.version?.preview_url || displayed.config.preview_url,
+      ...(binding ? { asset_id: binding.assetID, asset_version_id: binding.versionID } : {}),
+      ...(bakedPreview ? { preview_url: bakedPreview } : {}),
     },
-  } : displayed
+  }
   if (!runNode) return enriched
   const status = resolveVideoWorkflowDisplayedStatus(node.status, runNode.status)
+  const runningWithStaleParams = node.status === 'stale' && (status === 'running' || status === 'queued')
   return {
     ...enriched,
     status,
     progress: status === 'stale' ? undefined : runNode.progress,
     output: runNode.output,
-    stale_reason: status === 'stale' ? node.stale_reason : runNode.error || node.stale_reason,
+    stale_reason: runningWithStaleParams
+      ? '参数已修改，本次运行结果将过期'
+      : status === 'stale' ? node.stale_reason : undefined,
+    run_error: runNode.error_message || runNode.error || undefined,
+    run_error_code: runNode.error_code || undefined,
   }
 }
 
@@ -561,29 +759,44 @@ function syncFlow() {
     return edgeDisplayMode.value === 'all' ? .18 : .08
   }
 
-  const zones: Node<FlowData>[] = graph.value.groups.map((group) => ({
-    id: `__${group.scene_id}`,
-    type: 'zone',
-    position: { ...group.position },
-    draggable: false,
-    selectable: false,
-    data: { zone: { title: `场景 ${group.scene_id.replace(/\D/g, '').padStart(2, '0')}`, subtitle: `15 秒 · ${group.enabled ? '已启用' : '已停用'}`, enabled: group.enabled } },
-    style: { width: `${group.size.width}px`, height: `${group.size.height}px`, zIndex: -2 },
-  }))
+  const zones: Node<FlowData>[] = graph.value.groups.map((group) => {
+    const members = graph.value.nodes.filter((node) => group.node_ids.includes(node.id) && !['timeline', 'compose'].includes(node.type))
+    // 与后端 activeNodeIDs 一致：group.enabled=false 或组内全部节点 disabled → 已停用
+    const sceneEnabled = group.enabled !== false && (members.length ? members.some((node) => node.enabled !== false) : true)
+    const videoMembers = members.filter((node) => node.type === 'video')
+    const durationSeconds = videoMembers.length
+      ? videoMembers.reduce((sum, node) => {
+        const value = node.config?.duration_seconds ?? node.duration_seconds
+        return sum + (typeof value === 'number' && Number.isFinite(value) ? value : 0)
+      }, 0)
+      : 15
+    return {
+      id: `__${group.scene_id}`,
+      type: 'zone',
+      position: { ...group.position },
+      draggable: false,
+      selectable: false,
+      data: { zone: { title: `场景 ${group.scene_id.replace(/\D/g, '').padStart(2, '0')}`, subtitle: `${durationSeconds} 秒 · ${sceneEnabled ? '已启用' : '已停用'}`, enabled: sceneEnabled } },
+      style: { width: `${group.size.width}px`, height: `${group.size.height}px`, zIndex: -2 },
+    }
+  })
   flowNodes.value = [
     ...zones,
-    ...graph.value.nodes.map((node) => ({
-      id: node.id,
-      type: 'workflow',
-      position: { ...node.position },
-      data: {
-        node: displayNode(node),
-        collapsedInputPortIDs: bus?.targetPortIDs.get(node.id),
-      },
-      selected: selectedNodeIDs.value.includes(node.id),
-      draggable: !node.locked,
-      style: { width: `${['background', 'image', 'video'].includes(node.type) ? 208 : 188}px`, zIndex: 2 },
-    } as Node<FlowData>)),
+    ...graph.value.nodes.map((node) => {
+      ensureVideoWorkflowNodePorts(node)
+      return {
+        id: node.id,
+        type: 'workflow',
+        position: { ...node.position },
+        data: {
+          node: displayNode(node),
+          collapsedInputPortIDs: bus?.targetPortIDs.get(node.id),
+        },
+        selected: selectedNodeIDs.value.includes(node.id),
+        draggable: !node.locked,
+        style: { width: `${['character', 'background', 'image', 'video'].includes(node.type) ? 208 : 188}px`, zIndex: 2 },
+      } as Node<FlowData>
+    }),
     ...(bus ? [{
       id: SHARED_CHARACTER_BUS_ID,
       type: 'assetBus',
@@ -599,6 +812,15 @@ function syncFlow() {
     .filter((edge) => !collapsedEdgeIDs.has(edge.id))
     .map((edge) => {
       const opacity = edgeOpacity([edge], edgeDisplayMode.value === 'all' ? .72 : .3)
+      const sourceNode = graph.value.nodes.find((node) => node.id === edge.source)
+      const sourcePort = sourceNode?.outputs?.find((port) => port.id === edge.source_port)
+      const runStatus = activeRunNodeMap.value.get(edge.target)?.status
+      const selected = selectedEdgeIDs.value.includes(edge.id)
+      const stroke = resolveVideoWorkflowEdgeStroke({
+        selected,
+        runStatus,
+        portType: sourcePort?.type,
+      })
       return {
         id: edge.id,
         source: edge.source,
@@ -607,12 +829,13 @@ function syncFlow() {
         targetHandle: edge.target_port,
         type: 'adjustable',
         data: { curve: edge.curve, route: edge.route },
-        selected: selectedEdgeIDs.value.includes(edge.id),
+        selected,
         selectable: opacity > 0,
         focusable: opacity > 0,
         interactionWidth: opacity > 0 ? 20 : 0,
-        style: { opacity, transition: 'opacity 180ms ease' },
-        animated: activeRunNodeMap.value.get(edge.target)?.status === 'running',
+        markerEnd: { type: MarkerType.ArrowClosed, color: stroke },
+        style: { opacity, stroke, transition: 'opacity 180ms ease' },
+        animated: runStatus === 'running',
       }
     })
   const summaryEdges: Edge[] = []
@@ -622,6 +845,11 @@ function syncFlow() {
       const logicalEdges = bus.logicalEdges.filter((edge) => edge.source === sourceID)
       const id = `__shared_character_in_${sourceID}`
       const opacity = edgeOpacity(logicalEdges, .62)
+      const selected = selectedSummaryEdgeID.value === id
+      const stroke = resolveVideoWorkflowEdgeStroke({
+        selected,
+        portType: 'character',
+      })
       nextVisualEdgeLogicalIDs.set(id, logicalEdges.map((edge) => edge.id))
       summaryEdges.push({
         id,
@@ -630,15 +858,16 @@ function syncFlow() {
         sourceHandle: logicalEdges[0]?.source_port,
         targetHandle: 'characters',
         type: 'smoothstep',
-        selected: selectedSummaryEdgeID.value === id,
+        selected,
         selectable: opacity > 0,
         focusable: opacity > 0,
         updatable: false,
         interactionWidth: opacity > 0 ? 20 : 0,
+        markerEnd: { type: MarkerType.ArrowClosed, color: stroke },
         style: {
           opacity,
-          stroke: selectedSummaryEdgeID.value === id ? '#60a5fa' : '#fbbf24',
-          strokeWidth: selectedSummaryEdgeID.value === id ? 2.5 : 1.8,
+          stroke,
+          strokeWidth: selected ? 2.5 : 1.8,
           transition: 'opacity 180ms ease',
         },
       } as Edge)
@@ -647,6 +876,13 @@ function syncFlow() {
       const logicalEdges = bus.logicalEdges.filter((edge) => edge.target === targetID)
       const id = `__shared_character_out_${targetID}`
       const opacity = edgeOpacity(logicalEdges, .62)
+      const runStatus = activeRunNodeMap.value.get(targetID)?.status
+      const selected = selectedSummaryEdgeID.value === id
+      const stroke = resolveVideoWorkflowEdgeStroke({
+        selected,
+        runStatus,
+        portType: 'character',
+      })
       nextVisualEdgeLogicalIDs.set(id, logicalEdges.map((edge) => edge.id))
       summaryEdges.push({
         id,
@@ -656,18 +892,19 @@ function syncFlow() {
         targetHandle: '__shared_characters',
         type: 'adjustable',
         data: { route: sharedCharacterBusTargetRoute(graph.value, bus, targetID, targetIndex), readonly: true },
-        selected: selectedSummaryEdgeID.value === id,
+        selected,
         selectable: opacity > 0,
         focusable: opacity > 0,
         updatable: false,
         interactionWidth: opacity > 0 ? 20 : 0,
+        markerEnd: { type: MarkerType.ArrowClosed, color: stroke },
         style: {
           opacity,
-          stroke: selectedSummaryEdgeID.value === id ? '#60a5fa' : '#fbbf24',
-          strokeWidth: selectedSummaryEdgeID.value === id ? 2.5 : 1.8,
+          stroke,
+          strokeWidth: selected ? 2.5 : 1.8,
           transition: 'opacity 180ms ease',
         },
-        animated: activeRunNodeMap.value.get(targetID)?.status === 'running',
+        animated: runStatus === 'running',
       } as Edge)
     }
   }
@@ -718,22 +955,24 @@ function navigateFromMinimap(position: { x: number; y: number }) {
 
 function draftKey(workflowID = activeWorkflow.value?.id || 'preview') { return `${LOCAL_DRAFT_PREFIX}${workflowID}` }
 function persistLocalDraft() {
+  if (!activeWorkflow.value) return
   try {
-    localStorage.setItem(draftKey(), JSON.stringify({ revision: activeWorkflow.value?.revision || 0, graph: graph.value, dirty: dirty.value, saved_at: Date.now() }))
+    localStorage.setItem(draftKey(), JSON.stringify({ revision: activeWorkflow.value.revision, graph: graph.value, dirty: dirty.value, saved_at: Date.now() }))
   } catch { /* 浏览器存储不足时仍保留内存草稿。 */ }
 }
 
 function restoreLocalDraft(workflow: VideoWorkflow | null, fallback: VideoWorkflowGraph) {
   restoredLocalDraft = false
   conflictDraftKey.value = ''
+  if (!workflow) return migrateVideoWorkflowGraph(fallback)
   try {
-    const key = draftKey(workflow?.id || 'preview')
+    const key = draftKey(workflow.id)
     const value = JSON.parse(localStorage.getItem(key) || 'null')
-    if (value?.dirty && (!workflow || value.revision === workflow.revision)) {
+    if (value?.dirty && value.revision === workflow.revision) {
       restoredLocalDraft = true
       return migrateVideoWorkflowGraph(value.graph)
     }
-    if (value?.dirty && workflow && value.revision !== workflow.revision) {
+    if (value?.dirty && value.revision !== workflow.revision) {
       conflictDraftKey.value = `${key}.conflict`
       localStorage.setItem(conflictDraftKey.value, JSON.stringify(value))
     }
@@ -743,16 +982,24 @@ function restoreLocalDraft(workflow: VideoWorkflow | null, fallback: VideoWorkfl
 
 function recoverConflictDraft() {
   if (!conflictDraftKey.value) return
+  if (revisionConflict.value) {
+    ElMessage.warning('请先点击「加载服务器版本」，再恢复本地草稿到最新修订')
+    return
+  }
   try {
     const value = JSON.parse(localStorage.getItem(conflictDraftKey.value) || 'null')
     if (!value?.graph) return
+    const draftStorageKey = conflictDraftKey.value
     invalidateImageTransformContext()
     pushUndo()
     graph.value = migrateVideoWorkflowGraph(value.graph)
+    nodeStaleEpoch.clear()
+    seedVideoWorkflowStaleEpochBaseline(graph.value.nodes, nodeStaleEpoch, staleEpoch)
+    localStorage.removeItem(draftStorageKey)
     conflictDraftKey.value = ''
     markDirty()
     syncFlow()
-    ElMessage.success('已恢复冲突草稿，请核对后保存')
+    ElMessage.success('已在最新服务器修订上恢复本地草稿，保存后将覆盖服务器版本')
   } catch { ElMessage.error('冲突草稿无法恢复') }
 }
 
@@ -775,6 +1022,11 @@ async function loadWorkspace(workflow?: VideoWorkflow | null) {
   nodeHistoryLoading.value = false
   nodeHistoryGeneration += 1
   activeRun.value = null
+  staleEpoch = 0
+  nodeStaleEpoch.clear()
+  activeRunStaleEpoch = 0
+  refreshRunFailCount = 0
+  refreshRunFailWarned = false
   if (next) {
     const latestPage = await listVideoWorkflowRuns(next.id, { limit: 1, offset: 0 }).catch(() => null)
     if (componentUnmounted || generation !== workspaceGeneration) return
@@ -786,7 +1038,8 @@ async function loadWorkspace(workflow?: VideoWorkflow | null) {
     if (runID) activeRun.value = await getVideoWorkflowRun(runID, true).catch(() => next.latest_run || null)
   }
   if (componentUnmounted || generation !== workspaceGeneration) return
-  graph.value = restoreLocalDraft(next, next?.graph || createStarterVideoWorkflowGraph())
+  graph.value = restoreLocalDraft(next, next?.graph || createEmptyVideoWorkflowGraph())
+  seedVideoWorkflowStaleEpochBaseline(graph.value.nodes, nodeStaleEpoch, staleEpoch)
   const preferred = graph.value.nodes.find((node) => node.id === 'background_2') || graph.value.nodes[0]
   selectedNodeID.value = preferred?.id || ''
   selectedNodeIDs.value = preferred ? [preferred.id] : []
@@ -824,7 +1077,18 @@ async function loadRunHistory(reset = true) {
     if (workflowID !== activeWorkflow.value?.id) return
     const merged = reset ? page.items : [...runHistoryItems.value, ...page.items]
     runHistoryItems.value = [...new Map(merged.map((item) => [item.id, item])).values()]
+      .map((run) => {
+        const cached = runDetailCache.value[run.id]
+        if (run.node_runs?.length) return run
+        if (cached?.node_runs?.length) return { ...run, node_runs: cached.node_runs, graph_snapshot: run.graph_snapshot || cached.graph_snapshot }
+        if (activeRun.value?.id === run.id && activeRun.value.node_runs?.length) {
+          return { ...run, node_runs: activeRun.value.node_runs, graph_snapshot: run.graph_snapshot || activeRun.value.graph_snapshot }
+        }
+        return run
+      })
     runHistoryTotal.value = page.total
+    const missing = runHistoryItems.value.filter((run) => !run.node_runs?.length && !runDetailCache.value[run.id]?.node_runs?.length)
+    if (missing.length) void hydrateRunHistoryNodeRuns(missing.slice(0, RUN_HISTORY_PAGE_SIZE))
   } catch {
     ElMessage.error('生成历史加载失败，请重试')
   } finally {
@@ -832,7 +1096,60 @@ async function loadRunHistory(reset = true) {
   }
 }
 
-async function loadSelectedNodeHistory() {
+async function hydrateRunHistoryNodeRuns(runs: VideoWorkflowRun[]) {
+  const workflowID = activeWorkflow.value?.id
+  if (!workflowID || !runs.length) return
+  const details = await Promise.all(runs.map((run) => {
+    const cached = runDetailCache.value[run.id]
+    if (cached?.node_runs) return Promise.resolve(cached)
+    return getVideoWorkflowRun(run.id, true).catch(() => null)
+  }))
+  if (workflowID !== activeWorkflow.value?.id) return
+  const cache = { ...runDetailCache.value }
+  for (const detail of details) if (detail) cache[detail.id] = detail
+  runDetailCache.value = cache
+  runHistoryItems.value = runHistoryItems.value.map((run) => {
+    const detail = cache[run.id]
+    if (!detail?.node_runs || run.node_runs?.length) return run
+    return { ...run, node_runs: detail.node_runs, graph_snapshot: run.graph_snapshot || detail.graph_snapshot }
+  })
+}
+
+async function expandHistoryRun(run: VideoWorkflowRun) {
+  if (run.node_runs?.length) return
+  runHistoryActionID.value = run.id
+  try {
+    await hydrateRunHistoryNodeRuns([run])
+  } catch {
+    ElMessage.error('节点明细加载失败')
+  } finally {
+    runHistoryActionID.value = ''
+  }
+}
+
+function openRunHistory() {
+  if (!requireActiveWorkflow('查看生成历史')) return
+  runHistoryVisible.value = true
+  runHistoryDetail.value = null
+  void loadRunHistory(true)
+}
+
+async function inspectHistoryRun(run: VideoWorkflowRun) {
+  runHistoryActionID.value = run.id
+  try {
+    runHistoryDetail.value = await getVideoWorkflowRun(run.id, true)
+    runDetailCache.value = { ...runDetailCache.value, [run.id]: runHistoryDetail.value }
+    runHistoryItems.value = runHistoryItems.value.map((item) => (
+      item.id === run.id
+        ? {
+            ...item,
+            node_runs: runHistoryDetail.value?.node_runs || item.node_runs,
+            graph_snapshot: runHistoryDetail.value?.graph_snapshot || item.graph_snapshot,
+          }
+        : item
+    ))
+  } catch { ElMessage.error('运行详情加载失败') } finally { runHistoryActionID.value = '' }
+}
   const workflowID = activeWorkflow.value?.id
   const nodeID = selectedNodeID.value
   if (!workflowID || !nodeID) return
@@ -864,6 +1181,7 @@ async function loadSelectedNodeHistory() {
 }
 
 function openRunHistory() {
+  if (!requireActiveWorkflow('查看生成历史')) return
   runHistoryVisible.value = true
   runHistoryDetail.value = null
   void loadRunHistory(true)
@@ -877,20 +1195,58 @@ async function inspectHistoryRun(run: VideoWorkflowRun) {
   } catch { ElMessage.error('运行详情加载失败') } finally { runHistoryActionID.value = '' }
 }
 
+function openCreateWorkflow() {
+  if (templates.value.length) selectedTemplateID.value = templates.value[0]?.id || ''
+  createDialogVisible.value = true
+}
+
+function requireActiveWorkflow(action = '继续操作') {
+  if (activeWorkflow.value) return true
+  ElMessage.warning(`尚未关联工作流，无法${action}`)
+  openCreateWorkflow()
+  return false
+}
+
+async function ensureDefaultWorkflow(options: { silent?: boolean } = {}) {
+  if (workflows.value.length > 0) return true
+  if (!templates.value.length) {
+    await loadWorkspace(null)
+    if (!options.silent) openCreateWorkflow()
+    return false
+  }
+  const template = templates.value[0]
+  const name = (newWorkflowName.value.trim() || template.name || '我的视频工作流').slice(0, 40)
+  creating.value = true
+  try {
+    const item = await createVideoWorkflow({ name, template_id: template.id })
+    workflows.value = [item]
+    if (!options.silent) ElMessage.success(`已从模板「${template.name}」自动创建工作流`)
+    await loadWorkspace(await getVideoWorkflow(item.id))
+    return true
+  } catch {
+    ElMessage.error('自动创建工作流失败，请手动选择模板')
+    await loadWorkspace(null)
+    openCreateWorkflow()
+    return false
+  } finally {
+    creating.value = false
+  }
+}
+
 async function bootstrap() {
   loading.value = true
   try {
-    const [templateItems, workflowItems, assetItems, modelItems] = await Promise.all([
-      listVideoWorkflowTemplates(), listVideoWorkflows(), listVideoAssets({ limit: 100 }).catch(() => []),
+    const [templateItems, workflowItems, , modelItems] = await Promise.all([
+      listVideoWorkflowTemplates(), listVideoWorkflows(), refreshAssets({ silent: true }).catch(() => {}),
       listVideoWorkflowModels().catch(() => []),
     ])
     if (componentUnmounted) return
     templates.value = templateItems
     workflows.value = workflowItems
-    assets.value = assetItems
     workflowVideoModels.value = modelItems.length ? modelItems : workflowVideoModels.value
     selectedTemplateID.value = templates.value[0]?.id || ''
-    await loadWorkspace()
+    if (workflowItems.length === 0) await ensureDefaultWorkflow({ silent: true })
+    else await loadWorkspace()
   } catch {
     backendAvailable.value = false
     await loadWorkspace(null)
@@ -905,7 +1261,7 @@ function pushUndo(snapshot = cloneWorkflowGraph(graph.value)) {
 }
 
 function markDirty() {
-  if (!autosaveReady.value) return
+  if (!autosaveReady.value || !activeWorkflow.value) return
   dirty.value = true
   changeSequence.value += 1
   persistLocalDraft()
@@ -977,7 +1333,9 @@ async function performSaveWorkflow(silent = false): Promise<VideoWorkflow | null
     persistLocalDraft()
     if (axios.isAxiosError(error) && error.response?.status === 409) {
       revisionConflict.value = true
-      localStorage.setItem(`${draftKey()}.conflict`, JSON.stringify({ graph: cloneWorkflowGraph(graph.value), saved_at: Date.now() }))
+      const key = `${draftKey()}.conflict`
+      localStorage.setItem(key, JSON.stringify({ graph: cloneWorkflowGraph(graph.value), saved_at: Date.now() }))
+      conflictDraftKey.value = key
       ElMessage.error('修订冲突，本地改动已另存为浏览器副本')
     } else {
       backendAvailable.value = false
@@ -1000,17 +1358,63 @@ async function flushSave(): Promise<boolean> {
 
 async function reloadWorkflow() {
   if (!activeWorkflow.value) return
-  await loadWorkspace(await getVideoWorkflow(activeWorkflow.value.id))
-  ElMessage.success('已载入服务器版本')
+  const workflowID = activeWorkflow.value.id
+  const preservedConflictKey = conflictDraftKey.value || `${draftKey(workflowID)}.conflict`
+  const hadConflictDraft = Boolean(localStorage.getItem(preservedConflictKey))
+  await loadWorkspace(await getVideoWorkflow(workflowID))
+  if (hadConflictDraft && localStorage.getItem(preservedConflictKey)) {
+    conflictDraftKey.value = preservedConflictKey
+  }
+  ElMessage.success(hadConflictDraft
+    ? '已载入服务器版本，本地冲突草稿仍可恢复'
+    : '已载入服务器版本')
+}
+
+function applyOutputSetting(command: OutputSettingCommand) {
+  const actions: Record<OutputSettingCommand, () => void> = {
+    aspect_9_16: () => { graph.value.settings.aspect_ratio = '9:16' },
+    aspect_16_9: () => { graph.value.settings.aspect_ratio = '16:9' },
+    aspect_1_1: () => { graph.value.settings.aspect_ratio = '1:1' },
+    resolution_720p: () => { graph.value.settings.resolution = '720p' },
+    resolution_1080p: () => { graph.value.settings.resolution = '1080p' },
+  }
+  const action = actions[command]
+  if (!action) return
+  action()
+  markDirty()
 }
 
 function handleWorkspaceMenu(command: WorkspaceMenuCommand) {
+  if (command === 'preview') {
+    previewOutput()
+    return
+  }
+  if (command === 'history') {
+    openRunHistory()
+    return
+  }
+  if (command === 'create_workflow') {
+    createDialogVisible.value = true
+    return
+  }
+  if (command === 'aspect_9_16' || command === 'aspect_16_9' || command === 'aspect_1_1' || command === 'resolution_720p' || command === 'resolution_1080p') {
+    applyOutputSetting(command)
+    return
+  }
+  if (command === 'layout_edit' || command === 'layout_compose' || command === 'layout_review') {
+    applyWorkspaceLayoutPreset(command.replace('layout_', '') as VideoWorkflowLayoutPresetID)
+    return
+  }
   if (command === 'outline') {
     outlineVisible.value = true
     return
   }
   if (command === 'export_json') {
     exportWorkflowJSON()
+    return
+  }
+  if (command === 'delete_workflow') {
+    void deleteActiveWorkflow()
     return
   }
   openWorkflowJSONImport()
@@ -1102,7 +1506,12 @@ async function importWorkflowJSON(event: Event) {
     if (saved) ElMessage.success(`已导入并保存为 R${activeWorkflow.value?.revision || 0}`)
     else if (!revisionConflict.value) ElMessage.warning('已导入本地草稿，尚未同步到服务器')
   } catch (error: any) {
-    if (error !== 'cancel' && error !== 'close') ElMessage.error(error?.message || '导入 JSON 失败')
+    if (error !== 'cancel' && error !== 'close') {
+      if (error instanceof VideoWorkflowTransferError && error.issues?.length) {
+        openValidationIssues(error.issues)
+      }
+      ElMessage.error(error?.message || '导入 JSON 失败')
+    }
   } finally {
     jsonTransferBusy.value = false
   }
@@ -1124,6 +1533,119 @@ async function selectWorkflow(id: string) {
   if (runningAction.value) return ElMessage.warning('运行准备期间不能切换工作流')
   if (dirty.value && !await flushSave()) return ElMessage.error('当前草稿尚未保存，已取消切换')
   await loadWorkspace(await getVideoWorkflow(id))
+}
+
+async function renameActiveWorkflow() {
+  if (!activeWorkflow.value) return
+  if (revisionConflict.value) return ElMessage.warning('请先处理当前修订冲突')
+  try {
+    const { value } = await ElMessageBox.prompt('请输入工作流名称', '重命名工作流', {
+      confirmButtonText: '保存',
+      cancelButtonText: '取消',
+      inputValue: activeWorkflow.value.name,
+    })
+    const name = value.trim()
+    if (!name || name === activeWorkflow.value.name) return
+    if (activeSavePromise) await activeSavePromise
+    if (!activeWorkflow.value || revisionConflict.value) return ElMessage.warning('请先处理当前修订冲突')
+    if (dirty.value && !await flushSave()) return ElMessage.error('当前草稿尚未保存，已取消重命名')
+    if (!activeWorkflow.value || revisionConflict.value) return
+
+    const sequence = changeSequence.value
+    const workflowID = activeWorkflow.value.id
+    const renameTask = (async (): Promise<VideoWorkflow | null> => {
+      saving.value = true
+      try {
+        const updated = await updateVideoWorkflow(workflowID, {
+          name,
+          revision: activeWorkflow.value!.revision,
+          graph: cloneWorkflowGraph(graph.value),
+        })
+        if (activeWorkflow.value?.id !== workflowID) return null
+        activeWorkflow.value = {
+          ...activeWorkflow.value,
+          ...updated,
+          graph: migrateVideoWorkflowGraph(updated.graph || graph.value),
+        }
+        graph.value = activeWorkflow.value.graph
+        if (changeSequence.value === sequence) {
+          dirty.value = false
+          localStorage.removeItem(draftKey())
+        }
+        const index = workflows.value.findIndex((item) => item.id === updated.id)
+        if (index >= 0) workflows.value[index] = activeWorkflow.value
+        backendAvailable.value = true
+        ElMessage.success('已重命名')
+        return activeWorkflow.value
+      } catch (error) {
+        persistLocalDraft()
+        if (axios.isAxiosError(error) && error.response?.status === 409) {
+          revisionConflict.value = true
+          const key = `${draftKey()}.conflict`
+          localStorage.setItem(key, JSON.stringify({ graph: cloneWorkflowGraph(graph.value), saved_at: Date.now() }))
+          conflictDraftKey.value = key
+          ElMessage.error('修订冲突，本地改动已另存为浏览器副本')
+        } else {
+          backendAvailable.value = false
+          ElMessage.warning('网络不可用，重命名未成功，草稿已保存在本机')
+        }
+        return null
+      } finally {
+        saving.value = false
+      }
+    })()
+    activeSavePromise = renameTask.finally(() => { activeSavePromise = null })
+    await activeSavePromise
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return
+    ElMessage.error((error as Error)?.message || '重命名失败')
+  }
+}
+
+async function deleteActiveWorkflow() {
+  if (!activeWorkflow.value) return
+  if (isRunActive.value || runningAction.value) return ElMessage.warning('请先停止当前运行再删除')
+  if (revisionConflict.value) return ElMessage.warning('请先处理当前修订冲突')
+  const target = activeWorkflow.value
+  try {
+    if (dirty.value) {
+      try {
+        await ElMessageBox.confirm(
+          `「${target.name}」有未保存草稿。先保存再删除，或放弃草稿直接删除？运行历史与素材不会随工作流删除。`,
+          '删除工作流',
+          {
+            type: 'warning',
+            confirmButtonText: '先保存再删除',
+            cancelButtonText: '放弃草稿并删除',
+            distinguishCancelAndClose: true,
+          },
+        )
+        if (!await flushSave()) return ElMessage.error('保存失败，已取消删除')
+        if (revisionConflict.value) return ElMessage.warning('请先处理当前修订冲突')
+      } catch (action) {
+        if (action === 'close') return
+        // cancel = 放弃草稿并删除
+      }
+    } else {
+      await ElMessageBox.confirm(
+        `确定删除「${target.name}」？运行历史与素材不会随工作流删除。`,
+        '删除工作流',
+        { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+      )
+    }
+    if (activeWorkflow.value?.id !== target.id) return
+    await deleteVideoWorkflow(target.id)
+    localStorage.removeItem(draftKey(target.id))
+    localStorage.removeItem(`${draftKey(target.id)}.conflict`)
+    workflows.value = workflows.value.filter((item) => item.id !== target.id)
+    const next = workflows.value[0] || null
+    if (next) await loadWorkspace(await getVideoWorkflow(next.id))
+    else await loadWorkspace(null)
+    ElMessage.success('工作流已删除')
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return
+    ElMessage.error((error as Error)?.message || '删除工作流失败')
+  }
 }
 
 function selectNode(id: string, additive = false) {
@@ -1159,8 +1681,10 @@ function clearSelection() {
 }
 
 function onNodeChanges(changes: NodeChange[]) {
+  let touchedSelect = false
   for (const change of changes) {
     if (change.type !== 'select') continue
+    touchedSelect = true
     if (change.id === SHARED_CHARACTER_BUS_ID) {
       selectedSummaryEdgeID.value = change.selected ? SHARED_CHARACTER_BUS_ID : ''
       if (change.selected) {
@@ -1174,6 +1698,10 @@ function onNodeChanges(changes: NodeChange[]) {
     if (change.selected && !selectedNodeIDs.value.includes(change.id)) selectedNodeIDs.value.push(change.id)
     if (!change.selected) selectedNodeIDs.value = selectedNodeIDs.value.filter((id) => id !== change.id)
   }
+  if (!touchedSelect) return
+  // 框选/多选只更新了 selectedNodeIDs；同步 Inspector 绑定的 selectedNodeID，避免参数/运行作用在旧节点上
+  if (!selectedNodeIDs.value.length) selectedNodeID.value = ''
+  else if (!selectedNodeIDs.value.includes(selectedNodeID.value)) selectedNodeID.value = selectedNodeIDs.value.at(-1) || ''
 }
 
 function onEdgeChanges(changes: EdgeChange[]) {
@@ -1194,16 +1722,19 @@ function onEdgeChanges(changes: EdgeChange[]) {
 }
 
 function addNode(type: string, position?: { x: number; y: number }) {
+  if (!requireActiveWorkflow('添加节点')) return
   if (['timeline', 'compose'].includes(type)) return ElMessage.info('时间线和最终成片为固定系统节点')
   if (graph.value.nodes.length >= VIDEO_WORKFLOW_MAX_NODES) return ElMessage.warning(`节点不能超过 ${VIDEO_WORKFLOW_MAX_NODES} 个`)
   const count = graph.value.nodes.filter((node) => node.type === type).length
   if (type === 'character' && count >= 4) return ElMessage.warning('角色节点不能超过 4 个')
   const sceneID = ['background', 'video'].includes(type) ? selectedNode.value?.scene_id : undefined
   const node = applyVideoModelDefault(makeVideoWorkflowNode(type, position || { x: 320 + count * 32, y: 180 + count * 28 }, sceneID))
+  if (autoArrange.value || !position) node.position_mode = 'auto'
   commitGraph((target) => { target.nodes.push(node) })
   selectedNodeID.value = node.id
   selectedNodeIDs.value = [node.id]
   syncFlow()
+  void nextTick(() => updateNodeInternals([node.id]))
 }
 
 function dropNode(event: DragEvent) {
@@ -1221,6 +1752,11 @@ function updateNodeTitle(value: string) {
   })
 }
 
+function noteNodeStale(nodeID: string) {
+  staleEpoch += 1
+  nodeStaleEpoch.set(nodeID, staleEpoch)
+}
+
 function markDownstreamStale(target: VideoWorkflowGraph, sourceID: string) {
   const queue = [sourceID]
   const seen = new Set<string>()
@@ -1230,9 +1766,30 @@ function markDownstreamStale(target: VideoWorkflowGraph, sourceID: string) {
       if (seen.has(edge.target)) continue
       seen.add(edge.target)
       const node = target.nodes.find((item) => item.id === edge.target)
-      if (node) { node.status = 'stale'; node.stale_reason = '上游输入已修改，请重新运行' }
+      if (node && !['timeline', 'compose'].includes(node.type)) {
+        node.status = 'stale'
+        node.stale_reason = '上游输入已修改，请重新运行'
+        noteNodeStale(node.id)
+      }
       queue.push(edge.target)
     }
+  }
+}
+
+function markTargetsStaleFromEdges(
+  target: VideoWorkflowGraph,
+  edges: Array<Pick<VideoWorkflowEdge, 'target'>>,
+) {
+  const seen = new Set<string>()
+  for (const edge of edges) {
+    if (seen.has(edge.target)) continue
+    seen.add(edge.target)
+    const node = target.nodes.find((item) => item.id === edge.target)
+    if (!node || ['timeline', 'compose'].includes(node.type)) continue
+    node.status = 'stale'
+    node.stale_reason = '上游输入已修改，请重新运行'
+    noteNodeStale(node.id)
+    markDownstreamStale(target, node.id)
   }
 }
 
@@ -1245,6 +1802,7 @@ function updateNodeConfig(key: string, value: any) {
       node.config[key] = value
       node.status = 'stale'
       node.stale_reason = '节点参数已修改，请重新运行'
+      noteNodeStale(id)
       markDownstreamStale(target, id)
     }
   })
@@ -1269,6 +1827,7 @@ function updateNodeModel(value: string) {
       node.config.model = value
       node.status = 'stale'
       node.stale_reason = '执行模型已修改，请重新运行'
+      noteNodeStale(node.id)
       markDownstreamStale(target, node.id)
     }
   })
@@ -1297,7 +1856,24 @@ function pasteNodes(offset = 28) {
     return { ...node, id, title: `${nodeTitle(node)} 副本`, position: { x: node.position.x + offset, y: node.position.y + offset }, config: { ...node.config, title: `${nodeTitle(node)} 副本` }, status: 'idle' as const }
   })
   const edges = clipboard.value.edges.map((edge) => ({ ...edge, route: undefined, id: `edge_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`, source: idMap.get(edge.source)!, target: idMap.get(edge.target)! }))
-  commitGraph((target) => { target.nodes.push(...clones); target.edges.push(...edges) })
+  let skippedEdges = 0
+  const acceptedEdges: VideoWorkflowEdge[] = []
+  commitGraph((target) => {
+    target.nodes.push(...clones)
+    for (const edge of edges) {
+      const error = connectionError(target, {
+        source: edge.source,
+        source_port: edge.source_port,
+        target: edge.target,
+        target_port: edge.target_port,
+      })
+      if (error) { skippedEdges += 1; continue }
+      target.edges.push(edge)
+      acceptedEdges.push(edge)
+    }
+    markTargetsStaleFromEdges(target, acceptedEdges)
+  })
+  if (skippedEdges) ElMessage.info(`已跳过 ${skippedEdges} 条不合法连线`)
   selectedNodeIDs.value = clones.map((node) => node.id)
   selectedNodeID.value = clones.at(-1)?.id || ''
   syncFlow()
@@ -1306,6 +1882,8 @@ function pasteNodes(offset = 28) {
 function duplicateSelectedNodes() { copySelectedNodes(); pasteNodes() }
 
 async function deleteSelectedNodes() {
+  if (!requireActiveWorkflow('删除节点')) return
+  if (!selectedNodeIDs.value.length) return ElMessage.info('请先选择要删除的节点')
   const ids = selectedNodeIDs.value.filter((id) => !['timeline', 'compose'].includes(graph.value.nodes.find((node) => node.id === id)?.type || ''))
   if (!ids.length) return ElMessage.info('时间线与最终成片不可删除')
   if (timelineClips.value.length && timelineClips.value.every((clip) => ids.includes(clip.source_node_id))) {
@@ -1361,10 +1939,6 @@ function restoreDeletedNodes() {
   syncFlow()
 }
 
-function onNodeDragStart(event: NodeDragEvent) {
-  if ((event.event as MouseEvent).altKey) duplicateSelectedNodes()
-}
-
 function onNodeDragStop(event: NodeDragEvent) {
   const moved = event.nodes?.length ? event.nodes : [event.node]
   commitGraph((target) => {
@@ -1401,9 +1975,16 @@ function onNodeDrag(event: NodeDragEvent) {
   alignmentGuides.y = matchY ? matchY.position.y * canvasViewport.zoom + canvasViewport.y : null
 }
 
+function normalizeFlowConnection(connection: Connection): Connection | null {
+  return normalizeVideoWorkflowConnection(graph.value, connection)
+}
+
 async function onConnect(connection: Connection) {
-  if (!connection.source || !connection.target || !connection.sourceHandle || !connection.targetHandle) return
-  const candidate = { source: connection.source, source_port: connection.sourceHandle, target: connection.target, target_port: connection.targetHandle }
+  const normalized = normalizeFlowConnection(connection)
+  if (!normalized?.source || !normalized.target || !normalized.sourceHandle || !normalized.targetHandle) {
+    return ElMessage.warning('请拖到目标节点的输入端口上完成连线')
+  }
+  const candidate = { source: normalized.source, source_port: normalized.sourceHandle, target: normalized.target, target_port: normalized.targetHandle }
   let error = connectionError(graph.value, candidate)
   const old = graph.value.edges.find((edge) => edge.target === candidate.target && edge.target_port === candidate.target_port)
   if (error === '单值输入端口只能连接 1 条边' && old) {
@@ -1412,11 +1993,20 @@ async function onConnect(connection: Connection) {
     } catch { return }
     const withoutOld = { ...graph.value, edges: graph.value.edges.filter((edge) => edge.id !== old.id) }
     error = connectionError(withoutOld, candidate)
-    if (!error) commitGraph((target) => { target.edges = target.edges.filter((edge) => edge.id !== old.id); target.edges.push({ id: `edge_${Date.now().toString(36)}`, ...candidate }) })
+    if (!error) {
+      commitGraph((target) => {
+        target.edges = target.edges.filter((edge) => edge.id !== old.id)
+        target.edges.push({ id: `edge_${Date.now().toString(36)}`, ...candidate })
+        markTargetsStaleFromEdges(target, [candidate])
+      })
+    }
     return
   }
   if (error) return ElMessage.warning(error)
-  commitGraph((target) => { target.edges.push({ id: `edge_${Date.now().toString(36)}`, ...candidate }) })
+  commitGraph((target) => {
+    target.edges.push({ id: `edge_${Date.now().toString(36)}`, ...candidate })
+    markTargetsStaleFromEdges(target, [candidate])
+  })
   pendingConnection.value = null
   quickConnectMenu.value = null
 }
@@ -1426,14 +2016,51 @@ function onConnectStart(payload: { nodeId?: string; handleId?: string | null; ha
   pendingConnection.value = { nodeID: payload.nodeId, portID: payload.handleId }
 }
 
-function onConnectEnd(event?: MouseEvent | TouchEvent) {
+function findCompatibleTargetPort(sourcePortType: string, target: VideoWorkflowNode) {
+  const collapsed = new Set(
+    edgeDisplayMode.value === 'all' ? [] : (sharedCharacterBus(graph.value)?.targetPortIDs.get(target.id) || []),
+  )
+  return (target.inputs || []).find((port) => port.type === sourcePortType && !collapsed.has(port.id))
+    || (target.inputs || []).find((port) => port.type === sourcePortType)
+}
+
+function resolveConnectionDropTarget(event?: MouseEvent | TouchEvent) {
+  const target = (event?.target as HTMLElement | null)?.closest?.('.vue-flow__node') as HTMLElement | null
+  const nodeID = target?.dataset?.id || target?.getAttribute('data-id') || ''
+  if (!nodeID || nodeID.startsWith('__')) return null
+  return graph.value.nodes.find((node) => node.id === nodeID) || null
+}
+
+async function onConnectEnd(event?: MouseEvent | TouchEvent) {
   const mouse = event as MouseEvent | undefined
-  if (!pendingConnection.value || !mouse || (mouse.target as HTMLElement | null)?.closest('.vue-flow__handle')) {
+  if (!pendingConnection.value || !mouse) {
     pendingConnection.value = null
     return
   }
+  if ((mouse.target as HTMLElement | null)?.closest('.vue-flow__handle')) {
+    pendingConnection.value = null
+    return
+  }
+  const source = graph.value.nodes.find((node) => node.id === pendingConnection.value?.nodeID)
+  const output = source?.outputs?.find((port) => port.id === pendingConnection.value?.portID)
+  const dropTarget = resolveConnectionDropTarget(mouse)
+  if (source && output && dropTarget && dropTarget.id !== source.id) {
+    const input = findCompatibleTargetPort(output.type, dropTarget)
+    if (input) {
+      const pending = pendingConnection.value
+      pendingConnection.value = null
+      await onConnect({
+        source: pending.nodeID,
+        sourceHandle: pending.portID,
+        target: dropTarget.id,
+        targetHandle: input.id,
+      })
+      return
+    }
+    ElMessage.warning(`无法连接到「${nodeTitle(dropTarget)}」：没有兼容的 ${output.type} 输入端口`)
+  }
   quickConnectMenu.value = {
-    x: mouse.clientX - panelLayout.left,
+    x: mouse.clientX - (panelLayout.libraryOpen ? panelLayout.left : 0),
     y: mouse.clientY - 64,
     position: screenToFlowCoordinate({ x: mouse.clientX, y: mouse.clientY }),
   }
@@ -1448,6 +2075,7 @@ function createConnectedNode(type: string) {
   const output = source?.outputs?.find((port) => port.id === pendingConnection.value?.portID)
   if (!source || !output) return
   const node = applyVideoModelDefault(makeVideoWorkflowNode(type, quickConnectMenu.value.position, source.scene_id))
+  if (autoArrange.value) node.position_mode = 'auto'
   const input = node.inputs?.find((port) => port.type === output.type)
   if (!input) return
   const edge: VideoWorkflowEdge = {
@@ -1463,11 +2091,12 @@ function createConnectedNode(type: string) {
   pendingConnection.value = null
   quickConnectMenu.value = null
   syncFlow()
+  void nextTick(() => updateNodeInternals([node.id]))
 }
 
 function onEdgeUpdate(event: EdgeUpdateEvent) {
-  const connection = event.connection
-  if (!connection.source || !connection.target || !connection.sourceHandle || !connection.targetHandle) return
+  const connection = normalizeFlowConnection(event.connection)
+  if (!connection?.source || !connection.target || !connection.sourceHandle || !connection.targetHandle) return
   const candidate = { source: connection.source, source_port: connection.sourceHandle, target: connection.target, target_port: connection.targetHandle }
   const draft = { ...graph.value, edges: graph.value.edges.filter((edge) => edge.id !== event.edge.id) }
   const error = connectionError(draft, candidate)
@@ -1480,12 +2109,48 @@ function onEdgeUpdate(event: EdgeUpdateEvent) {
 
 function removeSelectedEdges() {
   if (!selectedEdgeIDs.value.length) return
-  commitGraph((target) => { target.edges = target.edges.filter((edge) => !selectedEdgeIDs.value.includes(edge.id)) })
+  commitGraph((target) => {
+    const removed = target.edges.filter((edge) => selectedEdgeIDs.value.includes(edge.id))
+    target.edges = target.edges.filter((edge) => !selectedEdgeIDs.value.includes(edge.id))
+    markTargetsStaleFromEdges(target, removed)
+  })
   selectedEdgeIDs.value = []
+}
+
+function fitViewToCenter(duration = 280) {
+  fitView({ padding: .18, maxZoom: .9, duration })
+}
+
+async function runGraphLayout(
+  working: VideoWorkflowGraph,
+  mode: 'auto' | 'all',
+  options: { silent?: boolean } = {},
+) {
+  const sequence = changeSequence.value
+  layoutBusy.value = true
+  try {
+    const result = await layoutVideoWorkflowGraph(working, mode)
+    if (sequence !== changeSequence.value) {
+      if (options.silent) scheduleAutoArrange()
+      else ElMessage.warning('布局期间画布已发生修改，本次整理结果未应用')
+      return
+    }
+    if (sharedCharacterBus(result.graph)) ensureSharedCharacterBusLayout(result.graph, mode === 'all')
+    pushUndo()
+    graph.value = result.graph
+    markDirty()
+    syncFlow()
+    await nextTick()
+    fitViewToCenter()
+    if (!options.silent && result.engine === 'dagre') ElMessage.warning('ELK 布局不可用，已使用兼容布局')
+  } finally {
+    layoutBusy.value = false
+  }
 }
 
 async function autoLayout(command: 'auto' | 'selected_auto' | 'all') {
   if (layoutBusy.value) return
+  if (!requireActiveWorkflow('整理画布')) return
   if (command === 'all') {
     try {
       await ElMessageBox.confirm(
@@ -1504,26 +2169,40 @@ async function autoLayout(command: 'auto' | 'selected_auto' | 'all') {
     restorable.forEach((node) => { node.position_mode = 'auto' })
   }
   const mode = command === 'all' ? 'all' : 'auto'
-  if (!videoWorkflowMovableNodeIDs(working, mode).length) return ElMessage.info('没有可整理的自动布局节点')
+  if (!videoWorkflowMovableNodeIDs(working, mode).length) {
+    if (command === 'auto') return ElMessage.info('没有自动布局节点。请用「所选恢复自动布局」或「重新整理全部」')
+    if (command === 'selected_auto') return ElMessage.info('所选节点均为锁定或已是手工布局')
+    return ElMessage.info('没有可整理的节点')
+  }
+  await runGraphLayout(working, mode)
+  ElMessage.success('画布已重新整理')
+}
 
-  const sequence = changeSequence.value
-  layoutBusy.value = true
-  try {
-    const result = await layoutVideoWorkflowGraph(working, mode)
-    if (sequence !== changeSequence.value) {
-      ElMessage.warning('布局期间画布已发生修改，本次整理结果未应用')
-      return
-    }
-    if (sharedCharacterBus(result.graph)) ensureSharedCharacterBusLayout(result.graph, command === 'all')
-    pushUndo()
-    graph.value = result.graph
-    markDirty()
-    syncFlow()
-    await nextTick()
-    fitView({ padding: .12, duration: 260 })
-    if (result.engine === 'dagre') ElMessage.warning('ELK 布局不可用，已使用兼容布局')
-  } finally {
-    layoutBusy.value = false
+function scheduleAutoArrange() {
+  if (!autoArrange.value) return
+  if (autoArrangeTimer) window.clearTimeout(autoArrangeTimer)
+  autoArrangeTimer = window.setTimeout(() => {
+    autoArrangeTimer = null
+    void runAutoArrange()
+  }, 480)
+}
+
+async function runAutoArrange() {
+  if (!autoArrange.value || componentUnmounted) return
+  if (layoutBusy.value) return scheduleAutoArrange()
+  if (!videoWorkflowMovableNodeIDs(graph.value, 'auto').length) return
+  await runGraphLayout(cloneWorkflowGraph(graph.value), 'auto', { silent: true })
+}
+
+function toggleAutoArrange() {
+  autoArrange.value = !autoArrange.value
+  persistPanelLayout()
+  if (autoArrange.value) {
+    ElMessage.success('已开启自动排布：新增节点或连线后将自动整理画布')
+    scheduleAutoArrange()
+  } else if (autoArrangeTimer) {
+    window.clearTimeout(autoArrangeTimer)
+    autoArrangeTimer = null
   }
 }
 
@@ -1532,8 +2211,9 @@ function clearAutoEdgeRoutes(target: VideoWorkflowGraph) {
 }
 
 function alignSelected(axis: 'x' | 'y') {
+  if (!requireActiveWorkflow('对齐节点')) return
   const nodes = graph.value.nodes.filter((node) => selectedNodeIDs.value.includes(node.id))
-  if (nodes.length < 2) return
+  if (nodes.length < 2) return ElMessage.info(axis === 'x' ? '请先选中 2 个及以上节点再左对齐' : '请先选中 2 个及以上节点再顶部对齐')
   const value = Math.min(...nodes.map((node) => node.position[axis]))
   commitGraph((target) => {
     target.nodes.filter((node) => selectedNodeIDs.value.includes(node.id) && !node.locked).forEach((node) => {
@@ -1546,8 +2226,9 @@ function alignSelected(axis: 'x' | 'y') {
 }
 
 function distributeSelected(axis: 'x' | 'y') {
+  if (!requireActiveWorkflow('分布节点')) return
   const nodes = graph.value.nodes.filter((node) => selectedNodeIDs.value.includes(node.id)).sort((a, b) => a.position[axis] - b.position[axis])
-  if (nodes.length < 3) return
+  if (nodes.length < 3) return ElMessage.info(axis === 'x' ? '请先选中 3 个及以上节点再水平等距分布' : '请先选中 3 个及以上节点再垂直等距分布')
   const gap = (nodes.at(-1)!.position[axis] - nodes[0].position[axis]) / (nodes.length - 1)
   commitGraph((target) => {
     nodes.forEach((source, index) => {
@@ -1563,31 +2244,20 @@ function distributeSelected(axis: 'x' | 'y') {
 }
 
 function toggleLock() {
-  if (!selectedNodeIDs.value.length) return
+  if (!requireActiveWorkflow('锁定节点')) return
+  if (!selectedNodeIDs.value.length) return ElMessage.info('请先选择要锁定或解锁的节点')
   const shouldLock = graph.value.nodes.filter((node) => selectedNodeIDs.value.includes(node.id)).some((node) => !node.locked)
   commitGraph((target) => target.nodes.filter((node) => selectedNodeIDs.value.includes(node.id) && !['timeline', 'compose'].includes(node.type)).forEach((node) => { node.locked = shouldLock }))
 }
 
 function toggleCollapse() {
+  if (!requireActiveWorkflow('折叠节点')) return
+  if (!selectedNodeIDs.value.length) return ElMessage.info('请先选择要折叠或展开的节点')
   commitGraph((target) => {
     target.nodes.filter((node) => selectedNodeIDs.value.includes(node.id)).forEach((node) => { node.collapsed = !node.collapsed })
     clearAutoEdgeRoutes(target)
     updateVideoWorkflowGroupBounds(target)
   })
-}
-
-function groupSelected() {
-  if (selectedNodeIDs.value.length < 2) return ElMessage.info('至少选择 2 个节点')
-  const groupID = `canvas_group_${Date.now().toString(36)}`
-  commitGraph((target) => target.nodes.filter((node) => selectedNodeIDs.value.includes(node.id)).forEach((node) => { node.config.canvas_group_id = groupID }))
-  ElMessage.success('已建立画布分组')
-}
-
-function ungroupSelected() {
-  const grouped = graph.value.nodes.filter((node) => selectedNodeIDs.value.includes(node.id) && node.config.canvas_group_id)
-  if (!grouped.length) return ElMessage.info('选中节点不属于画布分组')
-  commitGraph((target) => target.nodes.filter((node) => selectedNodeIDs.value.includes(node.id)).forEach((node) => { delete node.config.canvas_group_id }))
-  ElMessage.success('已解除画布分组')
 }
 
 function canSetTimelineClips(target: VideoWorkflowGraph, clips: VideoWorkflowTimelineClip[]) {
@@ -1597,8 +2267,9 @@ function canSetTimelineClips(target: VideoWorkflowGraph, clips: VideoWorkflowTim
 }
 
 function toggleEnabled() {
+  if (!requireActiveWorkflow('切换节点状态')) return
   const editable = graph.value.nodes.filter((node) => selectedNodeIDs.value.includes(node.id) && !['timeline', 'compose'].includes(node.type))
-  if (!editable.length) return
+  if (!editable.length) return ElMessage.info('请先选择可启用/停用的节点（时间线与成片除外）')
   const enabled = editable.some((node) => node.enabled === false)
   const selectedVideoIDs = new Set(editable.filter((node) => node.type === 'video').map((node) => node.id))
   if (!enabled && selectedVideoIDs.size && timelineClips.value.every((clip) => selectedVideoIDs.has(clip.source_node_id))) {
@@ -1617,6 +2288,14 @@ function toggleEnabled() {
   commitGraph((target) => {
     const selected = target.nodes.filter((node) => selectedNodeIDs.value.includes(node.id) && !['timeline', 'compose'].includes(node.type))
     selected.forEach((node) => { node.enabled = enabled })
+    const selectedIDs = new Set(selected.map((node) => node.id))
+    for (const group of target.groups) {
+      if (group.type !== 'scene' || !group.node_ids.some((id) => selectedIDs.has(id))) continue
+      const members = target.nodes.filter((node) => group.node_ids.includes(node.id) && !['timeline', 'compose'].includes(node.type))
+      if (!members.length) continue
+      // 组内全部可编辑节点停用 → group.enabled=false；任一重新启用 → true（与后端 activeNodeIDs 双源判定对齐）
+      group.enabled = members.some((node) => node.enabled !== false)
+    }
     const videoIDs = new Set(selected.filter((node) => node.type === 'video').map((node) => node.id))
     if (!videoIDs.size) return
     setTimelineClips(target, nextClips)
@@ -1638,6 +2317,14 @@ function setTimelineClips(target: VideoWorkflowGraph, clips: VideoWorkflowTimeli
     target_port: clip.id,
   })))
   return true
+}
+
+function updateTimelineClips(clips: VideoWorkflowTimelineClip[]) {
+  commitGraph((target) => {
+    if (!setTimelineClips(target, clips)) {
+      ElMessage.warning(`连线不能超过 ${VIDEO_WORKFLOW_MAX_EDGES} 条`)
+    }
+  })
 }
 
 function addSelectedVideoToTimeline() {
@@ -1662,9 +2349,35 @@ async function replaceImage(file: File) {
   try {
     const asset = await uploadVideoAsset(file)
     assets.value.unshift(asset)
-    applyAssetToSelected(asset)
-    ElMessage.success('图片已上传为新素材版本')
-  } catch { ElMessage.error('图片上传失败') }
+    if (asset.kind === 'image') {
+      applyAssetToSelected(asset)
+      ElMessage.success('图片已上传为新素材版本')
+    } else {
+      ElMessage.success('素材已上传')
+    }
+  } catch (error: any) {
+    ElMessage.error(error?.message || '素材上传失败')
+  }
+}
+
+/** 素材库上传：不依赖当前选中节点；仅在 chooseAsset 上下文绑定图片。 */
+async function uploadLibraryAsset(file: File) {
+  try {
+    const asset = await uploadVideoAsset(file)
+    assets.value.unshift(asset)
+    const canBindImage = pickingAsset.value
+      && asset.kind === 'image'
+      && selectedNode.value
+      && ['background', 'image'].includes(selectedNode.value.type)
+    if (canBindImage) {
+      applyAssetToSelected(asset)
+      ElMessage.success('图片已上传并绑定到当前节点')
+    } else {
+      ElMessage.success('素材已上传')
+    }
+  } catch (error: any) {
+    ElMessage.error(error?.message || '素材上传失败')
+  }
 }
 
 function applyAssetToSelected(asset: VideoAsset) {
@@ -1695,7 +2408,7 @@ function applyAssetToSelected(asset: VideoAsset) {
 
 function chooseAsset() { pickingAsset.value = true; panelTab.value = 'assets'; ElMessage.info('在左侧素材库选择一张图片') }
 function selectAsset(asset: VideoAsset) {
-  if ((pickingAsset.value || ['background', 'image'].includes(selectedNode.value?.type || '')) && asset.kind === 'image') applyAssetToSelected(asset)
+  if (pickingAsset.value && asset.kind === 'image') applyAssetToSelected(asset)
 }
 
 function applyImageTransform(patch: Record<string, any>) {
@@ -1806,14 +2519,27 @@ async function regenerateSelectedImage() {
     const index = target.nodes.findIndex((item) => item.id === nodeID)
     if (index < 0) return
     target.nodes[index] = clearVideoWorkflowImageAssetBinding(target.nodes[index])
+    noteNodeStale(nodeID)
     markDownstreamStale(target, nodeID)
   })
 }
 
-function openConnectionPicker(portID: string) {
+function openConnectionPicker(portID?: string) {
   if (!selectedNode.value) return
-  connectionTarget.value = { nodeID: selectedNode.value.id, portID }
+  let targetPortID = portID || ''
+  if (!targetPortID) {
+    commitGraph((target) => {
+      const node = target.nodes.find((item) => item.id === selectedNodeID.value)
+      if (node) ensureVideoWorkflowNodePorts(node)
+    }, { history: false })
+    targetPortID = videoWorkflowNodeDefaultInputPort(selectedNode.value)?.id || ''
+  }
+  if (!targetPortID) return ElMessage.info('该节点没有可连接的上游输入端口')
+  connectionTarget.value = { nodeID: selectedNode.value.id, portID: targetPortID }
   connectionSource.value = selectedCompatibleSources.value[0]?.value || ''
+  if (!selectedCompatibleSources.value.length) {
+    return ElMessage.warning('画布上没有兼容的上游输出端口，请先添加可输出同类数据的节点')
+  }
   connectionDialogVisible.value = true
 }
 
@@ -1837,13 +2563,26 @@ function pendingRunRequestID(targetKey: string) {
   return { id, storageKey }
 }
 
+function openValidationIssues(issues: VideoWorkflowValidationIssue[]) {
+  validationIssues.value = issues
+  validationIssuesVisible.value = true
+  ElMessage.warning(`发现 ${issues.length} 个问题`)
+}
+
+function selectValidationIssue(issue: VideoWorkflowValidationIssue) {
+  if (issue.node_id) selectNode(issue.node_id)
+  validationIssuesVisible.value = false
+}
+
 async function startRun(
   mode: VideoWorkflowRunMode = 'full',
   nodeID?: string,
   deferredMutation?: (target: VideoWorkflowGraph) => void,
 ) {
   if (runningAction.value) return
-  if (!activeWorkflow.value) return ElMessage.warning('请先从模板创建工作流')
+  if (!requireActiveWorkflow('运行生成')) return
+  const workflow = activeWorkflow.value
+  if (!workflow) return
   const startNodeID = mode === 'full' ? undefined : (nodeID || selectedNodeID.value)
   if (!startNodeID && mode !== 'full') return ElMessage.warning('请先选择起始节点')
   runningAction.value = true
@@ -1851,18 +2590,21 @@ async function startRun(
     if (dirty.value && !await flushSave()) return ElMessage.error('画布尚未保存，已阻止运行旧修订')
     const localIssues = validateVideoWorkflowGraph(graph.value, { requireComplete: mode === 'full' })
     if (localIssues.length) {
-      const first = localIssues[0]
-      if (first.node_id) selectNode(first.node_id)
-      return ElMessage.error(first.message)
+      openValidationIssues(localIssues)
+      if (localIssues[0]?.node_id) selectNode(localIssues[0].node_id)
+      return
     }
-    const validation = await validateVideoWorkflow(activeWorkflow.value.id, graph.value)
+    const validation = await validateVideoWorkflow(workflow.id, graph.value)
     if (!validation.valid) {
-      const first = validation.issues?.[0]
-      if (first?.node_id) selectNode(first.node_id)
-      return ElMessage.error(first?.message || '画布校验未通过')
+      const issues = validation.issues?.length
+        ? validation.issues
+        : [{ code: 'invalid_graph', message: '画布校验未通过' }]
+      openValidationIssues(issues)
+      if (issues[0]?.node_id) selectNode(issues[0].node_id)
+      return
     }
-    let target = { revision: activeWorkflow.value.revision, run_mode: mode, ...(startNodeID ? { start_node_id: startNodeID } : {}) }
-    const estimate = await estimateVideoWorkflowRun(activeWorkflow.value.id, target)
+    let target = { revision: workflow.revision, run_mode: mode, ...(startNodeID ? { start_node_id: startNodeID } : {}) }
+    const estimate = await estimateVideoWorkflowRun(workflow.id, target)
     if (!runConfirmRef.value) throw new Error('运行确认组件尚未就绪')
     const confirmEstimate = async (currentEstimate = estimate) => {
       const confirmationContext = {
@@ -1923,7 +2665,9 @@ async function startRun(
       await confirmEstimate(estimate)
       activeRun.value = await submit(estimate)
     }
-    rememberRun(activeWorkflow.value.id, activeRun.value.id)
+    // 记录运行启动时的 stale 世代：之后由编辑产生的 stale 不会被本轮轮询清掉
+    activeRunStaleEpoch = staleEpoch
+    rememberRun(workflow.id, activeRun.value.id)
     upsertRunHistory(activeRun.value)
     syncFlow()
     startPolling()
@@ -1968,13 +2712,19 @@ async function refreshRun(
     const detail = await getVideoWorkflowRun(runID, true)
     if (componentUnmounted || generation !== pollingGeneration || activeWorkflow.value?.id !== workflowID || activeRun.value?.id !== runID) return
     activeRun.value = detail
-    if (!dirty.value && detail.workflow_revision === activeWorkflow.value?.revision) {
+    refreshRunFailCount = 0
+    refreshRunFailWarned = false
+    // 仅在 revision 对齐且节点已成功跑完、且 stale 标记早于本次运行启动时清除，避免轮询抹掉运行后编辑产生的合法 stale
+    if (!dirty.value && activeRunMatchesWorkflow.value) {
       for (const nodeRun of detail.node_runs || []) {
+        if (nodeRun.status !== 'succeeded') continue
         const node = graph.value.nodes.find((item) => item.id === nodeRun.node_id)
-        if (node?.status === 'stale') {
-          node.status = undefined
-          node.stale_reason = undefined
-        }
+        if (node?.status !== 'stale') continue
+        const markedAt = nodeStaleEpoch.get(node.id)
+        if (markedAt === undefined || markedAt > activeRunStaleEpoch) continue
+        node.status = undefined
+        node.stale_reason = undefined
+        nodeStaleEpoch.delete(node.id)
       }
     }
     const missingGeneratedImage = (detail.node_runs || []).some((nodeRun) => {
@@ -1983,7 +2733,7 @@ async function refreshRun(
       return Boolean(versionID) && !assets.value.some((asset) => asset.versions?.some((version) => version.id === versionID))
     })
     if (missingGeneratedImage) {
-      try { await refreshAssets() } catch { /* 运行详情仍可继续刷新。 */ }
+      try { await refreshAssets({ silent: true }) } catch { /* 运行详情仍可继续刷新。 */ }
       if (componentUnmounted || generation !== pollingGeneration || activeWorkflow.value?.id !== workflowID || activeRun.value?.id !== runID) return
     }
     upsertRunHistory(activeRun.value)
@@ -1991,18 +2741,35 @@ async function refreshRun(
     if (activeRun.value.status === 'awaiting_character_approval') openCharacterApproval()
     if (activeRun.value.status === 'awaiting_storyboard_approval') openStoryboardApproval()
     if (!isRunActive.value) stopPolling()
-  } catch { /* 下一轮继续查询。 */ }
+  } catch {
+    refreshRunFailCount += 1
+    if (refreshRunFailCount >= 3 && !refreshRunFailWarned) {
+      refreshRunFailWarned = true
+      ElMessage.warning('运行状态刷新失败，正在重试')
+    }
+  }
 }
 
 function openCharacterApproval() {
   for (const role of characterCandidates.value) if (!characterSelections.value[role.nodeID] && role.candidates[0]) characterSelections.value[role.nodeID] = role.candidates[0].id
   characterDialogVisible.value = true
 }
+function continueApproval() {
+  if (activeRun.value?.status === 'awaiting_character_approval') openCharacterApproval()
+  else if (activeRun.value?.status === 'awaiting_storyboard_approval') openStoryboardApproval()
+}
 async function approveCharacters() {
-  if (!activeRun.value || !canApproveCharacters.value) return
-  await approveVideoWorkflowCharacters(activeRun.value.id, { selections: characterCandidates.value.map((item) => ({ node_run_id: item.nodeRunID, input_hash: item.hash, selected_version_id: characterSelections.value[item.nodeID] })) })
-  characterDialogVisible.value = false
-  await refreshRun(); startPolling()
+  if (!activeRun.value || !canApproveCharacters.value || approvalBusy.value) return
+  approvalBusy.value = true
+  try {
+    await approveVideoWorkflowCharacters(activeRun.value.id, { selections: characterCandidates.value.map((item) => ({ node_run_id: item.nodeRunID, input_hash: item.hash, selected_version_id: characterSelections.value[item.nodeID] })) })
+    characterDialogVisible.value = false
+    await refreshRun(); startPolling()
+  } catch (error: any) {
+    ElMessage.error(error?.message || '角色审批提交失败')
+  } finally {
+    approvalBusy.value = false
+  }
 }
 function openStoryboardApproval() {
   const nodeRun = activeRun.value?.node_runs?.find((item) => item.node_type === 'script' || graph.value.nodes.find((node) => node.id === item.node_id)?.type === 'script')
@@ -2010,11 +2777,18 @@ function openStoryboardApproval() {
   storyboardDialogVisible.value = true
 }
 async function approveStoryboard() {
-  if (!activeRun.value || !canApproveStoryboard.value) return
-  const nodeRun = activeRun.value.node_runs?.find((item) => item.node_type === 'script' || graph.value.nodes.find((node) => node.id === item.node_id)?.type === 'script')
-  await approveVideoWorkflowStoryboard(activeRun.value.id, { node_run_id: nodeRun?.id || '', input_hash: nodeRun?.input_hash || '', script: JSON.parse(storyboardJSON.value) })
-  storyboardDialogVisible.value = false
-  await refreshRun(); startPolling()
+  if (!activeRun.value || !canApproveStoryboard.value || approvalBusy.value) return
+  approvalBusy.value = true
+  try {
+    const nodeRun = activeRun.value.node_runs?.find((item) => item.node_type === 'script' || graph.value.nodes.find((node) => node.id === item.node_id)?.type === 'script')
+    await approveVideoWorkflowStoryboard(activeRun.value.id, { node_run_id: nodeRun?.id || '', input_hash: nodeRun?.input_hash || '', script: JSON.parse(storyboardJSON.value) })
+    storyboardDialogVisible.value = false
+    await refreshRun(); startPolling()
+  } catch (error: any) {
+    ElMessage.error(error?.message || '分镜审批提交失败')
+  } finally {
+    approvalBusy.value = false
+  }
 }
 
 function createPreviewWindow() {
@@ -2032,18 +2806,22 @@ async function previewRunOutput(run: VideoWorkflowRun | null, previewWindow: Win
     previewWindow.location.replace(url)
     return true
   }
-  const directURL = run?.output_url
-  if (directURL) { navigatePreview(String(directURL)); return }
   const assetID = run?.output?.asset_id
   const versionID = run?.output_version_id || run?.output_asset_version_id
   if (assetID && versionID) {
     try {
-      const signed = await signVideoAssetVersion(assetID, versionID, 'preview')
+      // 成片 output_url/preview_url 为封面 JPEG；新窗口播放需 seedance 原片。
+      const signed = await signVideoAssetVersion(assetID, versionID, 'seedance')
       navigatePreview(signed.url)
     } catch {
       previewWindow?.close()
       ElMessage.error('预览链接签发失败')
     }
+    return
+  }
+  const directURL = run?.output_url
+  if (directURL && !String(directURL).includes('purpose=preview')) {
+    navigatePreview(String(directURL))
     return
   }
   const compose = allowCanvasFallback ? graph.value.nodes.find((node) => node.type === 'compose') : null
@@ -2054,7 +2832,10 @@ async function previewRunOutput(run: VideoWorkflowRun | null, previewWindow: Win
   ElMessage.info('最终成片生成后可在此预览')
 }
 
-function previewOutput() { void previewRunOutput(activeRun.value, createPreviewWindow(), true) }
+function previewOutput() {
+  if (!requireActiveWorkflow('预览成片')) return
+  void previewRunOutput(activeRun.value, createPreviewWindow(), true)
+}
 
 async function previewHistoryOutput(run: VideoWorkflowRun) {
   const previewWindow = createPreviewWindow()
@@ -2108,7 +2889,6 @@ function handleCanvasKeydown(event: KeyboardEvent) {
   if (mod && event.key.toLowerCase() === 'v') { event.preventDefault(); pasteNodes(); return }
   if (mod && event.key.toLowerCase() === 'd') { event.preventDefault(); duplicateSelectedNodes(); return }
   if (mod && event.key.toLowerCase() === 'a') { event.preventDefault(); selectedNodeIDs.value = graph.value.nodes.map((node) => node.id); selectedNodeID.value = selectedNodeIDs.value.at(-1) || ''; syncFlow(); return }
-  if (mod && event.key.toLowerCase() === 'g') { event.preventDefault(); event.shiftKey ? ungroupSelected() : groupSelected(); return }
   if (mod && event.key === 'Enter') { event.preventDefault(); void startRun('full'); return }
   if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); selectedEdgeIDs.value.length ? removeSelectedEdges() : void deleteSelectedNodes(); return }
   if (event.key === 'Escape') { clearSelection(); return }
@@ -2126,6 +2906,21 @@ function handleCanvasKeydown(event: KeyboardEvent) {
     event.preventDefault()
     void ElMessageBox.prompt('输入新的节点名称', '重命名节点', { inputValue: nodeTitle(selectedNode.value), inputValidator: (value) => Boolean(value.trim()) || '名称不能为空' })
       .then(({ value }) => updateNodeTitle(value)).catch(() => undefined)
+    return
+  }
+  if (event.key === '\\') {
+    event.preventDefault()
+    toggleWorkspaceFocusMode()
+    return
+  }
+  if (event.key === '[') {
+    event.preventDefault()
+    setLibraryOpen(!panelLayout.libraryOpen)
+    return
+  }
+  if (event.key === ']') {
+    event.preventDefault()
+    setInspectorOpen(!panelLayout.inspectorOpen)
     return
   }
   if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key) && selectedNodeIDs.value.length) {
@@ -2154,8 +2949,8 @@ function startResize(kind: 'left' | 'right', event: PointerEvent) {
 function resizePanel(event: PointerEvent) {
   if (!resizing) return
   const delta = event.clientX - resizing.start
-  if (resizing.kind === 'left') panelLayout.left = Math.max(208, Math.min(340, resizing.value + delta))
-  if (resizing.kind === 'right') panelLayout.right = Math.max(280, Math.min(420, resizing.value - delta))
+  if (resizing.kind === 'left') panelLayout.left = clampPanelLeft(resizing.value + delta)
+  if (resizing.kind === 'right') panelLayout.right = clampPanelRight(resizing.value - delta)
 }
 function stopResize() {
   resizing = null
@@ -2164,7 +2959,12 @@ function stopResize() {
 }
 
 function persistPanelLayout() {
-  localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify({ ...panelLayout, edgeDisplayMode: edgeDisplayMode.value }))
+  localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify({ ...panelLayout, edgeDisplayMode: edgeDisplayMode.value, autoArrange: autoArrange.value }))
+}
+
+function setLibraryOpen(open: boolean) {
+  panelLayout.libraryOpen = open
+  persistPanelLayout()
 }
 
 function setInspectorOpen(open: boolean) {
@@ -2172,12 +2972,37 @@ function setInspectorOpen(open: boolean) {
   persistPanelLayout()
 }
 
+function toggleWorkspaceFocusMode() {
+  const result = togglePanelFocusMode(
+    { libraryOpen: panelLayout.libraryOpen, inspectorOpen: panelLayout.inspectorOpen },
+    lastNonFocusLayout.value,
+  )
+  panelLayout.libraryOpen = result.next.libraryOpen
+  panelLayout.inspectorOpen = result.next.inspectorOpen
+  lastNonFocusLayout.value = result.lastNonFocus
+  persistPanelLayout()
+}
+
+function applyWorkspaceLayoutPreset(presetID: VideoWorkflowLayoutPresetID) {
+  const next = applyLayoutPreset({ ...panelLayout }, presetID)
+  panelLayout.left = next.left
+  panelLayout.right = next.right
+  panelLayout.libraryOpen = next.libraryOpen
+  panelLayout.inspectorOpen = next.inspectorOpen
+  if (next.libraryOpen || next.inspectorOpen) {
+    lastNonFocusLayout.value = { libraryOpen: next.libraryOpen, inspectorOpen: next.inspectorOpen }
+  }
+  persistPanelLayout()
+}
+
 function restoreLayout() {
   try {
     const stored = JSON.parse(localStorage.getItem(LAYOUT_STORAGE_KEY) || '{}')
-    if (Number.isFinite(stored.left)) panelLayout.left = Math.max(208, Math.min(340, stored.left))
-    if (Number.isFinite(stored.right)) panelLayout.right = Math.max(280, Math.min(420, stored.right))
+    if (Number.isFinite(stored.left)) panelLayout.left = clampPanelLeft(stored.left)
+    if (Number.isFinite(stored.right)) panelLayout.right = clampPanelRight(stored.right)
+    if (typeof stored.libraryOpen === 'boolean') panelLayout.libraryOpen = stored.libraryOpen
     if (typeof stored.inspectorOpen === 'boolean') panelLayout.inspectorOpen = stored.inspectorOpen
+    if (typeof stored.autoArrange === 'boolean') autoArrange.value = stored.autoArrange
     if (['smart', 'all', 'hidden'].includes(stored.edgeDisplayMode)) edgeDisplayMode.value = stored.edgeDisplayMode
   } catch { /* 使用默认布局 */ }
 }
@@ -2194,8 +3019,23 @@ watch(edgeDisplayMode, () => {
   persistPanelLayout()
 })
 
+const graphStructureSignature = computed(() => [
+  graph.value.nodes.map((node) => `${node.id}:${node.collapsed ? 1 : 0}`).join('|'),
+  graph.value.edges.map((edge) => `${edge.source}.${edge.source_port}>${edge.target}.${edge.target_port}`).join('|'),
+].join('#'))
+
+watch(graphStructureSignature, () => {
+  if (!autoArrange.value || !autosaveReady.value) return
+  scheduleAutoArrange()
+})
+
 onMounted(() => {
   restoreLayout()
+  headerCompactQuery = window.matchMedia('(max-width: 1023px)')
+  headerPhoneQuery = window.matchMedia('(max-width: 767px)')
+  syncHeaderLayoutMode()
+  headerCompactQuery.addEventListener('change', syncHeaderLayoutMode)
+  headerPhoneQuery.addEventListener('change', syncHeaderLayoutMode)
   window.addEventListener('keydown', handleCanvasKeydown)
   window.addEventListener('beforeunload', beforeUnload)
   void bootstrap()
@@ -2208,9 +3048,12 @@ onBeforeUnmount(() => {
   closeMediaPreview()
   stopPolling()
   persistLocalDraft()
+  headerCompactQuery?.removeEventListener('change', syncHeaderLayoutMode)
+  headerPhoneQuery?.removeEventListener('change', syncHeaderLayoutMode)
   if (saveTimer) window.clearTimeout(saveTimer)
   if (retryTimer) window.clearTimeout(retryTimer)
   if (deletionTimer) window.clearTimeout(deletionTimer)
+  if (autoArrangeTimer) window.clearTimeout(autoArrangeTimer)
   window.removeEventListener('keydown', handleCanvasKeydown)
   window.removeEventListener('beforeunload', beforeUnload)
   window.removeEventListener('pointermove', resizePanel)
@@ -2220,72 +3063,186 @@ onBeforeUnmount(() => {
 <template>
   <div class="video-workflow-page" :style="workspaceStyle" v-loading="loading">
       <header class="workspace-header">
-        <div class="brand-block"><span class="brand-mark"><Aim /></span><strong>灵境智创</strong></div>
-        <button class="back-button" title="返回个人中心" @click="router.push('/personal/dashboard')"><ArrowLeft /></button>
-        <div class="workflow-name">
-          <el-select v-if="workflows.length" :model-value="activeWorkflow?.id || ''" filterable @change="selectWorkflow">
-            <el-option v-for="item in workflows" :key="item.id" :label="item.name" :value="item.id" />
-          </el-select>
-          <strong v-else>{{ activeWorkflow?.name || '雨夜重逢 · 60秒短剧' }}</strong>
-          <EditPen />
+        <div class="header-start">
+          <div class="brand-block" title="灵境智创"><span class="brand-mark"><Aim /></span><strong>灵境智创</strong></div>
+          <button class="back-button" title="返回个人中心" @click="router.push('/personal/dashboard')"><ArrowLeft /></button>
+          <div class="workflow-name">
+            <el-select v-if="workflows.length" :model-value="activeWorkflow?.id || ''" filterable @change="selectWorkflow">
+              <el-option v-for="item in workflows" :key="item.id" :label="item.name" :value="item.id" />
+            </el-select>
+            <strong v-else-if="activeWorkflow">{{ activeWorkflow.name }}</strong>
+            <strong v-else class="workflow-placeholder">未创建工作流</strong>
+            <button class="icon-button rename-button" type="button" title="重命名工作流" :disabled="!activeWorkflow" @click="renameActiveWorkflow"><EditPen /></button>
+          </div>
+          <div
+            class="save-state"
+            :class="[workspaceLifecycle, { offline: !backendAvailable }]"
+            :title="`${saveState} · ${workspaceLifecycleHint}`"
+            aria-live="polite"
+          ><i /><span>{{ saveState }}</span></div>
         </div>
-        <div class="save-state" :class="{ dirty, offline: !backendAvailable }" aria-live="polite"><i /><span>{{ saveState }}</span></div>
-        <div class="header-spacer" />
-        <div v-if="runStatus" class="run-state" aria-live="polite"><i :class="activeRun?.status" />{{ runStatus }}<b v-if="activeRun?.progress !== undefined">{{ activeRun.progress }}%</b></div>
-        <button class="icon-button undo-button" title="撤销（⌘/Ctrl+Z）" :disabled="!undoStack.length" @click="undo"><RefreshLeft /></button>
-        <button class="icon-button redo-button" title="重做（⇧⌘/Ctrl+Z）" :disabled="!redoStack.length" @click="redo"><RefreshRight /></button>
-        <select v-model="graph.settings.aspect_ratio" class="header-select" aria-label="画幅" @change="markDirty"><option>9:16</option><option>16:9</option><option>1:1</option></select>
-        <select v-model="graph.settings.resolution" class="header-select resolution" aria-label="分辨率" @change="markDirty"><option>720p</option><option>1080p</option></select>
-        <button class="history-button" :aria-expanded="runHistoryVisible" @click="openRunHistory"><Clock />生成历史<span v-if="runHistoryTotal">{{ runHistoryTotal }}</span></button>
-        <button class="preview-button" @click="previewOutput"><VideoPlay />预览</button>
-        <el-dropdown
-          v-if="!isRunActive"
-          class="generate-button"
-          split-button
-          type="primary"
-          trigger="click"
-          :disabled="runningAction"
-          :button-props="{ loading: runningAction }"
-          @click="startRun('full')"
-          @command="(command: VideoWorkflowRunMode) => startRun(command)"
+
+        <div
+          v-if="showHeaderRunProgress"
+          class="header-center"
+          :class="{ compact: headerPhone }"
         >
-          生成成片
-          <template #dropdown><el-dropdown-menu><el-dropdown-item command="node_only">运行当前节点</el-dropdown-item><el-dropdown-item command="downstream">运行当前及下游</el-dropdown-item><el-dropdown-item divided command="full">完整运行</el-dropdown-item></el-dropdown-menu></template>
-        </el-dropdown>
-        <button v-else class="stop-button" :disabled="runningAction" @click="stopRun"><VideoPause />停止</button>
-        <el-dropdown
-          class="workspace-actions"
-          trigger="click"
-          :disabled="jsonTransferBusy"
-          @command="(command: WorkspaceMenuCommand) => handleWorkspaceMenu(command)"
-        >
-          <button class="icon-button" title="更多操作" aria-label="更多操作" :aria-busy="jsonTransferBusy"><MoreFilled /></button>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="outline"><span class="workspace-menu-item"><Menu />结构大纲</span></el-dropdown-item>
-              <el-dropdown-item command="import_json" divided :disabled="!activeWorkflow || isRunActive || runningAction || revisionConflict">
-                <span class="workspace-menu-item"><Upload />导入 JSON</span>
-              </el-dropdown-item>
-              <el-dropdown-item command="export_json" :disabled="!activeWorkflow">
-                <span class="workspace-menu-item"><Download />导出 JSON</span>
-              </el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
-        <input ref="jsonFileInput" class="json-file-input" type="file" accept=".json,application/json" @change="importWorkflowJSON" />
-        <button class="icon-button" title="新建工作流" @click="createDialogVisible = true"><Plus /></button>
+          <div
+            class="header-run-progress"
+            :class="{ indeterminate: headerRunStats.indeterminate }"
+            role="progressbar"
+            :aria-valuenow="headerRunStats.progress"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            :aria-label="headerRunStats.ariaLabel"
+            :title="headerRunStats.ariaLabel"
+            aria-live="polite"
+          >
+            <span v-if="!headerPhone" class="header-run-label">{{ headerRunStats.label }}</span>
+            <i class="header-run-track" aria-hidden="true"><em :style="{ width: `${headerRunStats.progress}%` }" /></i>
+            <b class="header-run-pct">{{ headerRunStats.progress }}%</b>
+            <span class="header-run-nodes">{{ headerRunStats.nodeText }}</span>
+          </div>
+        </div>
+
+        <div class="header-actions">
+          <el-dropdown
+            v-if="!headerCompact"
+            class="output-settings"
+            trigger="click"
+            @command="(command: OutputSettingCommand) => applyOutputSetting(command)"
+          >
+            <button class="output-settings-button" type="button" aria-label="输出设置">
+              <span>{{ outputSettingsLabel }}</span>
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item disabled>画幅</el-dropdown-item>
+                <el-dropdown-item command="aspect_9_16" :class="{ 'is-active': graph.settings.aspect_ratio === '9:16' }">9:16 竖屏</el-dropdown-item>
+                <el-dropdown-item command="aspect_16_9" :class="{ 'is-active': graph.settings.aspect_ratio === '16:9' }">16:9 横屏</el-dropdown-item>
+                <el-dropdown-item command="aspect_1_1" :class="{ 'is-active': graph.settings.aspect_ratio === '1:1' }">1:1 方形</el-dropdown-item>
+                <el-dropdown-item divided disabled>分辨率</el-dropdown-item>
+                <el-dropdown-item command="resolution_720p" :class="{ 'is-active': graph.settings.resolution === '720p' }">720p</el-dropdown-item>
+                <el-dropdown-item command="resolution_1080p" :class="{ 'is-active': graph.settings.resolution === '1080p' }">1080p</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+
+          <button v-if="!headerCompact" class="preview-button" type="button" @click="previewOutput"><VideoPlay />预览</button>
+
+          <div class="header-primary-group">
+            <el-dropdown
+              v-if="!isRunActive"
+              class="generate-button"
+              split-button
+              type="primary"
+              trigger="click"
+              :disabled="runningAction || !canOperateWorkflow"
+              :button-props="{ loading: runningAction }"
+              :title="canOperateWorkflow ? undefined : '请先从模板创建工作流'"
+              @click="startRun('full')"
+              @command="(command: VideoWorkflowRunMode) => startRun(command)"
+            >
+              生成成片
+              <template #dropdown><el-dropdown-menu><el-dropdown-item command="node_only">运行当前节点</el-dropdown-item><el-dropdown-item command="downstream">运行当前及下游</el-dropdown-item><el-dropdown-item divided command="full">完整运行</el-dropdown-item></el-dropdown-menu></template>
+            </el-dropdown>
+            <button v-else class="stop-button" type="button" :disabled="runningAction" @click="stopRun"><VideoPause />停止</button>
+          </div>
+
+          <div class="header-util-group">
+            <el-dropdown
+              class="workspace-actions"
+              trigger="click"
+              :disabled="jsonTransferBusy"
+              @command="(command: WorkspaceMenuCommand) => handleWorkspaceMenu(command)"
+            >
+              <button class="icon-button" title="更多操作" aria-label="更多操作" :aria-busy="jsonTransferBusy"><MoreFilled /></button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item v-if="!headerCompact" command="history" class="workspace-menu-item"><Clock />生成历史<span v-if="runHistoryTotal" class="menu-badge">{{ runHistoryTotal }}</span></el-dropdown-item>
+                  <template v-if="headerCompact">
+                    <el-dropdown-item command="preview" class="workspace-menu-item"><VideoPlay />预览</el-dropdown-item>
+                    <el-dropdown-item command="history" class="workspace-menu-item"><Clock />生成历史</el-dropdown-item>
+                    <el-dropdown-item command="aspect_9_16" class="workspace-menu-item">画幅 9:16</el-dropdown-item>
+                    <el-dropdown-item command="aspect_16_9" class="workspace-menu-item">画幅 16:9</el-dropdown-item>
+                    <el-dropdown-item command="aspect_1_1" class="workspace-menu-item">画幅 1:1</el-dropdown-item>
+                    <el-dropdown-item command="resolution_720p" class="workspace-menu-item">分辨率 720p</el-dropdown-item>
+                    <el-dropdown-item command="resolution_1080p" class="workspace-menu-item">分辨率 1080p</el-dropdown-item>
+                    <el-dropdown-item v-if="headerPhone" command="create_workflow" class="workspace-menu-item" divided><Plus />新建工作流</el-dropdown-item>
+                  </template>
+                  <el-dropdown-item command="outline" :divided="true"><span class="workspace-menu-item"><Menu />结构大纲</span></el-dropdown-item>
+                  <el-dropdown-item command="layout_edit" divided><span class="workspace-menu-item">布局 · 编辑</span></el-dropdown-item>
+                  <el-dropdown-item command="layout_compose"><span class="workspace-menu-item">布局 · 构图</span></el-dropdown-item>
+                  <el-dropdown-item command="layout_review"><span class="workspace-menu-item">布局 · 审片</span></el-dropdown-item>
+                  <el-dropdown-item command="import_json" divided :disabled="!activeWorkflow || isRunActive || runningAction || revisionConflict">
+                    <span class="workspace-menu-item"><Upload />导入 JSON</span>
+                  </el-dropdown-item>
+                  <el-dropdown-item command="export_json" :disabled="!activeWorkflow">
+                    <span class="workspace-menu-item"><Download />导出 JSON</span>
+                  </el-dropdown-item>
+                  <el-dropdown-item command="delete_workflow" divided :disabled="!activeWorkflow || isRunActive || runningAction || revisionConflict">
+                    <span class="workspace-menu-item danger">删除工作流</span>
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+            <input ref="jsonFileInput" class="json-file-input" type="file" accept=".json,application/json" @change="importWorkflowJSON" />
+            <button v-if="!headerPhone" class="icon-button" title="新建工作流" @click="createDialogVisible = true"><Plus /></button>
+          </div>
+        </div>
       </header>
+
+      <div v-if="workspaceLifecycle === 'unbound'" class="workspace-lifecycle-banner" role="status">
+        <span>空白预览画布：尚未从模板创建工作流，当前内容不会保存，也无法生成成片。</span>
+        <button type="button" @click="openCreateWorkflow">从模板创建</button>
+      </div>
+
+      <div
+        v-if="workspaceContextBar"
+        class="workspace-context-bar"
+        :class="`is-${workspaceContextBar.kind}`"
+        :role="workspaceContextBar.kind === 'conflict' || workspaceContextBar.kind === 'draft' ? 'alert' : 'status'"
+      >
+        <div class="workspace-context-bar-main">
+          <i class="workspace-context-dot" />
+          <span>{{ workspaceContextBar.text }}</span>
+          <b v-if="workspaceContextBar.progress !== undefined">{{ workspaceContextBar.progress }}%</b>
+        </div>
+        <div class="workspace-context-bar-actions">
+          <button
+            v-if="workspaceContextBar.showLoadServer"
+            type="button"
+            class="context-bar-button"
+            @click="reloadWorkflow"
+          >加载服务器版本</button>
+          <button
+            v-if="workspaceContextBar.showRecoverDraft"
+            type="button"
+            class="context-bar-button context-bar-button--ghost"
+            @click="recoverConflictDraft"
+          >恢复草稿</button>
+          <button
+            v-if="workspaceContextBar.showContinueApproval"
+            type="button"
+            class="context-bar-button"
+            :disabled="approvalBusy"
+            @click="continueApproval"
+          >继续审批</button>
+        </div>
+      </div>
 
       <div class="workspace-grid">
         <VideoWorkflowLibrary
+          v-show="panelLayout.libraryOpen"
           :tab="panelTab"
           :assets="assets"
           @update:tab="panelTab = $event"
           @add-node="addNode"
-          @upload="replaceImage"
+          @upload="uploadLibraryAsset"
           @select-asset="selectAsset"
+          @close="setLibraryOpen(false)"
         />
-        <button class="panel-resizer left-resizer" aria-label="调整左栏宽度" @pointerdown="startResize('left', $event)" />
+        <button v-if="panelLayout.libraryOpen" class="panel-resizer left-resizer" aria-label="调整左栏宽度" @pointerdown="startResize('left', $event)" />
 
         <VideoWorkflowCanvas
           v-model:active-tool="activeTool"
@@ -2293,7 +3250,6 @@ onBeforeUnmount(() => {
           v-model:edges="flowEdges"
           v-model:edge-display-mode="edgeDisplayMode"
           :backend-available="backendAvailable"
-          :conflict-draft-key="conflictDraftKey"
           :mod-key-code="modKeyCode"
           :alignment-guides="alignmentGuides"
           :quick-connect-menu="quickConnectMenu"
@@ -2302,13 +3258,17 @@ onBeforeUnmount(() => {
           :selected-node-i-ds="selectedNodeIDs"
           :selected-node-locked="Boolean(selectedNode?.locked)"
           :layout-busy="layoutBusy"
+          :auto-arrange="autoArrange"
+          :can-undo="Boolean(undoStack.length)"
+          :can-redo="Boolean(redoStack.length)"
+          :can-operate-workflow="canOperateWorkflow"
           :zoom="canvasViewport.zoom"
           :viewport="canvasViewport"
           @drop-node="dropNode"
-          @recover-conflict-draft="recoverConflictDraft"
-          @group-selected="groupSelected"
-          @ungroup-selected="ungroupSelected"
           @auto-layout="autoLayout"
+          @toggle-auto-arrange="toggleAutoArrange"
+          @undo="undo"
+          @redo="redo"
           @align-selected="alignSelected"
           @distribute-selected="distributeSelected"
           @toggle-enabled="toggleEnabled"
@@ -2318,7 +3278,6 @@ onBeforeUnmount(() => {
           @nodes-change="onNodeChanges"
           @edges-change="onEdgeChanges"
           @node-click="selectNode"
-          @node-drag-start="onNodeDragStart"
           @node-drag="onNodeDrag"
           @node-drag-stop="onNodeDragStop"
           @pane-click="clearSelection"
@@ -2354,9 +3313,11 @@ onBeforeUnmount(() => {
           :model-options="selectedNodeModelOptions"
           :revision="activeWorkflow?.revision || 0"
           :running="isRunActive"
+          :timeline-source-titles="timelineSourceTitles"
           @update-title="updateNodeTitle"
           @update-config="updateNodeConfig"
           @update-model="updateNodeModel"
+          @update-timeline-clips="updateTimelineClips"
           @transform="applyImageTransform"
           @select-version="selectImageVersion"
           @replace-file="replaceImage"
@@ -2375,6 +3336,14 @@ onBeforeUnmount(() => {
         />
 
         <button
+          v-if="!panelLayout.libraryOpen"
+          class="panel-restore library-restore"
+          title="打开节点侧边栏"
+          aria-label="打开节点侧边栏"
+          aria-controls="node-library"
+          @click="setLibraryOpen(true)"
+        ><ArrowRight /><span>节点库</span></button>
+        <button
           v-if="!panelLayout.inspectorOpen"
           class="panel-restore inspector-restore"
           title="打开节点详情"
@@ -2388,6 +3357,11 @@ onBeforeUnmount(() => {
       <div class="save-live" aria-live="polite">{{ saveState }}</div>
 
       <VideoWorkflowOutline v-model="outlineVisible" :nodes="graph.nodes" :edge-count="graph.edges.length" :clip-count="timelineClips.length" @select="selectNode" />
+      <VideoWorkflowValidationIssues
+        v-model="validationIssuesVisible"
+        :issues="validationIssues"
+        @select="selectValidationIssue"
+      />
 
       <VideoWorkflowMediaPreview
         :model-value="mediaPreviewVisible"
@@ -2420,17 +3394,30 @@ onBeforeUnmount(() => {
         <template #footer><el-button @click="connectionDialogVisible = false">取消</el-button><el-button type="primary" :disabled="!connectionSource" @click="addKeyboardConnection">添加连接</el-button></template>
       </el-dialog>
 
-      <el-dialog v-model="createDialogVisible" title="创建视频工作流" width="520px">
-        <el-form label-position="top"><el-form-item label="工作流名称"><el-input v-model="newWorkflowName" maxlength="40" /></el-form-item><el-form-item label="基础模板"><el-radio-group v-model="selectedTemplateID" class="template-list"><el-radio v-for="item in templates" :key="item.id" :value="item.id" border><b>{{ item.name }}</b><span>{{ item.description || '图片生成 · 15秒视频 · 单轨成片' }}</span></el-radio></el-radio-group><div v-if="!templates.length" class="dialog-empty">服务端尚未提供可用模板</div></el-form-item></el-form>
+      <el-dialog v-model="createDialogVisible" title="创建视频工作流" width="min(520px, calc(100vw - 32px))">
+        <el-form label-position="top" class="create-workflow-form">
+          <el-form-item label="工作流名称">
+            <el-input v-model="newWorkflowName" maxlength="40" />
+          </el-form-item>
+          <el-form-item label="基础模板" class="template-form-item">
+            <el-radio-group v-model="selectedTemplateID" class="template-list">
+              <el-radio v-for="item in templates" :key="item.id" :value="item.id" class="template-option" border>
+                <b>{{ item.name }}</b>
+                <span>{{ item.description || '图片生成 · 15秒视频 · 单轨成片' }}</span>
+              </el-radio>
+            </el-radio-group>
+            <div v-if="!templates.length" class="dialog-empty">服务端尚未提供可用模板</div>
+          </el-form-item>
+        </el-form>
         <template #footer><el-button @click="createDialogVisible = false">取消</el-button><el-button type="primary" :loading="creating" :disabled="!selectedTemplateID" @click="createFromTemplate">创建</el-button></template>
       </el-dialog>
 
       <el-dialog v-model="characterDialogVisible" title="选定角色定妆" width="780px" :close-on-click-modal="false">
         <div class="candidate-roles"><section v-for="role in characterCandidates" :key="role.nodeID"><header><b>{{ role.title }}</b><span>选择 1 张作为角色版本</span></header><div><button v-for="candidate in role.candidates" :key="candidate.id" :class="{ selected: characterSelections[role.nodeID] === candidate.id }" @click="characterSelections[role.nodeID] = candidate.id"><img v-if="candidate.url" :src="candidate.url" :alt="role.title" /><span v-else>候选 {{ candidate.id.slice(-4) }}</span><Check v-if="characterSelections[role.nodeID] === candidate.id" /></button></div></section></div>
-        <template #footer><el-button type="primary" :disabled="!canApproveCharacters" @click="approveCharacters">确认角色并继续</el-button></template>
+        <template #footer><el-button type="primary" :loading="approvalBusy" :disabled="!canApproveCharacters || approvalBusy" @click="approveCharacters">确认角色并继续</el-button></template>
       </el-dialog>
 
-      <el-dialog v-model="storyboardDialogVisible" title="确认分镜剧本" width="760px" :close-on-click-modal="false"><el-input v-model="storyboardJSON" type="textarea" :rows="20" resize="none" class="storyboard-editor" /><template #footer><span v-if="!canApproveStoryboard" class="json-error">JSON 格式错误</span><el-button type="primary" :disabled="!canApproveStoryboard" @click="approveStoryboard">确认剧本并生成场景</el-button></template></el-dialog>
+      <el-dialog v-model="storyboardDialogVisible" title="确认分镜剧本" width="760px" :close-on-click-modal="false"><el-input v-model="storyboardJSON" type="textarea" :rows="20" resize="none" class="storyboard-editor" /><template #footer><span v-if="!canApproveStoryboard" class="json-error">JSON 格式错误</span><el-button type="primary" :loading="approvalBusy" :disabled="!canApproveStoryboard || approvalBusy" @click="approveStoryboard">确认剧本并生成场景</el-button></template></el-dialog>
     <VideoWorkflowRunConfirm ref="runConfirmRef" />
   </div>
 </template>
@@ -2451,37 +3438,144 @@ onBeforeUnmount(() => {
   background: var(--shell);
   font-family: "Avenir Next", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
-.workspace-header { height: 64px; display: grid; grid-template-columns: 138px 40px minmax(180px, 340px) 142px minmax(0, 1fr) auto 32px 32px 78px 86px 78px 92px auto 32px 32px; align-items: center; gap: 6px; box-sizing: border-box; padding: 0 16px; background: #fff; border-bottom: 1px solid var(--border); }
-.brand-block { display: flex; align-items: center; gap: 8px; }.brand-block strong { font-size: 19px; letter-spacing: -.5px; white-space: nowrap; }.brand-mark { width: 28px; height: 28px; display: grid; place-items: center; color: #fff; background: #2563eb; clip-path: polygon(50% 0, 100% 100%, 50% 75%, 0 100%); }.brand-mark svg { width: 17px; }
-.back-button, .icon-button { width: 32px; height: 32px; display: grid; place-items: center; color: #475569; background: #fff; border: 1px solid #dbe2ea; border-radius: 5px; cursor: pointer; }.back-button svg, .icon-button svg { width: 15px; }.icon-button:disabled { opacity: .35; cursor: default; }.back-button:hover, .icon-button:not(:disabled):hover { color: #2563eb; background: #eff6ff; border-color: #93c5fd; }
-.workspace-actions { width: 32px; height: 32px; }.workspace-actions .icon-button[aria-busy="true"] { color: #2563eb; background: #eff6ff; }.workspace-menu-item { min-width: 104px; display: flex; align-items: center; gap: 8px; }.workspace-menu-item svg { width: 14px; color: #64748b; }.json-file-input { display: none; }
-.workflow-name { min-width: 0; display: flex; align-items: center; gap: 6px; }.workflow-name strong { overflow: hidden; font-size: 16px; text-overflow: ellipsis; white-space: nowrap; }.workflow-name > svg { width: 14px; color: #64748b; }.workflow-name :deep(.el-select) { width: 100%; }.workflow-name :deep(.el-select__wrapper) { box-shadow: none; font-size: 16px; font-weight: 650; }
-.save-state, .run-state { display: flex; align-items: center; gap: 6px; color: #475569; white-space: nowrap; font-size: 11px; }.save-state i, .run-state i { width: 8px; height: 8px; background: #22c55e; border-radius: 50%; }.save-state.dirty i { background: #f59e0b; }.save-state.offline i { background: #ef4444; }.run-state i { background: #38bdf8; }.run-state i.failed { background: #ef4444; }.run-state i.succeeded { background: #22c55e; }.run-state b { color: #2563eb; }
-.header-select { height: 32px; padding: 0 8px; color: #334155; background: #fff; border: 1px solid #dbe2ea; border-radius: 5px; outline: none; font-size: 11px; }.header-select.resolution { width: 86px; }
-.history-button, .preview-button, .stop-button { height: 34px; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 0 9px; color: #334155; background: #fff; border: 1px solid #dbe2ea; border-radius: 5px; cursor: pointer; white-space: nowrap; font-size: 11px; }.history-button:hover, .preview-button:hover { color: #2563eb; background: #eff6ff; border-color: #93c5fd; }.history-button svg, .preview-button svg, .stop-button svg { width: 14px; }.history-button span { min-width: 16px; padding: 1px 4px; color: #1d4ed8; background: #dbeafe; border-radius: 999px; font-size: 8px; }.stop-button { color: #dc2626; }
-.generate-button { height: 34px; }.generate-button :deep(.el-button) { height: 34px; border-radius: 5px; }.generate-button :deep(svg) { width: 12px; }
-.workspace-grid { position: relative; height: calc(100% - 64px); display: grid; grid-template-columns: var(--left-panel) minmax(0, 1fr) var(--right-panel); grid-template-areas: "library canvas inspector"; }
+.workspace-header {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  padding: 0 12px;
+  background: #fff;
+  border-bottom: 1px solid var(--border);
+}
+.header-start {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.header-center {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+.header-center.compact {
+  max-width: 42vw;
+}
+.header-run-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: #475569;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.header-run-label {
+  flex: 0 0 auto;
+  max-width: 64px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  color: #334155;
+}
+.header-run-track {
+  position: relative;
+  width: 84px;
+  height: 4px;
+  flex: 0 0 auto;
+  display: block;
+  overflow: hidden;
+  background: #e2e8f0;
+  border-radius: 999px;
+}
+.header-run-track em {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: #2563eb;
+  border-radius: inherit;
+  transition: width .2s ease;
+}
+.header-run-progress.indeterminate .header-run-track em {
+  width: 36% !important;
+  animation: header-run-pulse 1.1s ease-in-out infinite;
+}
+.header-run-pct {
+  flex: 0 0 auto;
+  min-width: 28px;
+  color: #2563eb;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.header-run-nodes {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
+}
+@keyframes header-run-pulse {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(280%); }
+}
+.header-center.compact .header-run-progress { gap: 6px; }
+.header-center.compact .header-run-track { width: 56px; }
+.header-actions {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.header-primary-group,
+.header-util-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.header-primary-group {
+  flex: 0 0 auto;
+}
+.brand-block { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }.brand-block strong { color: #64748b; font-size: 13px; font-weight: 600; letter-spacing: -.2px; white-space: nowrap; }.brand-mark { width: 24px; height: 24px; display: grid; place-items: center; color: #fff; background: #2563eb; clip-path: polygon(50% 0, 100% 100%, 50% 75%, 0 100%); }.brand-mark svg { width: 14px; }
+.back-button, .icon-button { width: 30px; height: 30px; display: grid; place-items: center; color: #475569; background: #fff; border: 1px solid #dbe2ea; border-radius: 5px; cursor: pointer; flex: 0 0 auto; }.back-button svg, .icon-button svg { width: 14px; }.icon-button:disabled { opacity: .35; cursor: default; }.back-button:hover, .icon-button:not(:disabled):hover { color: #2563eb; background: #eff6ff; border-color: #93c5fd; }
+.workspace-actions { width: 30px; height: 30px; }.workspace-actions .icon-button[aria-busy="true"] { color: #2563eb; background: #eff6ff; }.workspace-menu-item { min-width: 104px; display: flex; align-items: center; gap: 8px; }.workspace-menu-item svg { width: 14px; color: #64748b; }.workspace-menu-item.danger { color: #dc2626; }.menu-badge { min-width: 16px; margin-left: auto; padding: 1px 5px; color: #1d4ed8; background: #dbeafe; border-radius: 999px; font-size: 10px; text-align: center; }.json-file-input { display: none; }
+.workflow-name { min-width: 0; flex: 1 1 160px; max-width: 280px; display: flex; align-items: center; gap: 4px; }.workflow-name strong { overflow: hidden; font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }.workflow-name .workflow-placeholder { color: #94a3b8; font-weight: 500; }.workflow-name .rename-button { width: 26px; height: 26px; flex: 0 0 auto; border: none; background: transparent; color: #64748b; }.workflow-name .rename-button:hover:not(:disabled) { color: #2563eb; background: #eff6ff; }.workflow-name .rename-button svg { width: 13px; }.workflow-name :deep(.el-select) { width: 100%; }.workflow-name :deep(.el-select__wrapper) { box-shadow: none; font-size: 15px; font-weight: 650; }
+.save-state { display: flex; align-items: center; gap: 6px; color: #475569; white-space: nowrap; font-size: 11px; flex: 0 0 auto; }.save-state i { width: 8px; height: 8px; background: #22c55e; border-radius: 50%; flex: 0 0 auto; }.save-state.unbound i { background: #94a3b8; }.save-state.ready i { background: #22c55e; }.save-state.dirty i, .save-state.saving i { background: #f59e0b; }.save-state.conflict i, .save-state.offline i { background: #ef4444; }
+.workspace-lifecycle-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; color: #92400e; background: #fffbeb; border-bottom: 1px solid #fde68a; font-size: 12px; }.workspace-lifecycle-banner button { height: 28px; padding: 0 12px; color: #fff; background: #2563eb; border: 0; border-radius: 5px; cursor: pointer; white-space: nowrap; font-size: 11px; }.workspace-lifecycle-banner button:hover { background: #1d4ed8; }
+.workspace-context-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 36px; padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-size: 12px; }.workspace-context-bar-main { min-width: 0; display: flex; align-items: center; gap: 8px; }.workspace-context-bar-main span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.workspace-context-bar-main b { color: #2563eb; flex: 0 0 auto; }.workspace-context-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: #38bdf8; }.workspace-context-bar-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }.context-bar-button { height: 28px; padding: 0 10px; color: #fff; background: #2563eb; border: 0; border-radius: 5px; cursor: pointer; white-space: nowrap; font-size: 11px; }.context-bar-button:hover:not(:disabled) { background: #1d4ed8; }.context-bar-button:disabled { opacity: .55; cursor: default; }.context-bar-button--ghost { color: #1d4ed8; background: transparent; border: 1px solid #93c5fd; }.context-bar-button--ghost:hover:not(:disabled) { color: #1e40af; background: #eff6ff; }.workspace-context-bar.is-conflict, .workspace-context-bar.is-draft { color: #9a3412; background: #fff7ed; border-bottom-color: #fdba74; }.workspace-context-bar.is-conflict .workspace-context-dot, .workspace-context-bar.is-draft .workspace-context-dot { background: #ea580c; }.workspace-context-bar.is-approval { color: #92400e; background: #fffbeb; border-bottom-color: #fde68a; }.workspace-context-bar.is-approval .workspace-context-dot { background: #f59e0b; }.workspace-context-bar.is-running { color: #1e3a5f; background: #eff6ff; border-bottom-color: #bfdbfe; }
+.output-settings-button, .preview-button, .stop-button { height: 30px; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 0 9px; color: #334155; background: #fff; border: 1px solid #dbe2ea; border-radius: 5px; cursor: pointer; white-space: nowrap; font-size: 11px; }.output-settings-button:hover, .preview-button:hover { color: #2563eb; background: #eff6ff; border-color: #93c5fd; }.preview-button svg, .stop-button svg { width: 14px; }.stop-button { color: #dc2626; }
+.output-settings :deep(.el-dropdown-menu__item.is-active) { color: #1d4ed8; font-weight: 650; }
+.generate-button { height: 30px; flex: 0 0 auto; }.generate-button :deep(.el-button) { height: 30px; border-radius: 5px; }.generate-button :deep(svg) { width: 12px; }
+.workspace-grid { position: relative; height: calc(100% - 56px); display: grid; grid-template-columns: var(--left-panel) minmax(0, 1fr) var(--right-panel); grid-template-areas: "library canvas inspector"; }
+.video-workflow-page:has(.workspace-lifecycle-banner) .workspace-grid { height: calc(100% - 56px - 37px); }
+.video-workflow-page:has(.workspace-context-bar) .workspace-grid { height: calc(100% - 56px - 37px); }
+.video-workflow-page:has(.workspace-lifecycle-banner):has(.workspace-context-bar) .workspace-grid { height: calc(100% - 56px - 74px); }
 .workflow-library { grid-area: library; border-right: 1px solid var(--border); }.workflow-inspector { grid-area: inspector; border-left: 1px solid var(--border); }
 .panel-resizer { position: absolute; z-index: 20; padding: 0; background: transparent; border: 0; }.left-resizer { left: calc(var(--left-panel) - 3px); top: 0; bottom: 0; width: 6px; cursor: col-resize; }.right-resizer { right: calc(var(--right-panel) - 3px); top: 0; bottom: 0; width: 6px; cursor: col-resize; }.panel-resizer:hover { background: rgba(37, 99, 235, .45); }
-.panel-restore { position: absolute; z-index: 21; height: 32px; display: flex; align-items: center; gap: 6px; padding: 0 10px; color: #334155; background: rgba(255, 255, 255, .94); border: 1px solid #cbd5e1; border-radius: 5px; box-shadow: 0 4px 14px rgba(15, 23, 42, .14); cursor: pointer; font-size: 11px; backdrop-filter: blur(8px); }.panel-restore:hover { color: #2563eb; background: #eff6ff; border-color: #93c5fd; }.panel-restore svg { width: 13px; }.inspector-restore { top: 12px; right: 12px; }
+.panel-restore { position: absolute; z-index: 21; height: 32px; display: flex; align-items: center; gap: 6px; padding: 0 10px; color: #334155; background: rgba(255, 255, 255, .94); border: 1px solid #cbd5e1; border-radius: 5px; box-shadow: 0 4px 14px rgba(15, 23, 42, .14); cursor: pointer; font-size: 11px; backdrop-filter: blur(8px); }.panel-restore:hover { color: #2563eb; background: #eff6ff; border-color: #93c5fd; }.panel-restore svg { width: 13px; }.library-restore { top: 12px; left: 12px; }.inspector-restore { top: 12px; right: 12px; }
 .undo-toast { position: fixed; z-index: 120; left: 50%; bottom: 28px; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; padding: 10px 14px; color: #f8fafc; background: #1e293b; border-radius: 6px; box-shadow: 0 12px 28px rgba(15, 23, 42, .25); font-size: 12px; }.undo-toast button { color: #93c5fd; background: transparent; border: 0; cursor: pointer; font-weight: 650; }.undo-toast span { color: #94a3b8; font-size: 10px; }.toast-enter-active, .toast-leave-active { transition: opacity .18s ease, transform .18s ease; }.toast-enter-from, .toast-leave-to { opacity: 0; transform: translate(-50%, 8px); }
 .save-live { position: fixed; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
-.template-list { width: 100%; display: grid; gap: 8px; }.template-list :deep(.el-radio) { width: 100%; height: auto; min-height: 58px; margin: 0; padding: 10px 12px; }.template-list :deep(.el-radio__label) { display: flex; flex-direction: column; gap: 3px; }.template-list span, .dialog-empty { color: #64748b; font-size: 11px; }.dialog-empty { padding: 20px; }
+.create-workflow-form, .template-form-item :deep(.el-form-item__content) { min-width: 0; }.template-form-item :deep(.el-form-item__content) { display: block; }
+.template-list { width: 100%; min-width: 0; display: grid; gap: 8px; }.template-list :deep(.template-option.el-radio) { width: 100%; max-width: 100%; box-sizing: border-box; height: auto; min-height: 58px; align-items: flex-start; margin: 0; padding: 10px 12px; white-space: normal; }.template-list :deep(.el-radio__input) { flex: 0 0 auto; padding-top: 3px; }.template-list :deep(.el-radio__label) { min-width: 0; display: flex; flex-direction: column; gap: 3px; line-height: 1.45; white-space: normal; }.template-list b, .template-list span { min-width: 0; overflow-wrap: anywhere; }.template-list span, .dialog-empty { color: #64748b; font-size: 11px; }.dialog-empty { padding: 20px; }
 .candidate-roles { display: grid; gap: 16px; max-height: 62vh; overflow: auto; }.candidate-roles section header { display: flex; justify-content: space-between; margin-bottom: 8px; }.candidate-roles section header span { color: #64748b; font-size: 11px; }.candidate-roles section > div { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }.candidate-roles button { position: relative; height: 230px; overflow: hidden; color: #64748b; background: #f8fafc; border: 2px solid transparent; border-radius: 5px; }.candidate-roles button.selected { border-color: #2563eb; }.candidate-roles img { width: 100%; height: 100%; object-fit: contain; }.candidate-roles button > svg { position: absolute; right: 8px; top: 8px; width: 24px; padding: 4px; color: #fff; background: #2563eb; border-radius: 50%; }.storyboard-editor :deep(textarea) { font-family: "SFMono-Regular", Consolas, monospace; font-size: 11px; line-height: 1.6; }.json-error { margin-right: 12px; color: #dc2626; font-size: 11px; }
 button, select { font-family: inherit; } button:focus-visible, select:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
 @media (max-width: 1279px) {
   .brand-block { display: none; }
-  .workspace-header { grid-template-columns: 40px minmax(180px, 340px) 142px minmax(0, 1fr) auto 32px 32px 78px 86px 78px 92px auto 32px 32px; }
-}
-@media (max-width: 1023px) {
-  .save-state, .run-state, .undo-button, .redo-button, .history-button, .preview-button { display: none; }
-  .workspace-header { grid-template-columns: 40px minmax(120px, 1fr) minmax(0, 1fr) 72px 80px auto 32px 32px; }
+  .save-state span { display: none; }
 }
 @media (max-width: 767px) {
-  .header-select { display: none; }
-  .workspace-header { grid-template-columns: 40px minmax(100px, 1fr) minmax(0, 1fr) auto 32px 32px; padding-inline: 8px; }
+  .workflow-name { max-width: none; }
+  .workflow-name .rename-button { display: none; }
+  .header-actions { gap: 4px; }
+  .workspace-header { gap: 6px; padding-inline: 8px; }
+  .workspace-context-bar { flex-wrap: wrap; gap: 8px; }
   .workspace-grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: "canvas"; }
-  .workflow-library, .workflow-inspector, .left-resizer, .right-resizer, .inspector-restore { display: none !important; }
+  .workflow-library, .workflow-inspector, .left-resizer, .right-resizer, .library-restore, .inspector-restore { display: none !important; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; } }
 </style>

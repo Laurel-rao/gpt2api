@@ -79,6 +79,10 @@ export interface VideoWorkflowNode {
   progress?: number
   output?: Record<string, any>
   stale_reason?: string
+  /** 展示用：最近一次节点运行错误文案（不入图持久化） */
+  run_error?: string
+  /** 展示用：最近一次节点运行错误码（不入图持久化） */
+  run_error_code?: string
 }
 
 export interface VideoWorkflowEdge {
@@ -394,6 +398,21 @@ export function videoAssetKindForFile(file: Pick<File, 'type'>): VideoAssetKind 
   if (file.type.startsWith('image/')) return 'image'
   if (file.type.startsWith('video/')) return 'video'
   throw new Error(`不支持的素材类型：${file.type || 'unknown'}`)
+}
+
+/**
+ * 为 Graph 中已有 stale 节点登记基线世代。
+ * 本轮运行启动时快照 activeRunStaleEpoch；仅标记世代 ≤ 快照的节点可被成功轮询清除，
+ * 运行启动后新编辑产生的更大世代不会被旧轮询抹掉。
+ */
+export function seedVideoWorkflowStaleEpochBaseline(
+  nodes: Array<{ id: string; status?: string | null }>,
+  epochMap: Map<string, number>,
+  baselineEpoch: number,
+): void {
+  for (const node of nodes) {
+    if (node.status === 'stale') epochMap.set(node.id, baselineEpoch)
+  }
 }
 
 export function uploadVideoAsset(file: File, name = file.name): Promise<VideoAsset> {

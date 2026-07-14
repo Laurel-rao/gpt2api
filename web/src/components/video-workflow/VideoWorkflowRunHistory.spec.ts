@@ -68,4 +68,27 @@ describe('VideoWorkflowRunHistory', () => {
     await detailed.find('.back-history').trigger('click')
     expect(detailed.emitted('back')).toHaveLength(1)
   })
+
+  it('translates run error codes in history list and detail', () => {
+    const failed: VideoWorkflowRun = {
+      ...runs[1],
+      error_code: 'runtime_failed',
+      error_message: '上游超时',
+    }
+    const wrapper = mount(VideoWorkflowRunHistory, {
+      props: { modelValue: true, runs: [failed], total: 1 },
+      global: { stubs: { ElDrawer: drawerStub } },
+    })
+    expect(wrapper.find('.history-error').text()).toContain('工作流运行失败')
+    expect(wrapper.find('.history-error').text()).toContain('上游超时')
+    expect(wrapper.find('.history-error').attributes('title')).toBe('runtime_failed')
+
+    const detailed = mount(VideoWorkflowRunHistory, {
+      props: { modelValue: true, runs: [failed], total: 1, detail: failed },
+      global: { stubs: { ElDrawer: drawerStub } },
+    })
+    expect(detailed.find('.run-error b').text()).toContain('工作流运行失败')
+    expect(detailed.find('.run-error b').text()).toContain('runtime_failed')
+    expect(detailed.find('.run-error span').text()).toBe('上游超时')
+  })
 })
