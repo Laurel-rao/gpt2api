@@ -107,6 +107,32 @@ func (h *Handler) UpdateWorkflow(c *gin.Context) {
 	resp.OK(c, workflow)
 }
 
+func (h *Handler) ListWorkflowRevisions(c *gin.Context) {
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	limit, offset = normalizePage(limit, offset)
+	items, total, err := h.service.ListWorkflowRevisions(c.Request.Context(), middleware.UserID(c), c.Param("id"), limit, offset)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	resp.OK(c, gin.H{"items": items, "total": total, "limit": limit, "offset": offset})
+}
+
+func (h *Handler) GetWorkflowRevision(c *gin.Context) {
+	revision, err := strconv.ParseUint(c.Param("revision"), 10, 64)
+	if err != nil || revision == 0 {
+		abortBadRequest(c, "revision must be a positive integer")
+		return
+	}
+	item, err := h.service.GetWorkflowRevision(c.Request.Context(), middleware.UserID(c), c.Param("id"), revision)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	resp.OK(c, item)
+}
+
 func (h *Handler) DeleteWorkflow(c *gin.Context) {
 	if err := h.service.DeleteWorkflow(c.Request.Context(), middleware.UserID(c), c.Param("id")); err != nil {
 		handleError(c, err)

@@ -203,6 +203,8 @@ func New(d *Deps) *gin.Engine {
 					vg.GET("/:id", d.VideoWorkflowH.GetWorkflow)
 					vg.PUT("/:id", d.VideoWorkflowH.UpdateWorkflow)
 					vg.DELETE("/:id", d.VideoWorkflowH.DeleteWorkflow)
+					vg.GET("/:id/revisions", d.VideoWorkflowH.ListWorkflowRevisions)
+					vg.GET("/:id/revisions/:revision", d.VideoWorkflowH.GetWorkflowRevision)
 					vg.POST("/:id/validate", d.VideoWorkflowH.ValidateWorkflow)
 					vg.POST("/:id/run-estimate", d.VideoWorkflowH.EstimateRun)
 					vg.GET("/:id/runs", d.VideoWorkflowH.ListRuns)

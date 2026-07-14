@@ -318,6 +318,30 @@ type Workflow struct {
 	DeletedAt       *time.Time `db:"deleted_at" json:"-"`
 }
 
+// WorkflowRevision 是某次保存后的不可变画布快照。
+type WorkflowRevision struct {
+	WorkflowID string    `db:"workflow_id" json:"workflow_id"`
+	UserID     uint64    `db:"user_id" json:"user_id"`
+	Revision   uint64    `db:"revision" json:"revision"`
+	Name       string    `db:"name" json:"name"`
+	Graph      Graph     `db:"graph_json" json:"graph"`
+	NodeCount  int       `db:"node_count" json:"node_count"`
+	EdgeCount  int       `db:"edge_count" json:"edge_count"`
+	CreatedAt  time.Time `db:"created_at" json:"created_at"`
+	IsCurrent  bool      `db:"-" json:"is_current,omitempty"`
+}
+
+// WorkflowRevisionListItem 是版本历史列表摘要，不返回完整 Graph。
+type WorkflowRevisionListItem struct {
+	WorkflowID string    `db:"workflow_id" json:"workflow_id"`
+	Revision   uint64    `db:"revision" json:"revision"`
+	Name       string    `db:"name" json:"name"`
+	NodeCount  int       `db:"node_count" json:"node_count"`
+	EdgeCount  int       `db:"edge_count" json:"edge_count"`
+	CreatedAt  time.Time `db:"created_at" json:"created_at"`
+	IsCurrent  bool      `db:"-" json:"is_current"`
+}
+
 type Run struct {
 	ID              string     `db:"run_id" json:"id"`
 	WorkflowID      string     `db:"workflow_id" json:"workflow_id"`

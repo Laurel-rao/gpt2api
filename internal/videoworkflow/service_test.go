@@ -482,9 +482,10 @@ func TestService_ApprovalStateGuards(t *testing.T) {
 }
 
 type fakeStore struct {
-	template Template
-	workflow *Workflow
-	run      *Run
+	template  Template
+	workflow  *Workflow
+	run       *Run
+	revisions map[uint64]*WorkflowRevision
 }
 
 type detailTestStore struct {
@@ -564,6 +565,7 @@ func (f *fakeStore) GetTemplate(_ context.Context, id uint64) (*Template, error)
 func (f *fakeStore) CreateWorkflow(_ context.Context, workflow *Workflow) error {
 	copy := *workflow
 	f.workflow = &copy
+	f.rememberRevision(&copy)
 	return nil
 }
 
@@ -593,6 +595,7 @@ func (f *fakeStore) UpdateWorkflow(_ context.Context, workflow *Workflow, expect
 	copy.Revision = expected + 1
 	f.workflow = &copy
 	workflow.Revision = copy.Revision
+	f.rememberRevision(&copy)
 	return nil
 }
 
@@ -601,7 +604,72 @@ func (f *fakeStore) DeleteWorkflow(_ context.Context, userID uint64, id string) 
 		return ErrNotFound
 	}
 	f.workflow = nil
+	f.revisions = nil
 	return nil
+}
+
+func (f *fakeStore) rememberRevision(workflow *Workflow) {
+	if workflow == nil {
+		return
+	}
+	if f.revisions == nil {
+		f.revisions = map[uint64]*WorkflowRevision{}
+	}
+	f.revisions[workflow.Revision] = &WorkflowRevision{
+		WorkflowID: workflow.ID,
+		UserID:     workflow.UserID,
+		Revision:   workflow.Revision,
+		Name:       workflow.Name,
+		Graph:      workflow.Graph,
+		NodeCount:  len(workflow.Graph.Nodes),
+		EdgeCount:  len(workflow.Graph.Edges),
+		CreatedAt:  time.Now().UTC(),
+	}
+}
+
+func (f *fakeStore) ListWorkflowRevisions(_ context.Context, userID uint64, workflowID string, limit, offset int) ([]WorkflowRevisionListItem, int64, error) {
+	if f.workflow == nil || f.workflow.UserID != userID || f.workflow.ID != workflowID {
+		return nil, 0, ErrNotFound
+	}
+	items := make([]WorkflowRevisionListItem, 0, len(f.revisions))
+	for _, revision := range f.revisions {
+		items = append(items, WorkflowRevisionListItem{
+			WorkflowID: revision.WorkflowID,
+			Revision:   revision.Revision,
+			Name:       revision.Name,
+			NodeCount:  revision.NodeCount,
+			EdgeCount:  revision.EdgeCount,
+			CreatedAt:  revision.CreatedAt,
+		})
+	}
+	for i := 0; i < len(items); i++ {
+		for j := i + 1; j < len(items); j++ {
+			if items[i].Revision < items[j].Revision {
+				items[i], items[j] = items[j], items[i]
+			}
+		}
+	}
+	total := int64(len(items))
+	if offset >= len(items) || limit <= 0 {
+		return nil, total, nil
+	}
+	end := offset + limit
+	if end > len(items) {
+		end = len(items)
+	}
+	return items[offset:end], total, nil
+}
+
+func (f *fakeStore) GetWorkflowRevision(_ context.Context, userID uint64, workflowID string, revision uint64) (*WorkflowRevision, error) {
+	if f.workflow == nil || f.workflow.UserID != userID || f.workflow.ID != workflowID {
+		return nil, ErrNotFound
+	}
+	item := f.revisions[revision]
+	if item == nil {
+		return nil, ErrNotFound
+	}
+	copy := *item
+	return &copy, nil
 }
 
 func (f *fakeStore) CreateRun(_ context.Context, run *Run) error {

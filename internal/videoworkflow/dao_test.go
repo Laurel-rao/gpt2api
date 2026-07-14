@@ -418,6 +418,10 @@ func (c fakeSQLConn) QueryContext(_ context.Context, query string, args []driver
 		return &fakeSQLRows{columns: []string{"id", "code", "version", "name", "description", "source_url", "graph_json", "enabled", "created_at", "updated_at"}, values: [][]driver.Value{{int64(1), "ancient_drama_seedance_v1", int64(1), "模板", "描述", "https://x.com", graph, true, now, now}}}, nil
 	case strings.Contains(query, "FROM video_workflows"):
 		return &fakeSQLRows{columns: []string{"workflow_id", "user_id", "template_id", "template_version", "name", "revision", "graph_json", "created_at", "updated_at", "deleted_at"}, values: [][]driver.Value{{"workflow", int64(7), int64(1), int64(1), "工作流", int64(1), graph, now, now, nil}}}, nil
+	case strings.Contains(query, "FROM video_workflow_revisions") && strings.Contains(query, "ORDER BY revision DESC"):
+		return &fakeSQLRows{columns: []string{"workflow_id", "revision", "name", "node_count", "edge_count", "created_at"}, values: [][]driver.Value{{"workflow", int64(2), "工作流", int64(3), int64(2), now}}}, nil
+	case strings.Contains(query, "FROM video_workflow_revisions"):
+		return &fakeSQLRows{columns: []string{"workflow_id", "user_id", "revision", "name", "graph_json", "node_count", "edge_count", "created_at"}, values: [][]driver.Value{{"workflow", int64(7), int64(2), "工作流", graph, int64(3), int64(2), now}}}, nil
 	case strings.Contains(query, "FROM video_workflow_runs") && strings.Contains(query, "ORDER BY created_at DESC"):
 		return &fakeSQLRows{columns: []string{"run_id", "workflow_id", "workflow_revision", "status", "progress", "run_mode", "start_node_id", "estimated_credits", "actual_credits", "output_version_id", "error_code", "error_message", "created_at", "started_at", "finished_at"}, values: [][]driver.Value{{"run", "workflow", int64(2), "queued", int64(0), "full", "", int64(10), int64(0), "", "", "", now, nil, nil}}}, nil
 	case strings.Contains(query, "FROM video_workflow_runs"):

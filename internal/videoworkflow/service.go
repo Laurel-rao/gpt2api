@@ -176,6 +176,34 @@ func (s *Service) DeleteWorkflow(ctx context.Context, userID uint64, workflowID 
 	return s.store.DeleteWorkflow(ctx, userID, workflowID)
 }
 
+func (s *Service) ListWorkflowRevisions(ctx context.Context, userID uint64, workflowID string, limit, offset int) ([]WorkflowRevisionListItem, int64, error) {
+	workflow, err := s.store.GetWorkflow(ctx, userID, workflowID)
+	if err != nil {
+		return nil, 0, err
+	}
+	items, total, err := s.store.ListWorkflowRevisions(ctx, userID, workflowID, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	for i := range items {
+		items[i].IsCurrent = items[i].Revision == workflow.Revision
+	}
+	return items, total, nil
+}
+
+func (s *Service) GetWorkflowRevision(ctx context.Context, userID uint64, workflowID string, revision uint64) (*WorkflowRevision, error) {
+	workflow, err := s.store.GetWorkflow(ctx, userID, workflowID)
+	if err != nil {
+		return nil, err
+	}
+	item, err := s.store.GetWorkflowRevision(ctx, userID, workflowID, revision)
+	if err != nil {
+		return nil, err
+	}
+	item.IsCurrent = item.Revision == workflow.Revision
+	return item, nil
+}
+
 func (s *Service) ValidateWorkflow(ctx context.Context, userID uint64, workflowID string) (ValidationErrors, error) {
 	return s.validateWorkflow(ctx, userID, workflowID, nil)
 }

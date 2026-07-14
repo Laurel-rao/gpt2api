@@ -25,6 +25,8 @@ type Store interface {
 	GetWorkflow(context.Context, uint64, string) (*Workflow, error)
 	UpdateWorkflow(context.Context, *Workflow, uint64) error
 	DeleteWorkflow(context.Context, uint64, string) error
+	ListWorkflowRevisions(context.Context, uint64, string, int, int) ([]WorkflowRevisionListItem, int64, error)
+	GetWorkflowRevision(context.Context, uint64, string, uint64) (*WorkflowRevision, error)
 	CreateRun(context.Context, *Run) error
 	ListRuns(context.Context, uint64, string, int, int) ([]RunListItem, int64, error)
 	GetRun(context.Context, uint64, string) (*Run, error)
@@ -116,15 +118,22 @@ func (d *SQLDAO) CreateWorkflow(ctx context.Context, workflow *Workflow) error {
 	if workflow.ID == "" {
 		return errors.New("videoworkflow: workflow id is required")
 	}
-	_, err := d.db.ExecContext(ctx, `
-INSERT INTO video_workflows
-  (workflow_id, user_id, template_id, template_version, name, revision, graph_json, settings_json)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, workflow.ID, workflow.UserID, workflow.TemplateID,
-		workflow.TemplateVersion, workflow.Name, workflow.Revision, workflow.Graph, workflow.Graph.Settings)
+	tx, err := d.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	return nil
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO video_workflows
+  (workflow_id, user_id, template_id, template_version, name, revision, graph_json, settings_json)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, workflow.ID, workflow.UserID, workflow.TemplateID,
+		workflow.TemplateVersion, workflow.Name, workflow.Revision, workflow.Graph, workflow.Graph.Settings); err != nil {
+		return err
+	}
+	if err := upsertWorkflowRevisionTx(ctx, tx, workflow); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (d *SQLDAO) ListWorkflows(ctx context.Context, userID uint64, limit, offset int) ([]Workflow, int64, error) {
@@ -156,7 +165,12 @@ SELECT workflow_id, user_id, template_id, template_version, name, revision, grap
 }
 
 func (d *SQLDAO) UpdateWorkflow(ctx context.Context, workflow *Workflow, expectedRevision uint64) error {
-	result, err := d.db.ExecContext(ctx, `
+	tx, err := d.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, `
 UPDATE video_workflows
    SET name=?, graph_json=?, settings_json=?, revision=revision+1
  WHERE workflow_id=? AND user_id=? AND revision=? AND deleted_at IS NULL`,
@@ -170,7 +184,7 @@ UPDATE video_workflows
 	}
 	if rows == 0 {
 		var exists int
-		if err := d.db.GetContext(ctx, &exists, `SELECT COUNT(*) FROM video_workflows WHERE workflow_id=? AND user_id=? AND deleted_at IS NULL`, workflow.ID, workflow.UserID); err != nil {
+		if err := tx.GetContext(ctx, &exists, `SELECT COUNT(*) FROM video_workflows WHERE workflow_id=? AND user_id=? AND deleted_at IS NULL`, workflow.ID, workflow.UserID); err != nil {
 			return err
 		}
 		if exists == 0 {
@@ -179,7 +193,67 @@ UPDATE video_workflows
 		return ErrRevisionConflict
 	}
 	workflow.Revision = expectedRevision + 1
-	return nil
+	if err := upsertWorkflowRevisionTx(ctx, tx, workflow); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func upsertWorkflowRevisionTx(ctx context.Context, tx *sqlx.Tx, workflow *Workflow) error {
+	if workflow == nil {
+		return errors.New("videoworkflow: workflow is required")
+	}
+	_, err := tx.ExecContext(ctx, `
+INSERT INTO video_workflow_revisions
+  (workflow_id, user_id, revision, name, graph_json, settings_json, node_count, edge_count)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+ON DUPLICATE KEY UPDATE
+  name=VALUES(name),
+  graph_json=VALUES(graph_json),
+  settings_json=VALUES(settings_json),
+  node_count=VALUES(node_count),
+  edge_count=VALUES(edge_count)`,
+		workflow.ID, workflow.UserID, workflow.Revision, workflow.Name, workflow.Graph, workflow.Graph.Settings,
+		len(workflow.Graph.Nodes), len(workflow.Graph.Edges))
+	return err
+}
+
+func (d *SQLDAO) ListWorkflowRevisions(ctx context.Context, userID uint64, workflowID string, limit, offset int) ([]WorkflowRevisionListItem, int64, error) {
+	if _, err := d.GetWorkflow(ctx, userID, workflowID); err != nil {
+		return nil, 0, err
+	}
+	limit, offset = normalizePage(limit, offset)
+	var total int64
+	if err := d.db.GetContext(ctx, &total, `
+SELECT COUNT(*) FROM video_workflow_revisions WHERE workflow_id=? AND user_id=?`, workflowID, userID); err != nil {
+		return nil, 0, err
+	}
+	var out []WorkflowRevisionListItem
+	err := d.db.SelectContext(ctx, &out, `
+SELECT workflow_id, revision, name, node_count, edge_count, created_at
+  FROM video_workflow_revisions
+ WHERE workflow_id=? AND user_id=?
+ ORDER BY revision DESC, id DESC
+ LIMIT ? OFFSET ?`, workflowID, userID, limit, offset)
+	return out, total, err
+}
+
+func (d *SQLDAO) GetWorkflowRevision(ctx context.Context, userID uint64, workflowID string, revision uint64) (*WorkflowRevision, error) {
+	if _, err := d.GetWorkflow(ctx, userID, workflowID); err != nil {
+		return nil, err
+	}
+	var out WorkflowRevision
+	err := d.db.GetContext(ctx, &out, `
+SELECT workflow_id, user_id, revision, name, graph_json, node_count, edge_count, created_at
+  FROM video_workflow_revisions
+ WHERE workflow_id=? AND user_id=? AND revision=?`, workflowID, userID, revision)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 func (d *SQLDAO) DeleteWorkflow(ctx context.Context, userID uint64, workflowID string) error {
