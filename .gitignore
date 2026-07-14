@@ -97,3 +97,10 @@ Thumbs.db
 /[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*.jpg
 /[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*.har
 !/docs/**
+scripts/local-sd/.venv/
+scripts/local-sd/logs/
+scripts/local-sd/models/
+scripts/local-sd/modelscope-cache/
+scripts/local-svd/.venv/
+scripts/local-svd/models/
+scripts/local-svd/data/

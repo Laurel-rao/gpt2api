@@ -80,3 +80,74 @@ GitHub Actions 示例骨架:
   run: node scripts/smoke.mjs --base http://localhost:8080
 ```
 
+## local-gen-mock · 本地文本/生图/生视频上游
+
+不依赖真模型，用占位 PNG + 15s MP4 跑通视频工作流（含 compose）。
+
+```bash
+# 启动 mock，并写入 system_settings；同时重启本机后端
+bash scripts/local-gen-up.sh --with-backend
+
+# 仅 mock（后端已在跑时，改完 settings 后在后台点「重载」或重启）
+bash scripts/local-gen-up.sh
+
+# 端到端冒烟（需 admin + self:video_workflow）
+node scripts/local-workflow-smoke.mjs \
+  --base http://127.0.0.1:8080 \
+  --email you@example.com \
+  --pass 'YourPass'
+```
+
+Mock 监听 `127.0.0.1:8790`，协议对齐：
+
+- **gpt-image-2**：`POST /v1/images/generations`、`/v1/images/edits`
+- **Seedance 2.0**：`POST/GET /seedance/api/v3/contents/generations/tasks`
+- 文本：`POST /v1/chat/completions`
+
+开发环境下载 mock 视频需 `GPT2API_APP_ENV=dev` 或 `GPT2API_VIDEO_WORKFLOW_ALLOW_LOCAL_MEDIA=1`（放行 `http://127.0.0.1`）。
+
+停止：`bash scripts/local-gen-up.sh --stop`
+
+## net-speed-test.mjs · 网络/页面资源测速
+
+用于排查页面卡顿到底慢在 DNS、TCP 连接、TLS、首包、下载吞吐，还是某个静态资源/接口本身。
+
+脚本底层调用 `curl`，输出每次请求的:
+
+- HTTP 状态与版本
+- DNS / connect / TLS / TTFB / total
+- 下载体积与下载速度
+- 汇总 avg / p95
+
+### 用法
+
+```bash
+node scripts/net-speed-test.mjs \
+  --page https://ai.reeko.net.cn:8081/admin/ops \
+  --rounds 3 \
+  --concurrency 4
+```
+
+内置 Sub2API 新旧机对比:
+
+```bash
+node scripts/net-speed-test.mjs --preset sub2api --rounds 5
+```
+
+输出 JSON 便于留档:
+
+```bash
+node scripts/net-speed-test.mjs \
+  --page https://ai.reeko.net.cn:8081/admin/ops \
+  --rounds 5 \
+  --json output/sub2api-speed.json
+```
+
+常用参数:
+
+- `--url URL`: 单独指定测速 URL，可重复。
+- `--page URL`: 拉取页面并自动发现 `src/href` 里的 JS/CSS/图片资源。
+- `--http auto|1.1|2`: 指定 HTTP 协议。
+- `--compressed false`: 关闭 gzip/br 请求。
+- `--insecure true`: 跳过证书校验。
+- `--assets false`: 只测页面 HTML，不自动测静态资源。

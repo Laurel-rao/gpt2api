@@ -8,6 +8,9 @@
   },
   "scripts": {
     "smoke": "node smoke.mjs",
-    "smoke:docker": "node smoke.mjs --base http://localhost:8080"
+    "smoke:docker": "node smoke.mjs --base http://localhost:8080",
+    "speed": "node net-speed-test.mjs",
+    "local-gen-mock": "node local-gen-mock.mjs",
+    "local-workflow-smoke": "node local-workflow-smoke.mjs"
   }
 }
