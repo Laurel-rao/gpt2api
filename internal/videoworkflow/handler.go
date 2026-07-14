@@ -116,7 +116,24 @@ func (h *Handler) DeleteWorkflow(c *gin.Context) {
 }
 
 func (h *Handler) ValidateWorkflow(c *gin.Context) {
-	errs, err := h.service.ValidateWorkflow(c.Request.Context(), middleware.UserID(c), c.Param("id"))
+	var request struct {
+		Graph *Graph `json:"graph"`
+	}
+	if c.Request.ContentLength != 0 {
+		if err := c.ShouldBindJSON(&request); err != nil {
+			abortBadRequest(c, err.Error())
+			return
+		}
+	}
+	var (
+		errs ValidationErrors
+		err  error
+	)
+	if request.Graph != nil {
+		errs, err = h.service.ValidateWorkflowGraph(c.Request.Context(), middleware.UserID(c), c.Param("id"), *request.Graph)
+	} else {
+		errs, err = h.service.ValidateWorkflow(c.Request.Context(), middleware.UserID(c), c.Param("id"))
+	}
 	if err != nil {
 		handleError(c, err)
 		return

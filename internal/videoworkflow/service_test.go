@@ -66,6 +66,52 @@ func TestService_ReadDeleteAndValidationWrappers(t *testing.T) {
 	}
 }
 
+func TestService_ValidateWorkflowGraphUsesRequestBody(t *testing.T) {
+	store := newFakeStore(t)
+	service := NewService(store)
+	workflow, err := service.CreateWorkflow(context.Background(), CreateWorkflowInput{UserID: 7, TemplateID: 1, Name: "校验"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if errs, err := service.ValidateWorkflow(context.Background(), 7, workflow.ID); err != nil || len(errs) != 0 {
+		t.Fatalf("empty-path validation=%v err=%v", errs, err)
+	}
+
+	invalid, err := CloneGraph(workflow.Graph)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalid.Edges[0].TargetPort = "missing"
+	errs, err := service.ValidateWorkflowGraph(context.Background(), 7, workflow.ID, invalid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !errs.Has(ValidationPortNotFound) {
+		t.Fatalf("expected port_not_found, got %#v", errs)
+	}
+
+	saved, err := service.ValidateWorkflow(context.Background(), 7, workflow.ID)
+	if err != nil || len(saved) != 0 {
+		t.Fatalf("saved graph should still be valid: errs=%v err=%v", saved, err)
+	}
+
+	if _, err := service.ValidateWorkflowGraph(context.Background(), 8, workflow.ID, workflow.Graph); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("other user error=%v", err)
+	}
+	if _, err := service.ValidateWorkflow(context.Background(), 7, "missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing workflow error=%v", err)
+	}
+	if _, err := service.ValidateWorkflowGraph(context.Background(), 7, "missing", workflow.Graph); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing workflow with graph error=%v", err)
+	}
+
+	store.workflow.Graph.Edges = nil
+	if errs, err := service.ValidateWorkflow(context.Background(), 7, workflow.ID); err != nil || len(errs) == 0 {
+		t.Fatalf("expected saved-graph validation failures, errs=%v err=%v", errs, err)
+	}
+}
+
 func TestService_RuntimeRequiredAndTerminalCancelRejected(t *testing.T) {
 	store := newFakeStore(t)
 	service := NewService(store)

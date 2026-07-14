@@ -202,6 +202,47 @@ func (c *Composer) ComposeClips(ctx context.Context, clips []ComposeClip, output
 	return result, nil
 }
 
+// ExtractPreviewFrame 从视频抽取首帧 JPEG，供素材库与节点卡封面使用。
+func (c *Composer) ExtractPreviewFrame(ctx context.Context, videoPath, outputPath string) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if strings.TrimSpace(videoPath) == "" || strings.TrimSpace(outputPath) == "" {
+		return errors.New("video and output paths are required")
+	}
+	if !c.Available() {
+		return ErrFFmpegUnavailable
+	}
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o750); err != nil {
+		return err
+	}
+	tempPath := outputPath + ".tmp-" + uuid.NewString() + ".jpg"
+	defer os.Remove(tempPath)
+	args := []string{
+		"-hide_banner", "-loglevel", "error", "-y",
+		"-ss", "0", "-i", videoPath,
+		"-frames:v", "1", "-q:v", "3",
+		tempPath,
+	}
+	cmd := exec.CommandContext(ctx, defaultString(c.FFmpegPath, "ffmpeg"), args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if len(msg) > 4000 {
+			msg = msg[len(msg)-4000:]
+		}
+		return fmt.Errorf("ffmpeg preview frame: %w: %s", err, msg)
+	}
+	info, err := os.Stat(tempPath)
+	if err != nil || info.Size() == 0 {
+		return fmt.Errorf("ffmpeg preview frame produced empty output")
+	}
+	if err := os.Rename(tempPath, outputPath); err != nil {
+		return fmt.Errorf("publish preview frame: %w", err)
+	}
+	return nil
+}
+
 func buildComposeFilter(probes []mediaProbe, spec OutputSpec) string {
 	clips := make([]ComposeClip, len(probes))
 	for i := range clips {

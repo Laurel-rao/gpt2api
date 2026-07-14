@@ -264,8 +264,29 @@ func NewRestrictedHTTPClient(timeout time.Duration) *http.Client {
 	return NewRestrictedHTTPClientWithAllowedHosts(timeout, nil)
 }
 
+func allowLocalMediaDownloads() bool {
+	if os.Getenv("GPT2API_VIDEO_WORKFLOW_ALLOW_LOCAL_MEDIA") == "1" {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("GPT2API_APP_ENV")), "dev")
+}
+
+func isLocalMediaHost(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
+}
+
+func allowedMediaScheme(scheme, host string) bool {
+	scheme = strings.ToLower(strings.TrimSpace(scheme))
+	if scheme == "https" {
+		return true
+	}
+	return allowLocalMediaDownloads() && scheme == "http" && isLocalMediaHost(host)
+}
+
 // NewRestrictedHTTPClientWithAllowedHosts 创建不读取 HTTP(S)_PROXY 的下载客户端。
 // allowedHosts 为空时允许任意公网 HTTPS 域名；非空时仅允许精确域名或其子域名。
+// APP_ENV=dev 或 GPT2API_VIDEO_WORKFLOW_ALLOW_LOCAL_MEDIA=1 时额外允许 http://127.0.0.1|localhost。
 func NewRestrictedHTTPClientWithAllowedHosts(timeout time.Duration, allowedHosts []string) *http.Client {
 	if timeout <= 0 {
 		timeout = 60 * time.Second
@@ -289,7 +310,7 @@ func NewRestrictedHTTPClientWithAllowedHosts(timeout time.Duration, allowedHosts
 				return nil, ErrRemoteAddressDenied
 			}
 			for _, ip := range ips {
-				if deniedIP(ip) {
+				if deniedIP(ip) && !(allowLocalMediaDownloads() && isLocalMediaHost(host)) {
 					return nil, ErrRemoteAddressDenied
 				}
 			}
@@ -302,7 +323,7 @@ func NewRestrictedHTTPClientWithAllowedHosts(timeout time.Duration, allowedHosts
 		if len(via) >= 3 {
 			return errors.New("too many redirects")
 		}
-		if req.URL.Scheme != "https" || req.URL.User != nil || !allowedRemoteHost(req.URL.Hostname(), allowedHosts) {
+		if req.URL.User != nil || !allowedMediaScheme(req.URL.Scheme, req.URL.Hostname()) || !allowedRemoteHost(req.URL.Hostname(), allowedHosts) {
 			return ErrRemoteAddressDenied
 		}
 		return nil
@@ -329,7 +350,7 @@ func allowedRemoteHost(host string, allowedHosts []string) bool {
 
 func DownloadRemoteMedia(ctx context.Context, client *http.Client, rawURL string, maxBytes int64) ([]byte, string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(rawURL))
-	if err != nil || parsed.Scheme != "https" || parsed.User != nil || parsed.Hostname() == "" {
+	if err != nil || parsed.User != nil || parsed.Hostname() == "" || !allowedMediaScheme(parsed.Scheme, parsed.Hostname()) {
 		return nil, "", ErrRemoteAddressDenied
 	}
 	if client == nil {

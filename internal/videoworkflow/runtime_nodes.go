@@ -867,11 +867,10 @@ func (r *Runtime) prepareGeneratedMediaForAsset(ctx context.Context, run *Run, n
 		MIMEType: saved.MIME, StorageKey: storageKey(r.config.AssetRoot, saved.Path), FilePath: saved.Path,
 		SizeBytes: saved.SizeBytes, SHA256: saved.SHA256, InputHash: inputHash, SourceType: sourceType,
 		CreatedByRunID: run.ID, CreatedByNodeRunID: state.ID}
+	service := &Service{composer: r.config.Composer, assetRoot: r.config.AssetRoot}
 	if kind == MediaKindImage {
-		service := &Service{composer: r.config.Composer}
 		version.Width, version.Height, _, err = service.inspectUploadedMedia(ctx, kind, saved.Path)
 	} else {
-		service := &Service{composer: r.config.Composer}
 		version.Width, version.Height, version.DurationMS, err = service.inspectUploadedMedia(ctx, MediaKindVideo, saved.Path)
 	}
 	if err != nil {
@@ -884,6 +883,7 @@ func (r *Runtime) prepareGeneratedMediaForAsset(ctx context.Context, run *Run, n
 			return nil, nil, err
 		}
 	}
+	service.writeVideoPreviewFrame(ctx, kind, saved.Path)
 	return version, saved, nil
 }
 

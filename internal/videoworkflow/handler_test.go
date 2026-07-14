@@ -198,6 +198,86 @@ func TestHandler_UploadPNGInfersKind(t *testing.T) {
 	}
 }
 
+func TestHandler_ValidateWorkflowAcceptsOptionalGraph(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := newFakeStore(t)
+	service := NewService(store)
+	workflow, err := service.CreateWorkflow(t.Context(), CreateWorkflowInput{UserID: 7, TemplateID: 1, Name: "校验"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewHandler(service)
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(middleware.CtxUserID, uint64(7)); c.Next() })
+	router.POST("/workflows/:id/validate", handler.ValidateWorkflow)
+
+	assertValidateResponse(t, router, "/workflows/"+workflow.ID+"/validate", nil, http.StatusOK, true, "")
+	assertValidateResponse(t, router, "/workflows/"+workflow.ID+"/validate", map[string]any{}, http.StatusOK, true, "")
+
+	invalid, err := CloneGraph(workflow.Graph)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalid.Edges[0].TargetPort = "missing"
+	assertValidateResponse(t, router, "/workflows/"+workflow.ID+"/validate", map[string]any{"graph": invalid}, http.StatusOK, false, string(ValidationPortNotFound))
+	assertValidateResponse(t, router, "/workflows/"+workflow.ID+"/validate", map[string]any{"graph": workflow.Graph}, http.StatusOK, true, "")
+
+	assertHTTP(t, router, http.MethodPost, "/workflows/missing/validate", map[string]any{"graph": workflow.Graph}, http.StatusNotFound)
+	assertHTTP(t, router, http.MethodPost, "/workflows/"+workflow.ID+"/validate", map[string]any{"graph": "bad"}, http.StatusBadRequest)
+
+	other := gin.New()
+	other.Use(func(c *gin.Context) { c.Set(middleware.CtxUserID, uint64(8)); c.Next() })
+	other.POST("/workflows/:id/validate", handler.ValidateWorkflow)
+	assertHTTP(t, other, http.MethodPost, "/workflows/"+workflow.ID+"/validate", map[string]any{"graph": workflow.Graph}, http.StatusNotFound)
+	assertHTTP(t, other, http.MethodPost, "/workflows/"+workflow.ID+"/validate", nil, http.StatusNotFound)
+}
+
+func assertValidateResponse(t *testing.T, router http.Handler, path string, body any, status int, wantValid bool, wantCode string) {
+	t.Helper()
+	var raw []byte
+	if body != nil {
+		raw, _ = json.Marshal(body)
+	}
+	request := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(raw))
+	if body != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != status {
+		t.Fatalf("status=%d want=%d body=%s", response.Code, status, response.Body.String())
+	}
+	var result struct {
+		Code int `json:"code"`
+		Data struct {
+			Valid  bool              `json:"valid"`
+			Errors []ValidationError `json:"errors"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode: %v body=%s", err, response.Body.String())
+	}
+	if result.Data.Valid != wantValid {
+		t.Fatalf("valid=%v want=%v body=%s", result.Data.Valid, wantValid, response.Body.String())
+	}
+	if wantCode == "" {
+		if len(result.Data.Errors) != 0 {
+			t.Fatalf("unexpected errors=%#v", result.Data.Errors)
+		}
+		return
+	}
+	found := false
+	for _, item := range result.Data.Errors {
+		if string(item.Code) == wantCode {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("missing code %s in %#v", wantCode, result.Data.Errors)
+	}
+}
+
 func assertHTTP(t *testing.T, router http.Handler, method, path string, body any, status int) {
 	t.Helper()
 	var raw []byte

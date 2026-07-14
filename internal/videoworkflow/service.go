@@ -177,11 +177,24 @@ func (s *Service) DeleteWorkflow(ctx context.Context, userID uint64, workflowID 
 }
 
 func (s *Service) ValidateWorkflow(ctx context.Context, userID uint64, workflowID string) (ValidationErrors, error) {
+	return s.validateWorkflow(ctx, userID, workflowID, nil)
+}
+
+// ValidateWorkflowGraph 在确认工作流归属后校验请求中的 Graph，不读取库中已保存版本。
+func (s *Service) ValidateWorkflowGraph(ctx context.Context, userID uint64, workflowID string, graph Graph) (ValidationErrors, error) {
+	return s.validateWorkflow(ctx, userID, workflowID, &graph)
+}
+
+func (s *Service) validateWorkflow(ctx context.Context, userID uint64, workflowID string, graph *Graph) (ValidationErrors, error) {
 	workflow, err := s.store.GetWorkflow(ctx, userID, workflowID)
 	if err != nil {
 		return nil, err
 	}
-	return ValidateGraph(workflow.Graph, true), nil
+	target := workflow.Graph
+	if graph != nil {
+		target = *graph
+	}
+	return ValidateGraph(target, true), nil
 }
 
 type StartRunInput struct {

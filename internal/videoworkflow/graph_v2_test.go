@@ -26,12 +26,15 @@ func TestBuiltinTemplatesGraphV2(t *testing.T) {
 		}
 	}
 	ancient := byCode["ancient_drama_seedance"]
-	if len(ancient.Graph.Nodes) != 19 || ancient.Version != 3 || ancient.Graph.Settings.Resolution != Resolution1080p || ancient.Graph.Settings.VideoModel != "wan2.7-r2v" ||
-		!strings.Contains(ancient.Name, "Wan2.7") || !strings.Contains(ancient.Description, "Wan2.7") {
-		t.Fatalf("unexpected ancient template: nodes=%d settings=%+v", len(ancient.Graph.Nodes), ancient.Graph.Settings)
+	if len(ancient.Graph.Nodes) != 19 || ancient.Version != 3 || ancient.Graph.Settings.Resolution != Resolution1080p ||
+		ancient.Graph.Settings.VideoModel != "doubao-seedance-2-0-fast-260128" ||
+		ancient.Graph.Settings.ImageModel != "gpt-image-2" ||
+		!strings.Contains(ancient.Name, "本地 Seedance") || !strings.Contains(ancient.Description, "Seedance/Motion") {
+		t.Fatalf("unexpected ancient template: nodes=%d name=%q settings=%+v", len(ancient.Graph.Nodes), ancient.Name, ancient.Graph.Settings)
 	}
 	blank := byCode["blank_video_canvas"]
-	if len(blank.Graph.Nodes) != 6 || blank.Graph.Settings.Resolution != Resolution720p || blank.Graph.Settings.VideoModel != "wan2.7-r2v" {
+	if len(blank.Graph.Nodes) != 6 || blank.Graph.Settings.Resolution != Resolution720p ||
+		blank.Graph.Settings.VideoModel != "doubao-seedance-2-0-fast-260128" {
 		t.Fatalf("unexpected blank template: nodes=%d settings=%+v", len(blank.Graph.Nodes), blank.Graph.Settings)
 	}
 }
@@ -48,7 +51,7 @@ func TestAncientDramaV3SafetyStyleTimelineAndWanReferences(t *testing.T) {
 			break
 		}
 	}
-	if ancient == nil || ancient.Version != 3 || ancient.Graph.Settings.VideoModel != "wan2.7-r2v" {
+	if ancient == nil || ancient.Version != 3 || ancient.Graph.Settings.VideoModel != "doubao-seedance-2-0-fast-260128" {
 		t.Fatalf("ancient v3 template=%+v", ancient)
 	}
 
@@ -94,6 +97,13 @@ func TestAncientDramaV3SafetyStyleTimelineAndWanReferences(t *testing.T) {
 		for _, keyword := range []string{"二维国风动画", "虚构成年人", "非照片", "非写实", "非真人"} {
 			if !strings.Contains(config.Prompt, keyword) {
 				t.Fatalf("node %s prompt lacks %q: %s", node.ID, keyword, config.Prompt)
+			}
+		}
+		if strings.HasPrefix(node.ID, "role_") {
+			for _, keyword := range []string{"全身正面", "侧面", "背面三视图", "脸部大特写", "服装与物料细节"} {
+				if !strings.Contains(config.Prompt, keyword) {
+					t.Fatalf("character %s prompt lacks sheet keyword %q: %s", node.ID, keyword, config.Prompt)
+				}
 			}
 		}
 		if background && (!strings.Contains(config.Prompt, "9:16单镜头") || !strings.Contains(config.Prompt, "非拼贴")) {

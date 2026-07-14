@@ -11,6 +11,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -125,6 +126,7 @@ func (s *Service) UploadAsset(ctx context.Context, input AssetUploadInput) (*Ass
 		MIMEType: saved.MIME, StorageKey: storageKey(root, saved.Path), FilePath: saved.Path, SizeBytes: saved.SizeBytes, SHA256: saved.SHA256, SourceType: "upload",
 		Width: width, Height: height, DurationMS: durationMS,
 	}
+	s.writeVideoPreviewFrame(ctx, input.Kind, saved.Path)
 	if err := store.CreateAssetVersion(ctx, version); err != nil {
 		originalErr := err
 		committed, definitelyNotCommitted := reconcileCreatedAssetVersion(store, input.UserID, asset.ID, version, true)
@@ -184,6 +186,10 @@ func (s *Service) decorateAssetVersions(versions []AssetVersion, now time.Time) 
 		if versions[i].Status != AssetReady {
 			continue
 		}
+		// 视频封面依赖 sidecar；无封面时不暴露 preview_url，避免前端把视频当图片加载。
+		if isVideoMIME(versions[i].MIMEType) && !videoPreviewSidecarExists(versions[i].FilePath) {
+			continue
+		}
 		signature, err := s.mediaSigner.Sign(versions[i].ID, MediaPurposePreview, expires)
 		if err == nil {
 			versions[i].PreviewURL = SignedMediaPath(versions[i].ID, MediaPurposePreview, expires, signature)
@@ -196,6 +202,40 @@ func removeNewMedia(saved *SavedMedia) {
 	// 持有唯一文件；删除本请求路径不会影响并发请求已经写入数据库的版本。
 	if saved != nil && strings.TrimSpace(saved.Path) != "" {
 		_ = os.Remove(saved.Path)
+		_ = os.Remove(videoPreviewSidecarPath(saved.Path))
+	}
+}
+
+func videoPreviewSidecarPath(videoPath string) string {
+	return videoPath + ".preview.jpg"
+}
+
+func videoPreviewSidecarExists(videoPath string) bool {
+	info, err := os.Stat(videoPreviewSidecarPath(videoPath))
+	return err == nil && info.Size() > 0
+}
+
+func isVideoMIME(mime string) bool {
+	return strings.HasPrefix(strings.TrimSpace(mime), "video/")
+}
+
+func kindNeedsVideoPreview(kind string) bool {
+	return kind == MediaKindVideo || kind == MediaKindComposedVideo
+}
+
+// writeVideoPreviewFrame 尝试抽取视频封面；失败只记日志，不阻断上传/生成。
+func (s *Service) writeVideoPreviewFrame(ctx context.Context, kind, videoPath string) {
+	if !kindNeedsVideoPreview(kind) || strings.TrimSpace(videoPath) == "" {
+		return
+	}
+	composer := s.composer
+	if composer == nil {
+		composer = NewComposer()
+	}
+	previewPath := videoPreviewSidecarPath(videoPath)
+	if err := composer.ExtractPreviewFrame(ctx, videoPath, previewPath); err != nil {
+		log.Printf("videoworkflow: extract video preview failed path=%s: %v", videoPath, err)
+		_ = os.Remove(previewPath)
 	}
 }
 
@@ -300,11 +340,21 @@ func (s *Service) OpenSignedMedia(ctx context.Context, versionID, purpose string
 	if root == "." || (clean != root && !strings.HasPrefix(clean, root+string(os.PathSeparator))) {
 		return nil, nil, ErrNotFound
 	}
-	file, err := os.Open(clean)
+	out := *version
+	openPath := clean
+	if purpose == MediaPurposePreview {
+		preview := filepath.Clean(videoPreviewSidecarPath(clean))
+		if preview != root && strings.HasPrefix(preview, root+string(os.PathSeparator)) && videoPreviewSidecarExists(clean) {
+			openPath = preview
+			out.FilePath = preview
+			out.MIMEType = "image/jpeg"
+		}
+	}
+	file, err := os.Open(openPath)
 	if err != nil {
 		return nil, nil, ErrNotFound
 	}
-	return version, file, nil
+	return &out, file, nil
 }
 
 func probeDurationMS(probe mediaProbe) (int64, error) {

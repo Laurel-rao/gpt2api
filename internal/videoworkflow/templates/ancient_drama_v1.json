@@ -16,43 +16,988 @@
       "video_model": "seedance-2.0"
     },
     "nodes": [
-      {"id":"brief","type":"story_brief","position":{"x":40,"y":120},"config":{"title":"古风小剧场","prompt":"描述主题、人物关系、冲突和结局"},"outputs":[{"id":"text","type":"text"}]},
-      {"id":"role_heroine","type":"character","role_id":"heroine","position":{"x":300,"y":20},"config":{"name":"女主","adult_age":22,"candidate_count":2,"view":"正面、侧面、背面三视图","prompt":"成年古风女主角色定妆，统一面容、发型、服装和气质"},"inputs":[{"id":"brief","type":"text","required":true}],"outputs":[{"id":"candidates","type":"image_set"},{"id":"selected","type":"image"}]},
-      {"id":"role_hero","type":"character","role_id":"hero","position":{"x":300,"y":170},"config":{"name":"男主","adult_age":25,"candidate_count":2,"view":"正面、侧面、背面三视图","prompt":"成年古风男主角色定妆，统一面容、发型、服装和气质"},"inputs":[{"id":"brief","type":"text","required":true}],"outputs":[{"id":"candidates","type":"image_set"},{"id":"selected","type":"image"}]},
-      {"id":"role_cousin","type":"character","role_id":"cousin","position":{"x":300,"y":320},"config":{"name":"表小姐","adult_age":23,"candidate_count":2,"view":"正面、侧面、背面三视图","prompt":"成年古风表小姐角色定妆，统一面容、发型、服装和气质"},"inputs":[{"id":"brief","type":"text","required":true}],"outputs":[{"id":"candidates","type":"image_set"},{"id":"selected","type":"image"}]},
-      {"id":"script","type":"script","position":{"x":580,"y":170},"config":{"scene_count":4,"prompt":"输出严格 JSON；每场固定 15 秒，包含地点、时间、台词以及 start/end/camera/action/expression/lighting/audio 时间段"},"inputs":[{"id":"brief","type":"text","required":true},{"id":"heroine","type":"image","required":true},{"id":"hero","type":"image","required":true},{"id":"cousin","type":"image","required":true}],"outputs":[{"id":"script","type":"script"}]},
-      {"id":"scene_1","type":"scene","scene_id":"scene_1","duration_seconds":15,"position":{"x":850,"y":20},"config":{"index":1},"inputs":[{"id":"script","type":"script","required":true}],"outputs":[{"id":"scene","type":"scene"}]},
-      {"id":"background_1","type":"background","scene_id":"scene_1","position":{"x":1070,"y":20},"config":{"candidate_count":1},"inputs":[{"id":"scene","type":"scene","required":true}],"outputs":[{"id":"image","type":"image"}]},
-      {"id":"video_1","type":"video","scene_id":"scene_1","duration_seconds":15,"position":{"x":1290,"y":20},"config":{"duration_seconds":15},"inputs":[{"id":"scene","type":"scene","required":true},{"id":"background","type":"image","required":true},{"id":"heroine","type":"image","required":true},{"id":"hero","type":"image","required":true},{"id":"cousin","type":"image","required":true}],"outputs":[{"id":"video","type":"video"}]},
-      {"id":"scene_2","type":"scene","scene_id":"scene_2","duration_seconds":15,"position":{"x":850,"y":190},"config":{"index":2},"inputs":[{"id":"script","type":"script","required":true}],"outputs":[{"id":"scene","type":"scene"}]},
-      {"id":"background_2","type":"background","scene_id":"scene_2","position":{"x":1070,"y":190},"config":{"candidate_count":1},"inputs":[{"id":"scene","type":"scene","required":true}],"outputs":[{"id":"image","type":"image"}]},
-      {"id":"video_2","type":"video","scene_id":"scene_2","duration_seconds":15,"position":{"x":1290,"y":190},"config":{"duration_seconds":15},"inputs":[{"id":"scene","type":"scene","required":true},{"id":"background","type":"image","required":true},{"id":"heroine","type":"image","required":true},{"id":"hero","type":"image","required":true},{"id":"cousin","type":"image","required":true}],"outputs":[{"id":"video","type":"video"}]},
-      {"id":"scene_3","type":"scene","scene_id":"scene_3","duration_seconds":15,"position":{"x":850,"y":360},"config":{"index":3},"inputs":[{"id":"script","type":"script","required":true}],"outputs":[{"id":"scene","type":"scene"}]},
-      {"id":"background_3","type":"background","scene_id":"scene_3","position":{"x":1070,"y":360},"config":{"candidate_count":1},"inputs":[{"id":"scene","type":"scene","required":true}],"outputs":[{"id":"image","type":"image"}]},
-      {"id":"video_3","type":"video","scene_id":"scene_3","duration_seconds":15,"position":{"x":1290,"y":360},"config":{"duration_seconds":15},"inputs":[{"id":"scene","type":"scene","required":true},{"id":"background","type":"image","required":true},{"id":"heroine","type":"image","required":true},{"id":"hero","type":"image","required":true},{"id":"cousin","type":"image","required":true}],"outputs":[{"id":"video","type":"video"}]},
-      {"id":"scene_4","type":"scene","scene_id":"scene_4","duration_seconds":15,"position":{"x":850,"y":530},"config":{"index":4},"inputs":[{"id":"script","type":"script","required":true}],"outputs":[{"id":"scene","type":"scene"}]},
-      {"id":"background_4","type":"background","scene_id":"scene_4","position":{"x":1070,"y":530},"config":{"candidate_count":1},"inputs":[{"id":"scene","type":"scene","required":true}],"outputs":[{"id":"image","type":"image"}]},
-      {"id":"video_4","type":"video","scene_id":"scene_4","duration_seconds":15,"position":{"x":1290,"y":530},"config":{"duration_seconds":15},"inputs":[{"id":"scene","type":"scene","required":true},{"id":"background","type":"image","required":true},{"id":"heroine","type":"image","required":true},{"id":"hero","type":"image","required":true},{"id":"cousin","type":"image","required":true}],"outputs":[{"id":"video","type":"video"}]},
-      {"id":"timeline","type":"timeline","position":{"x":1540,"y":240},"config":{"clip_node_ids":["video_1","video_2","video_3","video_4"]},"inputs":[{"id":"clip_1","type":"video","required":true},{"id":"clip_2","type":"video","required":true},{"id":"clip_3","type":"video","required":true},{"id":"clip_4","type":"video","required":true}],"outputs":[{"id":"videos","type":"video_list"}]},
-      {"id":"compose","type":"compose","position":{"x":1780,"y":240},"inputs":[{"id":"videos","type":"video_list","required":true}],"outputs":[{"id":"video","type":"video"}]}
+      {
+        "id": "brief",
+        "type": "story_brief",
+        "position": {
+          "x": 40,
+          "y": 120
+        },
+        "config": {
+          "title": "雨巷旧约",
+          "prompt": "创作四幕古风短剧《雨巷旧约》创意简报：女主离乡三年雨夜归来，重逢青梅竹马男主与热情表小姐；冲突是当年未解的婚约与误会，结局河灯夜和解。视觉统一为二维国风动画，所有角色均为虚构成年人；非照片、非写实、非真人。四幕分别为：雨巷重逢、花园叙旧、宴厅冲突、河灯和解。"
+        },
+        "outputs": [
+          {
+            "id": "text",
+            "type": "text"
+          }
+        ]
+      },
+      {
+        "id": "role_heroine",
+        "type": "character",
+        "role_id": "heroine",
+        "position": {
+          "x": 300,
+          "y": 20
+        },
+        "config": {
+          "name": "女主",
+          "adult_age": 22,
+          "candidate_count": 2,
+          "view": "全身三视图 + 脸部特写 + 服装物料细节",
+          "prompt": "二维国风动画角色设定；虚构成年人古风女主（22岁），鹅蛋脸杏眼，乌黑高挽发髻插白玉簪，穿月白交领襦裙配浅青披帛，气质清冷克制。输出一张角色设定参考拼贴：上排全身正面、侧面、背面三视图；中排脸部大特写（正面与3/4侧）刻画五官、妆容、眼神与发型发丝细节；下排服装与物料细节图（面料纹理、刺绣纹样、扣襟缘饰、配饰、鞋履、腰带/披帛等材质特写）；浅底设定稿、布局清晰；统一面容、发型、服装和气质；非照片、非写实、非真人。"
+        },
+        "inputs": [
+          {
+            "id": "brief",
+            "type": "text",
+            "required": true
+          }
+        ],
+        "outputs": [
+          {
+            "id": "candidates",
+            "type": "image_set"
+          },
+          {
+            "id": "selected",
+            "type": "image"
+          }
+        ]
+      },
+      {
+        "id": "role_hero",
+        "type": "character",
+        "role_id": "hero",
+        "position": {
+          "x": 300,
+          "y": 170
+        },
+        "config": {
+          "name": "男主",
+          "adult_age": 25,
+          "candidate_count": 2,
+          "view": "全身三视图 + 脸部特写 + 服装物料细节",
+          "prompt": "二维国风动画角色设定；虚构成年人古风男主（25岁），剑眉星目，束发玉冠，青色圆领袍外罩玄色披风，腰佩木剑，气质沉稳。输出一张角色设定参考拼贴：上排全身正面、侧面、背面三视图；中排脸部大特写（正面与3/4侧）刻画五官、妆容、眼神与发型发丝细节；下排服装与物料细节图（面料纹理、刺绣纹样、扣襟缘饰、配饰、鞋履、腰带/披帛等材质特写）；浅底设定稿、布局清晰；统一面容、发型、服装和气质；非照片、非写实、非真人。"
+        },
+        "inputs": [
+          {
+            "id": "brief",
+            "type": "text",
+            "required": true
+          }
+        ],
+        "outputs": [
+          {
+            "id": "candidates",
+            "type": "image_set"
+          },
+          {
+            "id": "selected",
+            "type": "image"
+          }
+        ]
+      },
+      {
+        "id": "role_cousin",
+        "type": "character",
+        "role_id": "cousin",
+        "position": {
+          "x": 300,
+          "y": 320
+        },
+        "config": {
+          "name": "表小姐",
+          "adult_age": 23,
+          "candidate_count": 2,
+          "view": "全身三视图 + 脸部特写 + 服装物料细节",
+          "prompt": "二维国风动画角色设定；虚构成年人古风表小姐（23岁），桃花妆圆脸，双环髻缀红花，朱红罗裙绣金纹，笑意明亮。输出一张角色设定参考拼贴：上排全身正面、侧面、背面三视图；中排脸部大特写（正面与3/4侧）刻画五官、妆容、眼神与发型发丝细节；下排服装与物料细节图（面料纹理、刺绣纹样、扣襟缘饰、配饰、鞋履、腰带/披帛等材质特写）；浅底设定稿、布局清晰；统一面容、发型、服装和气质；非照片、非写实、非真人。"
+        },
+        "inputs": [
+          {
+            "id": "brief",
+            "type": "text",
+            "required": true
+          }
+        ],
+        "outputs": [
+          {
+            "id": "candidates",
+            "type": "image_set"
+          },
+          {
+            "id": "selected",
+            "type": "image"
+          }
+        ]
+      },
+      {
+        "id": "script",
+        "type": "script",
+        "position": {
+          "x": 580,
+          "y": 170
+        },
+        "config": {
+          "scene_count": 4,
+          "prompt": "输出严格 JSON 四场剧本，每场固定 15 秒。故事《雨巷旧约》：幕1雨巷重逢（女主归来、男主停步）、幕2花园叙旧（三人闲谈暗藏试探）、幕3宴厅冲突（旧约被当众提起）、幕4河灯和解（放下误会）。每场含地点、时间、台词，以及 start/end/camera/action/expression/lighting/audio 时间段；角色均为虚构成年人；视觉为二维国风动画。"
+        },
+        "inputs": [
+          {
+            "id": "brief",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "heroine",
+            "type": "image",
+            "required": true
+          },
+          {
+            "id": "hero",
+            "type": "image",
+            "required": true
+          },
+          {
+            "id": "cousin",
+            "type": "image",
+            "required": true
+          }
+        ],
+        "outputs": [
+          {
+            "id": "script",
+            "type": "script"
+          }
+        ]
+      },
+      {
+        "id": "scene_1",
+        "type": "scene",
+        "scene_id": "scene_1",
+        "duration_seconds": 15,
+        "position": {
+          "x": 850,
+          "y": 20
+        },
+        "config": {
+          "index": 1
+        },
+        "inputs": [
+          {
+            "id": "script",
+            "type": "script",
+            "required": true
+          }
+        ],
+        "outputs": [
+          {
+            "id": "scene",
+            "type": "scene"
+          }
+        ]
+      },
+      {
+        "id": "background_1",
+        "type": "background",
+        "scene_id": "scene_1",
+        "position": {
+          "x": 1070,
+          "y": 20
+        },
+        "config": {
+          "candidate_count": 1,
+          "prompt": "二维国风动画场景背景；江南雨夜青石板巷，纸伞与灯笼倒影，远处木门半掩；无人或仅远景剪影；虚构成年人世界观；非照片、非写实、非真人；9:16单镜头、非拼贴，保持统一古风美术与清晰空间层次。"
+        },
+        "inputs": [
+          {
+            "id": "scene",
+            "type": "scene",
+            "required": true
+          }
+        ],
+        "outputs": [
+          {
+            "id": "image",
+            "type": "image"
+          }
+        ]
+      },
+      {
+        "id": "video_1",
+        "type": "video",
+        "scene_id": "scene_1",
+        "duration_seconds": 15,
+        "position": {
+          "x": 1290,
+          "y": 20
+        },
+        "config": {
+          "duration_seconds": 15,
+          "prompt": "生成9:16、15秒二维国风动画剧情视频；图1=场景背景，图2=女主，图3=男主，图4=表小姐；雨夜巷口女主撑伞归来，与男主对视停步；所有角色均为虚构成年人；非照片、非写实、非真人；保持角色造型、背景美术和动作连续一致。"
+        },
+        "inputs": [
+          {
+            "id": "scene",
+            "type": "scene",
+            "required": true
+          },
+          {
+            "id": "background",
+            "type": "image",
+            "required": true
+          },
+          {
+            "id": "heroine",
+            "type": "image",
+            "required": true
+          },
+          {
+            "id": "hero",
+            "type": "image",
+            "required": true
+          },
+          {
+            "id": "cousin",
+            "type": "image",
+            "required": true
+          }
+        ],
+        "outputs": [
+          {
+            "id": "video",
+            "type": "video"
+          }
+        ]
+      },
+      {
+        "id": "scene_2",
+        "type": "scene",
+        "scene_id": "scene_2",
+        "duration_seconds": 15,
+        "position": {
+          "x": 850,
+          "y": 190
+        },
+        "config": {
+          "index": 2
+        },
+        "inputs": [
+          {
+            "id": "script",
+            "type": "script",
+            "required": true
+          }
+        ],
+        "outputs": [
+          {
+            "id": "scene",
+            "type": "scene"
+          }
+        ]
+      },
+      {
+        "id": "background_2",
+        "type": "background",
+        "scene_id": "scene_2",
+        "position": {
+          "x": 1070,
+          "y": 190
+        },
+        "config": {
+          "candidate_count": 1,
+          "prompt": "二维国风动画场景背景；府邸后花园夜色，石桥、垂柳、凉亭烛火，池面映星；无人空镜；虚构成年人世界观；非照片、非写实、非真人；9:16单镜头、非拼贴，保持统一古风美术与清晰空间层次。"
+        },
+        "inputs": [
+          {
+            "id": "scene",
+            "type": "scene",
+            "required": true
+          }
+        ],
+        "outputs": [
+          {
+            "id": "image",
+            "type": "image"
+          }
+        ]
+      },
+      {
+        "id": "video_2",
+        "type": "video",
+        "scene_id": "scene_2",
+        "duration_seconds": 15,
+        "position": {
+          "x": 1290,
+          "y": 190
+        },
+        "config": {
+          "duration_seconds": 15,
+          "prompt": "生成9:16、15秒二维国风动画剧情视频；图1=场景背景，图2=女主，图3=男主，图4=表小姐；花园凉亭三人叙旧，表小姐打趣，气氛先松后紧；所有角色均为虚构成年人；非照片、非写实、非真人；保持角色造型、背景美术和动作连续一致。"
+        },
+        "inputs": [
+          {
+            "id": "scene",
+            "type": "scene",
+            "required": true
+          },
+          {
+            "id": "background",
+            "type": "image",
+            "required": true
+          },
+          {
+            "id": "heroine",
+            "type": "image",
+            "required": true
+          },
+          {
+            "id": "hero",
+            "type": "image",
+            "required": true
+          },
+          {
+            "id": "cousin",
+            "type": "image",
+            "required": true
+          }
+        ],
+        "outputs": [
+          {
+            "id": "video",
+            "type": "video"
+          }
+        ]
+      },
+      {
+        "id": "scene_3",
+        "type": "scene",
+        "scene_id": "scene_3",
+        "duration_seconds": 15,
+        "position": {
+          "x": 850,
+          "y": 360
+        },
+        "config": {
+          "index": 3
+        },
+        "inputs": [
+          {
+            "id": "script",
+            "type": "script",
+            "required": true
+          }
+        ],
+        "outputs": [
+          {
+            "id": "scene",
+            "type": "scene"
+          }
+        ]
+      },
+      {
+        "id": "background_3",
+        "type": "background",
+        "scene_id": "scene_3",
+        "position": {
+          "x": 1070,
+          "y": 360
+        },
+        "config": {
+          "candidate_count": 1,
+          "prompt": "二维国风动画场景背景；朱漆宴厅华灯高悬，红烛长案、屏风字画，热闹却空无一人；虚构成年人世界观；非照片、非写实、非真人；9:16单镜头、非拼贴，保持统一古风美术与清晰空间层次。"
+        },
+        "inputs": [
+          {
+            "id": "scene",
+            "type": "scene",
+            "required": true
+          }
+        ],
+        "outputs": [
+          {
+            "id": "image",
+            "type": "image"
+          }
+        ]
+      },
+      {
+        "id": "video_3",
+        "type": "video",
+        "scene_id": "scene_3",
+        "duration_seconds": 15,
+        "position": {
+          "x": 1290,
+          "y": 360
+        },
+        "config": {
+          "duration_seconds": 15,
+          "prompt": "生成9:16、15秒二维国风动画剧情视频；图1=场景背景，图2=女主，图3=男主，图4=表小姐；宴厅揭开旧婚约冲突，女主抽身离席，男主追出；所有角色均为虚构成年人；非照片、非写实、非真人；保持角色造型、背景美术和动作连续一致。"
+        },
+        "inputs": [
+          {
+            "id": "scene",
+            "type": "scene",
+            "required": true
+          },
+          {
+            "id": "background",
+            "type": "image",
+            "required": true
+          },
+          {
+            "id": "heroine",
+            "type": "image",
+            "required": true
+          },
+          {
+            "id": "hero",
+            "type": "image",
+            "required": true
+          },
+          {
+            "id": "cousin",
+            "type": "image",
+            "required": true
+          }
+        ],
+        "outputs": [
+          {
+            "id": "video",
+            "type": "video"
+          }
+        ]
+      },
+      {
+        "id": "scene_4",
+        "type": "scene",
+        "scene_id": "scene_4",
+        "duration_seconds": 15,
+        "position": {
+          "x": 850,
+          "y": 530
+        },
+        "config": {
+          "index": 4
+        },
+        "inputs": [
+          {
+            "id": "script",
+            "type": "script",
+            "required": true
+          }
+        ],
+        "outputs": [
+          {
+            "id": "scene",
+            "type": "scene"
+          }
+        ]
+      },
+      {
+        "id": "background_4",
+        "type": "background",
+        "scene_id": "scene_4",
+        "position": {
+          "x": 1070,
+          "y": 530
+        },
+        "config": {
+          "candidate_count": 1,
+          "prompt": "二维国风动画场景背景；河岸放河灯，水面漂满莲花灯，远山淡墨月色；空镜无特写人物；虚构成年人世界观；非照片、非写实、非真人；9:16单镜头、非拼贴，保持统一古风美术与清晰空间层次。"
+        },
+        "inputs": [
+          {
+            "id": "scene",
+            "type": "scene",
+            "required": true
+          }
+        ],
+        "outputs": [
+          {
+            "id": "image",
+            "type": "image"
+          }
+        ]
+      },
+      {
+        "id": "video_4",
+        "type": "video",
+        "scene_id": "scene_4",
+        "duration_seconds": 15,
+        "position": {
+          "x": 1290,
+          "y": 530
+        },
+        "config": {
+          "duration_seconds": 15,
+          "prompt": "生成9:16、15秒二维国风动画剧情视频；图1=场景背景，图2=女主，图3=男主，图4=表小姐；河灯夜两人放下误会并肩放灯，表小姐远处祝福；所有角色均为虚构成年人；非照片、非写实、非真人；保持角色造型、背景美术和动作连续一致。"
+        },
+        "inputs": [
+          {
+            "id": "scene",
+            "type": "scene",
+            "required": true
+          },
+          {
+            "id": "background",
+            "type": "image",
+            "required": true
+          },
+          {
+            "id": "heroine",
+            "type": "image",
+            "required": true
+          },
+          {
+            "id": "hero",
+            "type": "image",
+            "required": true
+          },
+          {
+            "id": "cousin",
+            "type": "image",
+            "required": true
+          }
+        ],
+        "outputs": [
+          {
+            "id": "video",
+            "type": "video"
+          }
+        ]
+      },
+      {
+        "id": "timeline",
+        "type": "timeline",
+        "position": {
+          "x": 1540,
+          "y": 240
+        },
+        "config": {
+          "clip_node_ids": [
+            "video_1",
+            "video_2",
+            "video_3",
+            "video_4"
+          ]
+        },
+        "inputs": [
+          {
+            "id": "clip_1",
+            "type": "video",
+            "required": true
+          },
+          {
+            "id": "clip_2",
+            "type": "video",
+            "required": true
+          },
+          {
+            "id": "clip_3",
+            "type": "video",
+            "required": true
+          },
+          {
+            "id": "clip_4",
+            "type": "video",
+            "required": true
+          }
+        ],
+        "outputs": [
+          {
+            "id": "videos",
+            "type": "video_list"
+          }
+        ]
+      },
+      {
+        "id": "compose",
+        "type": "compose",
+        "position": {
+          "x": 1780,
+          "y": 240
+        },
+        "inputs": [
+          {
+            "id": "videos",
+            "type": "video_list",
+            "required": true
+          }
+        ],
+        "outputs": [
+          {
+            "id": "video",
+            "type": "video"
+          }
+        ]
+      }
     ],
     "edges": [
-      {"id":"e_brief_heroine","source":"brief","source_port":"text","target":"role_heroine","target_port":"brief"},{"id":"e_brief_hero","source":"brief","source_port":"text","target":"role_hero","target_port":"brief"},{"id":"e_brief_cousin","source":"brief","source_port":"text","target":"role_cousin","target_port":"brief"},{"id":"e_brief_script","source":"brief","source_port":"text","target":"script","target_port":"brief"},{"id":"e_heroine_script","source":"role_heroine","source_port":"selected","target":"script","target_port":"heroine"},{"id":"e_hero_script","source":"role_hero","source_port":"selected","target":"script","target_port":"hero"},{"id":"e_cousin_script","source":"role_cousin","source_port":"selected","target":"script","target_port":"cousin"},
-      {"id":"e_script_scene_1","source":"script","source_port":"script","target":"scene_1","target_port":"script"},{"id":"e_scene_bg_1","source":"scene_1","source_port":"scene","target":"background_1","target_port":"scene"},{"id":"e_scene_video_1","source":"scene_1","source_port":"scene","target":"video_1","target_port":"scene"},{"id":"e_bg_video_1","source":"background_1","source_port":"image","target":"video_1","target_port":"background"},
-      {"id":"e_script_scene_2","source":"script","source_port":"script","target":"scene_2","target_port":"script"},{"id":"e_scene_bg_2","source":"scene_2","source_port":"scene","target":"background_2","target_port":"scene"},{"id":"e_scene_video_2","source":"scene_2","source_port":"scene","target":"video_2","target_port":"scene"},{"id":"e_bg_video_2","source":"background_2","source_port":"image","target":"video_2","target_port":"background"},
-      {"id":"e_script_scene_3","source":"script","source_port":"script","target":"scene_3","target_port":"script"},{"id":"e_scene_bg_3","source":"scene_3","source_port":"scene","target":"background_3","target_port":"scene"},{"id":"e_scene_video_3","source":"scene_3","source_port":"scene","target":"video_3","target_port":"scene"},{"id":"e_bg_video_3","source":"background_3","source_port":"image","target":"video_3","target_port":"background"},
-      {"id":"e_script_scene_4","source":"script","source_port":"script","target":"scene_4","target_port":"script"},{"id":"e_scene_bg_4","source":"scene_4","source_port":"scene","target":"background_4","target_port":"scene"},{"id":"e_scene_video_4","source":"scene_4","source_port":"scene","target":"video_4","target_port":"scene"},{"id":"e_bg_video_4","source":"background_4","source_port":"image","target":"video_4","target_port":"background"},
-      {"id":"e_heroine_video_1","source":"role_heroine","source_port":"selected","target":"video_1","target_port":"heroine"},{"id":"e_hero_video_1","source":"role_hero","source_port":"selected","target":"video_1","target_port":"hero"},{"id":"e_cousin_video_1","source":"role_cousin","source_port":"selected","target":"video_1","target_port":"cousin"},
-      {"id":"e_heroine_video_2","source":"role_heroine","source_port":"selected","target":"video_2","target_port":"heroine"},{"id":"e_hero_video_2","source":"role_hero","source_port":"selected","target":"video_2","target_port":"hero"},{"id":"e_cousin_video_2","source":"role_cousin","source_port":"selected","target":"video_2","target_port":"cousin"},
-      {"id":"e_heroine_video_3","source":"role_heroine","source_port":"selected","target":"video_3","target_port":"heroine"},{"id":"e_hero_video_3","source":"role_hero","source_port":"selected","target":"video_3","target_port":"hero"},{"id":"e_cousin_video_3","source":"role_cousin","source_port":"selected","target":"video_3","target_port":"cousin"},
-      {"id":"e_heroine_video_4","source":"role_heroine","source_port":"selected","target":"video_4","target_port":"heroine"},{"id":"e_hero_video_4","source":"role_hero","source_port":"selected","target":"video_4","target_port":"hero"},{"id":"e_cousin_video_4","source":"role_cousin","source_port":"selected","target":"video_4","target_port":"cousin"},
-      {"id":"e_video_timeline_1","source":"video_1","source_port":"video","target":"timeline","target_port":"clip_1"},{"id":"e_video_timeline_2","source":"video_2","source_port":"video","target":"timeline","target_port":"clip_2"},{"id":"e_video_timeline_3","source":"video_3","source_port":"video","target":"timeline","target_port":"clip_3"},{"id":"e_video_timeline_4","source":"video_4","source_port":"video","target":"timeline","target_port":"clip_4"},{"id":"e_timeline_compose","source":"timeline","source_port":"videos","target":"compose","target_port":"videos"}
+      {
+        "id": "e_brief_heroine",
+        "source": "brief",
+        "source_port": "text",
+        "target": "role_heroine",
+        "target_port": "brief"
+      },
+      {
+        "id": "e_brief_hero",
+        "source": "brief",
+        "source_port": "text",
+        "target": "role_hero",
+        "target_port": "brief"
+      },
+      {
+        "id": "e_brief_cousin",
+        "source": "brief",
+        "source_port": "text",
+        "target": "role_cousin",
+        "target_port": "brief"
+      },
+      {
+        "id": "e_brief_script",
+        "source": "brief",
+        "source_port": "text",
+        "target": "script",
+        "target_port": "brief"
+      },
+      {
+        "id": "e_heroine_script",
+        "source": "role_heroine",
+        "source_port": "selected",
+        "target": "script",
+        "target_port": "heroine"
+      },
+      {
+        "id": "e_hero_script",
+        "source": "role_hero",
+        "source_port": "selected",
+        "target": "script",
+        "target_port": "hero"
+      },
+      {
+        "id": "e_cousin_script",
+        "source": "role_cousin",
+        "source_port": "selected",
+        "target": "script",
+        "target_port": "cousin"
+      },
+      {
+        "id": "e_script_scene_1",
+        "source": "script",
+        "source_port": "script",
+        "target": "scene_1",
+        "target_port": "script"
+      },
+      {
+        "id": "e_scene_bg_1",
+        "source": "scene_1",
+        "source_port": "scene",
+        "target": "background_1",
+        "target_port": "scene"
+      },
+      {
+        "id": "e_scene_video_1",
+        "source": "scene_1",
+        "source_port": "scene",
+        "target": "video_1",
+        "target_port": "scene"
+      },
+      {
+        "id": "e_bg_video_1",
+        "source": "background_1",
+        "source_port": "image",
+        "target": "video_1",
+        "target_port": "background"
+      },
+      {
+        "id": "e_script_scene_2",
+        "source": "script",
+        "source_port": "script",
+        "target": "scene_2",
+        "target_port": "script"
+      },
+      {
+        "id": "e_scene_bg_2",
+        "source": "scene_2",
+        "source_port": "scene",
+        "target": "background_2",
+        "target_port": "scene"
+      },
+      {
+        "id": "e_scene_video_2",
+        "source": "scene_2",
+        "source_port": "scene",
+        "target": "video_2",
+        "target_port": "scene"
+      },
+      {
+        "id": "e_bg_video_2",
+        "source": "background_2",
+        "source_port": "image",
+        "target": "video_2",
+        "target_port": "background"
+      },
+      {
+        "id": "e_script_scene_3",
+        "source": "script",
+        "source_port": "script",
+        "target": "scene_3",
+        "target_port": "script"
+      },
+      {
+        "id": "e_scene_bg_3",
+        "source": "scene_3",
+        "source_port": "scene",
+        "target": "background_3",
+        "target_port": "scene"
+      },
+      {
+        "id": "e_scene_video_3",
+        "source": "scene_3",
+        "source_port": "scene",
+        "target": "video_3",
+        "target_port": "scene"
+      },
+      {
+        "id": "e_bg_video_3",
+        "source": "background_3",
+        "source_port": "image",
+        "target": "video_3",
+        "target_port": "background"
+      },
+      {
+        "id": "e_script_scene_4",
+        "source": "script",
+        "source_port": "script",
+        "target": "scene_4",
+        "target_port": "script"
+      },
+      {
+        "id": "e_scene_bg_4",
+        "source": "scene_4",
+        "source_port": "scene",
+        "target": "background_4",
+        "target_port": "scene"
+      },
+      {
+        "id": "e_scene_video_4",
+        "source": "scene_4",
+        "source_port": "scene",
+        "target": "video_4",
+        "target_port": "scene"
+      },
+      {
+        "id": "e_bg_video_4",
+        "source": "background_4",
+        "source_port": "image",
+        "target": "video_4",
+        "target_port": "background"
+      },
+      {
+        "id": "e_heroine_video_1",
+        "source": "role_heroine",
+        "source_port": "selected",
+        "target": "video_1",
+        "target_port": "heroine"
+      },
+      {
+        "id": "e_hero_video_1",
+        "source": "role_hero",
+        "source_port": "selected",
+        "target": "video_1",
+        "target_port": "hero"
+      },
+      {
+        "id": "e_cousin_video_1",
+        "source": "role_cousin",
+        "source_port": "selected",
+        "target": "video_1",
+        "target_port": "cousin"
+      },
+      {
+        "id": "e_heroine_video_2",
+        "source": "role_heroine",
+        "source_port": "selected",
+        "target": "video_2",
+        "target_port": "heroine"
+      },
+      {
+        "id": "e_hero_video_2",
+        "source": "role_hero",
+        "source_port": "selected",
+        "target": "video_2",
+        "target_port": "hero"
+      },
+      {
+        "id": "e_cousin_video_2",
+        "source": "role_cousin",
+        "source_port": "selected",
+        "target": "video_2",
+        "target_port": "cousin"
+      },
+      {
+        "id": "e_heroine_video_3",
+        "source": "role_heroine",
+        "source_port": "selected",
+        "target": "video_3",
+        "target_port": "heroine"
+      },
+      {
+        "id": "e_hero_video_3",
+        "source": "role_hero",
+        "source_port": "selected",
+        "target": "video_3",
+        "target_port": "hero"
+      },
+      {
+        "id": "e_cousin_video_3",
+        "source": "role_cousin",
+        "source_port": "selected",
+        "target": "video_3",
+        "target_port": "cousin"
+      },
+      {
+        "id": "e_heroine_video_4",
+        "source": "role_heroine",
+        "source_port": "selected",
+        "target": "video_4",
+        "target_port": "heroine"
+      },
+      {
+        "id": "e_hero_video_4",
+        "source": "role_hero",
+        "source_port": "selected",
+        "target": "video_4",
+        "target_port": "hero"
+      },
+      {
+        "id": "e_cousin_video_4",
+        "source": "role_cousin",
+        "source_port": "selected",
+        "target": "video_4",
+        "target_port": "cousin"
+      },
+      {
+        "id": "e_video_timeline_1",
+        "source": "video_1",
+        "source_port": "video",
+        "target": "timeline",
+        "target_port": "clip_1"
+      },
+      {
+        "id": "e_video_timeline_2",
+        "source": "video_2",
+        "source_port": "video",
+        "target": "timeline",
+        "target_port": "clip_2"
+      },
+      {
+        "id": "e_video_timeline_3",
+        "source": "video_3",
+        "source_port": "video",
+        "target": "timeline",
+        "target_port": "clip_3"
+      },
+      {
+        "id": "e_video_timeline_4",
+        "source": "video_4",
+        "source_port": "video",
+        "target": "timeline",
+        "target_port": "clip_4"
+      },
+      {
+        "id": "e_timeline_compose",
+        "source": "timeline",
+        "source_port": "videos",
+        "target": "compose",
+        "target_port": "videos"
+      }
     ],
     "groups": [
-      {"id":"group_scene_1","type":"scene","scene_id":"scene_1","enabled":true,"duration_seconds":15,"node_ids":["scene_1","background_1","video_1"],"position":{"x":810,"y":0},"size":{"width":700,"height":150}},
-      {"id":"group_scene_2","type":"scene","scene_id":"scene_2","enabled":true,"duration_seconds":15,"node_ids":["scene_2","background_2","video_2"],"position":{"x":810,"y":170},"size":{"width":700,"height":150}},
-      {"id":"group_scene_3","type":"scene","scene_id":"scene_3","enabled":true,"duration_seconds":15,"node_ids":["scene_3","background_3","video_3"],"position":{"x":810,"y":340},"size":{"width":700,"height":150}},
-      {"id":"group_scene_4","type":"scene","scene_id":"scene_4","enabled":true,"duration_seconds":15,"node_ids":["scene_4","background_4","video_4"],"position":{"x":810,"y":510},"size":{"width":700,"height":150}}
+      {
+        "id": "group_scene_1",
+        "type": "scene",
+        "scene_id": "scene_1",
+        "enabled": true,
+        "duration_seconds": 15,
+        "node_ids": [
+          "scene_1",
+          "background_1",
+          "video_1"
+        ],
+        "position": {
+          "x": 810,
+          "y": 0
+        },
+        "size": {
+          "width": 700,
+          "height": 150
+        }
+      },
+      {
+        "id": "group_scene_2",
+        "type": "scene",
+        "scene_id": "scene_2",
+        "enabled": true,
+        "duration_seconds": 15,
+        "node_ids": [
+          "scene_2",
+          "background_2",
+          "video_2"
+        ],
+        "position": {
+          "x": 810,
+          "y": 170
+        },
+        "size": {
+          "width": 700,
+          "height": 150
+        }
+      },
+      {
+        "id": "group_scene_3",
+        "type": "scene",
+        "scene_id": "scene_3",
+        "enabled": true,
+        "duration_seconds": 15,
+        "node_ids": [
+          "scene_3",
+          "background_3",
+          "video_3"
+        ],
+        "position": {
+          "x": 810,
+          "y": 340
+        },
+        "size": {
+          "width": 700,
+          "height": 150
+        }
+      },
+      {
+        "id": "group_scene_4",
+        "type": "scene",
+        "scene_id": "scene_4",
+        "enabled": true,
+        "duration_seconds": 15,
+        "node_ids": [
+          "scene_4",
+          "background_4",
+          "video_4"
+        ],
+        "position": {
+          "x": 810,
+          "y": 510
+        },
+        "size": {
+          "width": 700,
+          "height": 150
+        }
+      }
     ]
   }
 }
