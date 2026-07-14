@@ -21,8 +21,8 @@ const node: VideoWorkflowNode = {
       flip_vertical: false,
     },
   },
-  inputs: [{ id: 'scene', label: '场景描述', type: 'scene' }],
-  outputs: [{ id: 'image', label: '场景图片', type: 'image' }],
+  inputs: [{ id: 'environment', label: '环境（地点/灯光/静物）', type: 'scene' }],
+  outputs: [{ id: 'image', label: '空镜背景图', type: 'image' }],
   status: 'succeeded',
 }
 const assets: VideoAsset[] = [{
@@ -133,12 +133,12 @@ describe('VideoWorkflowInspector', () => {
       props: {
         node,
         assets,
-        upstreams: [{ id: 'scene', label: '场景描述', type: 'scene', required: true, sources: [] }],
+        upstreams: [{ id: 'environment', label: '环境（地点/灯光/静物）', type: 'scene', required: true, sources: [] }],
       },
     })
     await openUpstreamTab(wrapper)
     await wrapper.find('.unconnected button').trigger('click')
-    expect(wrapper.emitted('add-connection')?.[0]).toEqual(['scene'])
+    expect(wrapper.emitted('add-connection')?.[0]).toEqual(['environment'])
   })
 
   it('allows closing the empty inspector to reclaim workspace width', async () => {

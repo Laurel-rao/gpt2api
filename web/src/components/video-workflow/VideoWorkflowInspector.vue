@@ -191,7 +191,6 @@ watch(() => [props.node?.id, props.node?.config?.selected_version_id, props.node
   crop.width = Math.round(Number(current?.width || 1) * 100)
   crop.height = Math.round(Number(current?.height || 1) * 100)
   cropping.value = false
-  if (activeTab.value === 'history') emit('request-history')
 }, { immediate: true })
 
 watch(() => props.node?.id, () => {
@@ -304,7 +303,14 @@ function applyCrop() {
 
       <div class="inspector-scroll">
         <section v-show="activeTab === 'upstream'" class="inspector-panel ports-section" aria-label="上游输入">
-          <header class="panel-heading"><div><strong>上游输入</strong><span>{{ upstreams.length }} 个输入端口</span></div></header>
+          <header class="panel-heading"><div>
+            <strong>{{ node.type === 'background' ? '环境输入' : '上游输入' }}</strong>
+            <span>{{
+              node.type === 'background'
+                ? '仅地点/时间/灯光/静物，不含动作台词'
+                : `${upstreams.length} 个输入端口`
+            }}</span>
+          </div></header>
           <div v-if="upstreams.length" class="upstream-list">
             <article v-for="group in upstreams" :key="group.id" class="upstream-port">
               <header><span><i class="input" />{{ group.label }}</span><code>{{ group.type }}</code><em v-if="group.required">必需</em></header>
@@ -389,7 +395,11 @@ function applyCrop() {
             <input :value="node.title || node.config?.title" maxlength="80" @input="emit('update-title', ($event.target as HTMLInputElement).value)" />
 
             <template v-if="!systemNode">
-              <label class="field-label">{{ node.type === 'script' ? '结构化剧本提示词' : '提示词（Prompt）' }}</label>
+              <label class="field-label">{{
+                node.type === 'script' ? '结构化剧本提示词'
+                  : node.type === 'background' ? '空镜背景提示词（勿写人物动作/台词）'
+                    : '提示词（Prompt）'
+              }}</label>
               <textarea
                 :value="node.config?.prompt || ''"
                 :rows="imageNode ? 5 : 7"

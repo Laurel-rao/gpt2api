@@ -63,7 +63,7 @@ function createNodes(baseURL) {
           preview_url: mediaURL(baseURL, imageVersion),
           image_transform: { crop: { x: 0, y: 0, width: 1, height: 1 }, rotation: 0, flip_horizontal: false, flip_vertical: false },
         },
-        inputs: [textPort('scene', '场景描述', 'scene', true)], outputs: [textPort('image', '场景图片', 'image')],
+        inputs: [textPort('environment', '环境（地点/灯光/静物）', 'scene', true)], outputs: [textPort('image', '空镜背景图', 'image')],
       },
       {
         id: `video_${index}`, type: 'video', title: `S0${index} 视频`, scene_id: sceneID, duration_seconds: 15,
@@ -75,7 +75,7 @@ function createNodes(baseURL) {
           preview_url: mediaURL(baseURL, 'video-preview-v1'),
         },
         inputs: [
-          textPort('scene', '场景描述', 'scene', true), textPort('background', '场景图片', 'image', true),
+          textPort('scene', '场景描述', 'scene', true), textPort('background', '空镜背景图', 'image', true),
           textPort('heroine', '女主', 'image', true), textPort('hero', '男主', 'image', true), textPort('cousin', '表小姐', 'image', true),
         ],
         outputs: [textPort('video', '15 秒视频', 'video')],
@@ -118,7 +118,7 @@ function createEdges() {
   for (let index = 1; index <= 4; index += 1) {
     edges.push(
       [`e_script_scene_${index}`, 'script', 'script', `scene_${index}`, 'script'],
-      [`e_scene_bg_${index}`, `scene_${index}`, 'scene', `background_${index}`, 'scene'],
+      [`e_scene_bg_${index}`, `scene_${index}`, 'scene', `background_${index}`, 'environment'],
       [`e_scene_video_${index}`, `scene_${index}`, 'scene', `video_${index}`, 'scene'],
       [`e_bg_video_${index}`, `background_${index}`, 'image', `video_${index}`, 'background'],
       [`e_heroine_video_${index}`, 'role_heroine', 'selected', `video_${index}`, 'heroine'],

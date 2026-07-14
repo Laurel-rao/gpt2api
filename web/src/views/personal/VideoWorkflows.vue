@@ -260,6 +260,7 @@ let deletedRecord: { before: VideoWorkflowGraph; nodeIDs: string[] } | null = nu
 let pollingGeneration = 0
 let workspaceGeneration = 0
 let nodeHistoryGeneration = 0
+let nodeHistoryErrorToastAt = 0
 let mediaPreviewGeneration = 0
 let componentUnmounted = false
 let edgeCurveHistorySnapshot: VideoWorkflowGraph | null = null
@@ -1183,11 +1184,12 @@ async function loadSelectedNodeHistory() {
   const workflowID = activeWorkflow.value?.id
   const nodeID = selectedNodeID.value
   if (!workflowID || !nodeID) return
+  if (nodeHistoryLoading.value) return
   const generation = ++nodeHistoryGeneration
   nodeHistoryLoading.value = true
   try {
     const page = await listVideoWorkflowRuns(workflowID, { limit: NODE_HISTORY_LIMIT, offset: 0 })
-    if (componentUnmounted || workflowID !== activeWorkflow.value?.id) return
+    if (componentUnmounted || generation !== nodeHistoryGeneration || workflowID !== activeWorkflow.value?.id) return
     const merged = [...page.items, ...runHistoryItems.value]
     runHistoryItems.value = [...new Map(merged.map((item) => [item.id, item])).values()]
       .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
@@ -1198,7 +1200,7 @@ async function loadSelectedNodeHistory() {
       && !runDetailCache.value[run.id]
     ))
     const details = await Promise.all(missing.map((run) => getVideoWorkflowRun(run.id, true).catch(() => null)))
-    if (componentUnmounted || workflowID !== activeWorkflow.value?.id) return
+    if (componentUnmounted || generation !== nodeHistoryGeneration || workflowID !== activeWorkflow.value?.id) return
     const cache = { ...runDetailCache.value }
     for (const detail of details) if (detail) cache[detail.id] = detail
     for (const run of page.items) if (run.node_runs) cache[run.id] = run
@@ -1208,8 +1210,14 @@ async function loadSelectedNodeHistory() {
       if (!detail?.node_runs || run.node_runs?.length) return run
       return { ...run, node_runs: detail.node_runs, graph_snapshot: run.graph_snapshot || detail.graph_snapshot }
     })
-  } catch {
-    if (generation === nodeHistoryGeneration) ElMessage.error('节点历史加载失败，请重试')
+  } catch (error) {
+    if (generation !== nodeHistoryGeneration) return
+    const now = Date.now()
+    if (now - nodeHistoryErrorToastAt > 4000) {
+      nodeHistoryErrorToastAt = now
+      console.warn('loadSelectedNodeHistory failed', error)
+      ElMessage.error('节点历史加载失败，请重试')
+    }
   } finally {
     if (generation === nodeHistoryGeneration) nodeHistoryLoading.value = false
   }

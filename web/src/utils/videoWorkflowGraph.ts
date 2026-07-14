@@ -40,7 +40,7 @@ export const VIDEO_WORKFLOW_NODE_CATALOG = [
   { type: 'character', label: '角色护照', group: '角色', color: '#fbbf24' },
   { type: 'script', label: '分镜剧本', group: '文本', color: '#a7f3d0' },
   { type: 'scene', label: '场景描述', group: '文本', color: '#86efac' },
-  { type: 'background', label: '场景图片', group: '图像', color: '#fb7185' },
+  { type: 'background', label: '空镜背景图', group: '图像', color: '#fb7185' },
   { type: 'video', label: '场景视频', group: '视频', color: '#60a5fa' },
   { type: 'timeline', label: '顺序时间线', group: '合成', color: '#c4b5fd' },
   { type: 'compose', label: '成片输出', group: '合成', color: '#34d399' },
@@ -62,7 +62,7 @@ const NODE_TYPE_LABELS: Record<string, string> = {
   character: '角色护照',
   script: '分镜剧本',
   scene: '场景描述',
-  background: '场景图片',
+  background: '空镜背景图',
   image: '图片',
   video: '场景视频',
   timeline: '顺序时间线',
@@ -153,8 +153,8 @@ const ports: Record<string, NodePortDefinition> = {
     outputs: [{ id: 'scene', label: '场景描述', type: 'scene' }],
   },
   background: {
-    inputs: [{ id: 'scene', label: '场景描述', type: 'scene' }],
-    outputs: [{ id: 'image', label: '场景图片', type: 'image' }],
+    inputs: [{ id: 'environment', label: '环境（地点/灯光/静物）', type: 'scene' }],
+    outputs: [{ id: 'image', label: '空镜背景图', type: 'image' }],
   },
   video: {
     inputs: [
@@ -558,7 +558,7 @@ export function createStarterVideoWorkflowGraph(): VideoWorkflowGraph {
     ...videos.flatMap((video, index) => [
       { id: `script-scene_${index + 1}`, source: script.id, source_port: 'script', target: `scene_${index + 1}`, target_port: 'script' },
       { id: `scene_${index + 1}-${video.id}`, source: `scene_${index + 1}`, source_port: 'scene', target: video.id, target_port: 'scene' },
-      { id: `scene_${index + 1}-${backgrounds[index].id}`, source: `scene_${index + 1}`, source_port: 'scene', target: backgrounds[index].id, target_port: 'scene' },
+      { id: `scene_${index + 1}-${backgrounds[index].id}`, source: `scene_${index + 1}`, source_port: 'scene', target: backgrounds[index].id, target_port: 'environment' },
       { id: `${backgrounds[index].id}-${video.id}`, source: backgrounds[index].id, source_port: 'image', target: video.id, target_port: 'background' },
       { id: `${video.id}-timeline`, source: video.id, source_port: 'video', target: timeline.id, target_port: clips[index].id },
     ]),
@@ -596,6 +596,30 @@ function normalizeNodePorts(node: VideoWorkflowNode): VideoWorkflowNode {
 
 /** Merges catalog port definitions onto a node without removing existing custom ports. */
 export function ensureVideoWorkflowNodePorts(node: VideoWorkflowNode): VideoWorkflowNode {
+  if (node.type === 'background') {
+    const inputs = [...(node.inputs || [])]
+    let hasEnvironment = false
+    node.inputs = inputs.flatMap((port) => {
+      if (port.id === 'scene') {
+        if (hasEnvironment) return []
+        hasEnvironment = true
+        return [{
+          ...port,
+          id: 'environment',
+          label: !port.label || port.label === '场景描述' ? '环境（地点/灯光/静物）' : port.label,
+        }]
+      }
+      if (port.id === 'environment') {
+        if (hasEnvironment) return []
+        hasEnvironment = true
+        return [{
+          ...port,
+          label: port.label || '环境（地点/灯光/静物）',
+        }]
+      }
+      return [port]
+    })
+  }
   const definition = ports[node.type]
   if (!definition) return node
   const inputs = [...(node.inputs || [])]
@@ -723,6 +747,13 @@ export function migrateVideoWorkflowGraph(value: unknown): VideoWorkflowGraph {
   for (const node of nodes) {
     if (node.type !== 'background') continue
     node.config.image_transform = normalizeImageTransform(node.config.image_transform)
+  }
+
+  const backgroundIDs = new Set(nodes.filter((node) => node.type === 'background').map((node) => node.id))
+  for (const edge of edges) {
+    if (backgroundIDs.has(edge.target) && edge.target_port === 'scene') {
+      edge.target_port = 'environment'
+    }
   }
 
   return {

@@ -398,6 +398,22 @@ describe('video workflow graph migration', () => {
     expect(migrateVideoWorkflowGraph(graph).settings.video_model).toBe('provider-video-model')
   })
 
+  it('normalizes legacy background scene ports to environment', () => {
+    const graph = createStarterVideoWorkflowGraph() as any
+    const background = graph.nodes.find((node: any) => node.type === 'background')
+    background.inputs = [{ id: 'scene', label: '场景描述', type: 'scene', required: true }]
+    const edge = graph.edges.find((item: any) => item.target === background.id)
+    edge.target_port = 'scene'
+
+    const migrated = migrateVideoWorkflowGraph(graph)
+    const migratedBackground = migrated.nodes.find((node) => node.id === background.id)!
+    expect(migratedBackground.inputs?.some((port) => port.id === 'environment')).toBe(true)
+    expect(migratedBackground.inputs?.some((port) => port.id === 'scene')).toBe(false)
+    expect(migratedBackground.inputs?.find((port) => port.id === 'environment')?.label).toBe('环境（地点/灯光/静物）')
+    expect(migrated.edges.find((item) => item.target === background.id)?.target_port).toBe('environment')
+    expect(validateVideoWorkflowGraph(migrated, { requireComplete: true })).toEqual([])
+  })
+
   it('preserves finite edge layout data and drops invalid values', () => {
     const graph = createStarterVideoWorkflowGraph() as any
     graph.edges[0].curve = { x: 120, y: -80 }
