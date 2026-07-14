@@ -33,4 +33,32 @@ describe('VideoWorkflowOutline', () => {
     expect(wrapper.emitted('select')?.[0]).toEqual(['video_1'])
     expect(wrapper.emitted('update:modelValue')?.[0]).toEqual([false])
   })
+
+  it('maps run statuses to Chinese labels instead of raw or empty values', () => {
+    const wrapper = mount(VideoWorkflowOutline, {
+      props: {
+        modelValue: true,
+        nodes: [
+          { ...nodes[0], id: 'ready', status: 'succeeded' },
+          { ...nodes[0], id: 'idle', status: undefined },
+          { ...nodes[0], id: 'compose', type: 'compose', status: 'idle' },
+        ],
+        edgeCount: 0,
+        clipCount: 0,
+      },
+      global: {
+        stubs: {
+          ElDrawer: {
+            props: ['modelValue'],
+            emits: ['update:modelValue'],
+            template: '<aside><slot /></aside>',
+          },
+        },
+      },
+    })
+    const texts = wrapper.findAll('.outline-node').map((item) => item.text())
+    expect(texts[0]).toContain('已就绪')
+    expect(texts[1]).toContain('待生成')
+    expect(texts[2]).toContain('待生成')
+  })
 })

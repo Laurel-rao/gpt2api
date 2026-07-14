@@ -44,9 +44,9 @@ export interface VideoWorkflowLayoutDiagnostics {
 }
 
 export function videoWorkflowNodeSize(node: VideoWorkflowNode) {
-  if (node.collapsed) return { width: 188, height: 44 }
-  if (['background', 'image', 'video'].includes(node.type)) return { width: 208, height: 176 }
-  return { width: 188, height: 108 }
+  if (node.collapsed) return { width: 188, height: 36 }
+  if (['character', 'background', 'image', 'video'].includes(node.type)) return { width: 208, height: 196 }
+  return { width: 188, height: 96 }
 }
 
 export function cloneLayoutGraph(graph: VideoWorkflowGraph): VideoWorkflowGraph {
@@ -212,7 +212,7 @@ function portY(node: VideoWorkflowNode, portID: string, kind: 'input' | 'output'
   const ports = kind === 'input' ? node.inputs : node.outputs
   const index = Math.max(0, ports?.findIndex((port) => port.id === portID) ?? 0)
   const height = videoWorkflowNodeSize(node).height
-  return node.position.y + Math.min(height - 12, 48 + index * 24)
+  return node.position.y + Math.min(height - 12, 28 + index * 22)
 }
 
 function edgeGeometry(graph: VideoWorkflowGraph, edge: VideoWorkflowEdge, curve = edge.curve): EdgeGeometry | null {

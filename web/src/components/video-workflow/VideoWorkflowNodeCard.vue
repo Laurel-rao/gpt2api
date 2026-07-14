@@ -82,6 +82,8 @@ const summary = computed(() => {
   }
   return props.node.config?.prompt || statusText.value
 })
+const HEADER_PORT_TOP = 28
+const PORT_GAP = 22
 </script>
 
 <template>
@@ -98,7 +100,7 @@ const summary = computed(() => {
       :key="`input-${port.id}`"
       type="target"
       :position="Position.Left"
-      :style="{ top: `${48 + index * 24}px` }"
+      :style="{ top: `${HEADER_PORT_TOP + index * PORT_GAP}px` }"
       :class="['node-port', 'input', `port-type-${port.type}`]"
       :title="`${port.label || port.id} · ${port.type}`"
     />
@@ -108,7 +110,7 @@ const summary = computed(() => {
       type="target"
       :position="Position.Left"
       :connectable="false"
-      :style="{ top: `${48 + visibleInputs.length * 24}px` }"
+      :style="{ top: `${HEADER_PORT_TOP + visibleInputs.length * PORT_GAP}px` }"
       class="node-port input shared-character-port port-type-character"
       :title="`公共角色资产 · ${sharedCharacterCount} 个角色`"
     />
@@ -118,7 +120,7 @@ const summary = computed(() => {
       :key="`output-${port.id}`"
       type="source"
       :position="Position.Right"
-      :style="{ top: `${48 + index * 24}px` }"
+      :style="{ top: `${HEADER_PORT_TOP + index * PORT_GAP}px` }"
       :class="['node-port', 'output', `port-type-${port.type}`]"
       :title="`${port.label || port.id} · ${port.type}`"
     />
@@ -179,8 +181,10 @@ const summary = computed(() => {
 .workflow-node-card {
   position: relative;
   width: 188px;
-  height: 108px;
+  height: 96px;
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
   overflow: visible;
   color: #eef2f6;
   background: linear-gradient(180deg, #242930 0%, #1d2228 100%);
@@ -201,8 +205,8 @@ const summary = computed(() => {
   background: var(--node-catalog-color, #64748b);
   pointer-events: none;
 }
-.workflow-node-card.media { width: 208px; height: 176px; }
-.workflow-node-card.collapsed { height: 44px; }
+.workflow-node-card.media { width: 208px; height: 196px; }
+.workflow-node-card.collapsed { height: 36px; }
 .workflow-node-card:hover { border-color: #77818c; }
 .workflow-node-card:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
 .workflow-node-card.selected {
@@ -214,32 +218,42 @@ const summary = computed(() => {
 .workflow-node-card.running { border-color: #38bdf8; }
 .workflow-node-card.disabled { opacity: .5; filter: grayscale(.45); }
 header {
-  height: 43px;
+  flex: 0 0 auto;
+  height: 28px;
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) auto auto;
+  grid-template-columns: 16px minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 7px;
-  padding: 0 10px;
-  border-bottom: 1px solid rgba(148, 163, 184, .16);
+  gap: 5px;
+  padding: 0 8px 0 9px;
+  border-bottom: 1px solid rgba(148, 163, 184, .14);
 }
-.node-icon { width: 22px; height: 22px; display: grid; place-items: center; color: #dbeafe; }
-.node-icon :deep(svg) { width: 17px; height: 17px; }
-header strong { overflow: hidden; color: #f8fafc; font-size: 12px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.node-icon { width: 16px; height: 16px; display: grid; place-items: center; color: #dbeafe; }
+.node-icon :deep(svg) { width: 13px; height: 13px; }
+header strong { overflow: hidden; color: #f8fafc; font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .node-lock { color: #94a3b8; font-size: 9px; }
-.status-icon { width: 14px; height: 14px; color: #94a3b8; }
+.status-icon { width: 12px; height: 12px; color: #94a3b8; }
 .status-icon.succeeded { color: #22c55e; }
 .status-icon.running, .status-icon.queued { color: #38bdf8; animation: node-spin 1.1s linear infinite; }
 .status-icon.stale { color: #f59e0b; }
 .status-icon.failed { color: #ef4444; }
 p {
-  height: 31px;
-  margin: 7px 10px 5px;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 5px 9px 4px;
   overflow: hidden;
   color: #aeb8c4;
   font-size: 10px;
-  line-height: 15px;
+  line-height: 14px;
 }
-.node-media { position: relative; height: 96px; margin: 0 10px 5px; overflow: hidden; background: #111318; border-radius: 5px; }
+.node-media {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 4px 6px 6px;
+  overflow: hidden;
+  background: #111318;
+  border-radius: 5px;
+}
 .node-media img, .node-media video { width: 100%; height: 100%; object-fit: cover; pointer-events: none; transition: transform .18s ease; }
 .node-preview-button {
   position: absolute; z-index: 2; left: 50%; top: 50%; width: 36px; height: 36px;
@@ -253,16 +267,17 @@ p {
 .node-preview-button:focus-visible { outline: 2px solid #93c5fd; outline-offset: 2px; }
 .node-preview-button svg { width: 16px; height: 16px; }
 .media-placeholder {
+  position: relative;
   width: 100%; height: 100%; display: grid; place-items: center;
   color: #8492a2;
   background:
     radial-gradient(circle at 28% 25%, rgba(59, 130, 246, .28), transparent 35%),
     linear-gradient(145deg, #222b36, #14191f);
 }
-.media-placeholder svg { width: 28px; }
-.media-placeholder span { position: absolute; left: 8px; bottom: 5px; font-size: 9px; }
-.node-media em { position: absolute; right: 5px; bottom: 5px; padding: 2px 4px; color: #e2e8f0; background: rgba(15, 23, 42, .8); border-radius: 3px; font-size: 9px; font-style: normal; }
-footer { height: 22px; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; color: #9aa6b2; font-size: 9px; }
+.media-placeholder svg { width: 36px; opacity: .72; }
+.media-placeholder span { position: absolute; left: 8px; bottom: 6px; font-size: 10px; font-weight: 600; letter-spacing: .02em; }
+.node-media em { position: absolute; right: 6px; bottom: 6px; padding: 2px 5px; color: #e2e8f0; background: rgba(15, 23, 42, .8); border-radius: 3px; font-size: 9px; font-style: normal; }
+footer { flex: 0 0 auto; height: 20px; display: flex; align-items: center; justify-content: space-between; padding: 0 9px; color: #9aa6b2; font-size: 9px; }
 .media footer { display: none; }
 .node-status { display: inline-flex; align-items: center; gap: 4px; }
 .node-status svg { width: 11px; }

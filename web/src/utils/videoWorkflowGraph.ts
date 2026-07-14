@@ -297,7 +297,7 @@ export function makeVideoWorkflowNode(
     status: 'idle',
     enabled: true,
     locked: type === 'timeline' || type === 'compose',
-    size: mediaNode ? { width: 208, height: 176 } : { width: 188, height: 108 },
+    size: mediaNode ? { width: 208, height: 196 } : { width: 188, height: 96 },
     config: defaultNodeConfig(type, title),
     inputs: definition.inputs.map(portFromDefinition),
     outputs: definition.outputs.map(portFromDefinition),
@@ -991,7 +991,7 @@ export function moveTimelineClip<T>(items: T[], from: number, to: number): T[] {
 
 export function nodeStatusLabel(status?: string) {
   return ({
-    idle: '待配置', queued: '排队中', running: '生成中', awaiting_approval: '待审批',
+    idle: '待生成', queued: '排队中', running: '生成中', awaiting_approval: '待审批',
     cancel_pending: '停止中', succeeded: '已就绪', failed: '失败', canceled: '已停止', stale: '需更新',
-  } as Record<string, string>)[status || 'idle'] || status || '待配置'
+  } as Record<string, string>)[status || 'idle'] || status || '待生成'
 }
