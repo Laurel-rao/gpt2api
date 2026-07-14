@@ -53,6 +53,8 @@ FILES=(
   "internal/settings/service.go"
   "sql/migrations/20260711000100_video_workflow.sql"
   "sql/migrations/20260712000100_video_workflow_runtime_fencing.sql"
+  "sql/migrations/20260713000100_videogen_workflow_models.sql"
+  "sql/migrations/20260714000100_video_workflow_revisions.sql"
   "web/package.json"
   "web/package-lock.json"
   "web/vitest.config.ts"
