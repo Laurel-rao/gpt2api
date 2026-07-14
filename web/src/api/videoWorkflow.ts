@@ -325,6 +325,45 @@ export function deleteVideoWorkflow(id: string): Promise<void> {
   return http.delete(`/api/me/video-workflows/${id}`)
 }
 
+export interface VideoWorkflowRevisionListItem {
+  workflow_id: string
+  revision: number
+  name: string
+  node_count: number
+  edge_count: number
+  created_at?: string
+  is_current?: boolean
+}
+
+export interface VideoWorkflowRevision extends VideoWorkflowRevisionListItem {
+  user_id?: number
+  graph: VideoWorkflowGraph
+}
+
+export interface VideoWorkflowRevisionPage {
+  items: VideoWorkflowRevisionListItem[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export async function listVideoWorkflowRevisions(
+  id: string,
+  params: { limit?: number; offset?: number } = {},
+): Promise<VideoWorkflowRevisionPage> {
+  const result: any = await http.get(`/api/me/video-workflows/${id}/revisions`, { params })
+  return {
+    items: result.items || [],
+    total: Number(result.total || 0),
+    limit: Number(result.limit || params.limit || 50),
+    offset: Number(result.offset || params.offset || 0),
+  }
+}
+
+export function getVideoWorkflowRevision(id: string, revision: number): Promise<VideoWorkflowRevision> {
+  return http.get(`/api/me/video-workflows/${id}/revisions/${revision}`)
+}
+
 export function validateVideoWorkflow(id: string, graph?: VideoWorkflowGraph): Promise<{ valid: boolean; issues: VideoWorkflowValidationIssue[] }> {
   return http.post(`/api/me/video-workflows/${id}/validate`, graph ? { graph } : {}).then((result: any) => ({
     valid: Boolean(result.valid),

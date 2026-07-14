@@ -16,6 +16,7 @@ const props = defineProps<{
   total: number
   loading?: boolean
   actionRunID?: string
+  currentRunID?: string
   detail?: VideoWorkflowRun | null
 }>()
 
@@ -25,6 +26,7 @@ const emit = defineEmits<{
   'load-more': []
   'inspect': [run: VideoWorkflowRun]
   'expand': [run: VideoWorkflowRun]
+  'switch': [run: VideoWorkflowRun]
   'back': []
   'preview': [run: VideoWorkflowRun]
   'download': [run: VideoWorkflowRun]
@@ -102,6 +104,12 @@ function requestNodeRuns(run: VideoWorkflowRun) {
   if (run.node_runs?.length || props.actionRunID === run.id) return
   emit('expand', run)
 }
+function isCurrentRun(run: VideoWorkflowRun) {
+  return Boolean(props.currentRunID) && props.currentRunID === run.id
+}
+function switchLabel(run: VideoWorkflowRun) {
+  return isCurrentRun(run) ? '当前查看' : '切换查看'
+}
 </script>
 
 <template>
@@ -128,6 +136,12 @@ function requestNodeRuns(run: VideoWorkflowRun) {
         <p>{{ formatDate(detail.created_at) }} · {{ formatDuration(detail) }} · {{ credits(detail) }}</p>
         <div class="detail-progress"><i :style="{ width: `${progress(detail)}%` }" /><span>{{ progress(detail) }}%</span></div>
         <div class="detail-actions">
+          <button
+            type="button"
+            :class="{ current: isCurrentRun(detail) }"
+            :disabled="actionRunID === detail.id"
+            @click="emit('switch', detail)"
+          >{{ switchLabel(detail) }}</button>
           <button :disabled="!canOutput(detail)" @click="emit('preview', detail)"><VideoPlay />预览成片</button>
           <button :disabled="!canOutput(detail)" @click="emit('download', detail)"><Download />下载</button>
         </div>
@@ -166,11 +180,12 @@ function requestNodeRuns(run: VideoWorkflowRun) {
         <button @click="emit('generate')">生成第一条记录</button>
       </div>
       <div v-else class="history-list">
-        <article v-for="run in runs" :key="run.id" :class="{ busy: actionRunID === run.id }">
+        <article v-for="run in runs" :key="run.id" :class="{ busy: actionRunID === run.id, current: isCurrentRun(run) }">
           <header>
             <span :class="['status-pill', run.status]">{{ statusLabel(run.status) }}</span>
             <b>{{ modeLabel(run.run_mode) }}</b>
             <em>R{{ run.workflow_revision }}</em>
+            <small v-if="isCurrentRun(run)" class="current-tag">当前</small>
           </header>
           <div class="run-meta"><span>{{ formatDate(run.created_at) }}</span><span>{{ formatDuration(run) }}</span><span>{{ credits(run) }}</span></div>
           <div class="history-progress"><i :style="{ width: `${progress(run)}%` }" /><span>{{ progress(run) }}%</span></div>
@@ -204,6 +219,12 @@ function requestNodeRuns(run: VideoWorkflowRun) {
           </section>
 
           <footer>
+            <button
+              type="button"
+              :class="{ current: isCurrentRun(run) }"
+              :disabled="actionRunID === run.id"
+              @click="emit('switch', run)"
+            >{{ switchLabel(run) }}</button>
             <button @click="emit('inspect', run)"><View />详情</button>
             <button :disabled="!canOutput(run)" @click="emit('preview', run)"><VideoPlay />预览</button>
             <button :disabled="!canOutput(run)" @click="emit('download', run)"><Download />下载</button>
@@ -217,10 +238,10 @@ function requestNodeRuns(run: VideoWorkflowRun) {
 
 <style scoped lang="scss">
 .history-heading { width: 100%; display: flex; align-items: center; justify-content: space-between; }.history-heading > div { display: flex; align-items: center; gap: 10px; }.history-heading > div > svg { width: 20px; color: #2563eb; }.history-heading span { display: grid; gap: 2px; }.history-heading strong { color: #0f172a; font-size: 15px; }.history-heading small { color: #64748b; font-size: 10px; }.history-heading button { width: 32px; height: 32px; display: grid; place-items: center; color: #475569; background: #f8fafc; border: 1px solid #dbe2ea; border-radius: 5px; cursor: pointer; }.history-heading button:hover { color: #2563eb; border-color: #93c5fd; }.history-heading button:disabled { opacity: .5; cursor: wait; }.history-heading button svg { width: 14px; }
-.history-list { display: grid; gap: 10px; padding-bottom: 16px; }.history-list article { padding: 13px; background: #fff; border: 1px solid #dbe2ea; border-radius: 7px; transition: border-color .18s ease, box-shadow .18s ease; }.history-list article:hover { border-color: #93c5fd; box-shadow: 0 5px 16px rgba(15, 23, 42, .07); }.history-list article.busy { opacity: .58; pointer-events: none; }.history-list article header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; }.history-list article header b { overflow: hidden; color: #334155; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }.history-list article header em { color: #64748b; font-size: 10px; font-style: normal; }
+.history-list { display: grid; gap: 10px; padding-bottom: 16px; }.history-list article { padding: 13px; background: #fff; border: 1px solid #dbe2ea; border-radius: 7px; transition: border-color .18s ease, box-shadow .18s ease; }.history-list article:hover { border-color: #93c5fd; box-shadow: 0 5px 16px rgba(15, 23, 42, .07); }.history-list article.busy { opacity: .58; pointer-events: none; }.history-list article.current { border-color: #2563eb; box-shadow: 0 0 0 1px rgba(37, 99, 235, .18); }.history-list article header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 8px; }.history-list article header b { overflow: hidden; color: #334155; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }.history-list article header em { color: #64748b; font-size: 10px; font-style: normal; }.current-tag { color: #1d4ed8; background: #dbeafe; border-radius: 999px; padding: 2px 6px; font-size: 9px; font-weight: 650; }
 .status-pill { display: inline-flex; align-items: center; padding: 3px 7px; color: #475569; background: #f1f5f9; border-radius: 999px; font-size: 9px; font-weight: 650; }.status-pill.running, .status-pill.queued, .status-pill.cancel_pending { color: #1d4ed8; background: #dbeafe; }.status-pill.succeeded { color: #15803d; background: #dcfce7; }.status-pill.failed { color: #b91c1c; background: #fee2e2; }.status-pill.canceled { color: #475569; background: #e2e8f0; }.status-pill.awaiting_character_approval, .status-pill.awaiting_storyboard_approval, .status-pill.awaiting_approval { color: #b45309; background: #fef3c7; }.status-pill.node-status { padding: 1px 5px; font-size: 8px; font-style: normal; font-weight: 650; }
-.run-meta { display: flex; gap: 10px; margin-top: 9px; color: #64748b; font-size: 9px; }.run-meta span + span { position: relative; padding-left: 10px; }.run-meta span + span::before { position: absolute; left: 0; content: '·'; }.history-progress, .detail-progress { position: relative; height: 5px; margin-top: 10px; overflow: hidden; background: #e2e8f0; border-radius: 999px; }.history-progress i, .detail-progress i { position: absolute; inset: 0 auto 0 0; background: #2563eb; border-radius: inherit; }.history-progress span, .detail-progress span { position: absolute; right: 0; top: -15px; color: #64748b; font-size: 8px; }.history-error { margin: 9px 0 0; overflow: hidden; color: #b91c1c; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }.history-list article footer { display: flex; justify-content: flex-end; gap: 6px; margin-top: 12px; }
-.history-list article footer button, .detail-actions button { height: 28px; display: flex; align-items: center; gap: 4px; padding: 0 9px; color: #334155; background: #f8fafc; border: 1px solid #dbe2ea; border-radius: 4px; cursor: pointer; font-size: 9px; }.history-list article footer button:hover, .detail-actions button:hover { color: #2563eb; background: #eff6ff; border-color: #93c5fd; }.history-list article footer button:disabled, .detail-actions button:disabled { opacity: .4; cursor: not-allowed; }.history-list article footer svg, .detail-actions svg { width: 12px; }
+.run-meta { display: flex; gap: 10px; margin-top: 9px; color: #64748b; font-size: 9px; }.run-meta span + span { position: relative; padding-left: 10px; }.run-meta span + span::before { position: absolute; left: 0; content: '·'; }.history-progress, .detail-progress { position: relative; height: 5px; margin-top: 10px; overflow: hidden; background: #e2e8f0; border-radius: 999px; }.history-progress i, .detail-progress i { position: absolute; inset: 0 auto 0 0; background: #2563eb; border-radius: inherit; }.history-progress span, .detail-progress span { position: absolute; right: 0; top: -15px; color: #64748b; font-size: 8px; }.history-error { margin: 9px 0 0; overflow: hidden; color: #b91c1c; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }.history-list article footer { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.history-list article footer button, .detail-actions button { height: 28px; display: flex; align-items: center; gap: 4px; padding: 0 9px; color: #334155; background: #f8fafc; border: 1px solid #dbe2ea; border-radius: 4px; cursor: pointer; font-size: 9px; }.history-list article footer button:hover, .detail-actions button:hover { color: #2563eb; background: #eff6ff; border-color: #93c5fd; }.history-list article footer button:disabled, .detail-actions button:disabled { opacity: .4; cursor: not-allowed; }.history-list article footer button.current, .detail-actions button.current { color: #1d4ed8; background: #dbeafe; border-color: #93c5fd; cursor: default; }.history-list article footer svg, .detail-actions svg { width: 12px; }
 .card-node-runs { margin-top: 10px; padding-top: 8px; border-top: 1px solid #eef2f7; }.node-toggle { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #334155; font-size: 10px; }.node-toggle strong { font-size: 10px; }.node-toggle > span { color: #64748b; font-size: 9px; }.load-nodes { height: 22px; padding: 0 8px; color: #2563eb; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 4px; cursor: pointer; font-size: 9px; }.load-nodes:disabled { opacity: .5; cursor: wait; }.card-node-list { display: grid; margin-top: 6px; }
 .history-empty { min-height: 420px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; color: #64748b; text-align: center; }.history-empty > svg { width: 34px; color: #94a3b8; }.history-empty b { color: #334155; font-size: 13px; }.history-empty span { width: 240px; font-size: 10px; line-height: 1.6; }.history-empty button { height: 32px; margin-top: 4px; padding: 0 14px; color: #fff; background: #2563eb; border: 0; border-radius: 5px; cursor: pointer; font-size: 10px; }.history-skeleton { display: grid; gap: 10px; }.history-skeleton i { height: 126px; background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 40%, #f1f5f9 65%); background-size: 400% 100%; border-radius: 7px; animation: skeleton 1.3s ease infinite; }.load-more { height: 34px; color: #475569; background: #fff; border: 1px solid #dbe2ea; border-radius: 5px; cursor: pointer; font-size: 10px; }
 .back-history { display: flex; align-items: center; gap: 5px; padding: 0; color: #475569; background: transparent; border: 0; cursor: pointer; font-size: 10px; }.back-history svg { width: 13px; }.detail-summary { margin-top: 14px; padding: 14px; background: #f8fafc; border: 1px solid #dbe2ea; border-radius: 7px; }.detail-summary header { display: flex; align-items: center; justify-content: space-between; }.detail-summary header b { color: #64748b; font-size: 10px; }.detail-summary h3 { margin: 11px 0 4px; color: #0f172a; font-size: 15px; }.detail-summary p { margin: 0; color: #64748b; font-size: 9px; }.detail-actions { display: flex; gap: 7px; margin-top: 13px; }.run-error { display: grid; gap: 4px; margin-top: 10px; padding: 10px; color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; font-size: 10px; }.run-error b { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; }.run-error b small { color: #9f1239; font-size: 8px; font-weight: 500; }.run-error span { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }.node-run-list { margin-top: 16px; }.node-run-list > header { display: flex; justify-content: space-between; margin-bottom: 7px; color: #334155; font-size: 11px; }.node-run-list > header span { color: #64748b; font-size: 9px; }.node-run-row { min-height: 42px; display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; gap: 8px; border-bottom: 1px solid #eef2f7; }.node-run-row.compact { min-height: 36px; }.node-run-row > i { width: 7px; height: 7px; background: #94a3b8; border-radius: 50%; }.node-run-row > i.running, .node-run-row > i.queued { background: #3b82f6; }.node-run-row > i.succeeded { background: #22c55e; }.node-run-row > i.failed { background: #ef4444; }.node-run-row > i.awaiting_approval { background: #f59e0b; }.node-run-row > span { min-width: 0; display: grid; gap: 2px; }.node-run-row b { overflow: hidden; color: #334155; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }.node-run-row small { overflow: hidden; color: #64748b; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }.node-run-row em { color: #64748b; font-size: 9px; font-style: normal; }.detail-empty { padding: 30px 0; color: #94a3b8; text-align: center; font-size: 10px; }

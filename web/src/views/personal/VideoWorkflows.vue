@@ -36,6 +36,7 @@ import VideoWorkflowLibrary from '@/components/video-workflow/VideoWorkflowLibra
 import VideoWorkflowMediaPreview from '@/components/video-workflow/VideoWorkflowMediaPreview.vue'
 import VideoWorkflowOutline from '@/components/video-workflow/VideoWorkflowOutline.vue'
 import VideoWorkflowRunHistory from '@/components/video-workflow/VideoWorkflowRunHistory.vue'
+import VideoWorkflowRevisionHistory from '@/components/video-workflow/VideoWorkflowRevisionHistory.vue'
 import VideoWorkflowRunConfirm from '@/components/video-workflow/VideoWorkflowRunConfirm.vue'
 import {
   approveVideoWorkflowCharacters,
@@ -45,9 +46,11 @@ import {
   deleteVideoWorkflow,
   estimateVideoWorkflowRun,
   getVideoWorkflow,
+  getVideoWorkflowRevision,
   getVideoWorkflowRun,
   listVideoAssets,
   listVideoWorkflowModels,
+  listVideoWorkflowRevisions,
   listVideoWorkflowRuns,
   listVideoWorkflowTemplates,
   listVideoWorkflows,
@@ -67,6 +70,7 @@ import {
   type VideoWorkflowNodeHistoryEntry,
   type VideoWorkflowNodeRun,
   type VideoWorkflowModelOption,
+  type VideoWorkflowRevisionListItem,
   type VideoWorkflowRun,
   type VideoWorkflowRunMode,
   type VideoWorkflowTemplate,
@@ -154,7 +158,7 @@ type WorkspaceMenuCommand =
 type OutputSettingCommand = 'aspect_9_16' | 'aspect_16_9' | 'aspect_1_1' | 'resolution_720p' | 'resolution_1080p'
 
 const POLL_INTERVAL = 2500
-const AUTO_SAVE_DELAY = 800
+const AUTO_SAVE_DELAY = 30000
 const HISTORY_LIMIT = 50
 const RUN_HISTORY_PAGE_SIZE = 20
 const NODE_HISTORY_LIMIT = 5
@@ -221,6 +225,12 @@ const runHistoryItems = ref<VideoWorkflowRun[]>([])
 const runHistoryTotal = ref(0)
 const runHistoryActionID = ref('')
 const runHistoryDetail = ref<VideoWorkflowRun | null>(null)
+const revisionHistoryVisible = ref(false)
+const revisionHistoryLoading = ref(false)
+const revisionHistoryItems = ref<VideoWorkflowRevisionListItem[]>([])
+const revisionHistoryTotal = ref(0)
+const revisionHistoryAction = ref<number | null>(null)
+const viewingRevision = ref<number | null>(null)
 const runDetailCache = ref<Record<string, VideoWorkflowRun>>({})
 const nodeHistoryLoading = ref(false)
 const jsonFileInput = ref<HTMLInputElement | null>(null)
@@ -281,6 +291,8 @@ const {
 } = useVueFlow('video-workflow-flow')
 
 const selectedNode = computed(() => graph.value.nodes.find((node) => node.id === selectedNodeID.value) || null)
+/** 结构大纲与画布一致：合并 activeRun.node_runs 后的展示态，避免图节点自身 status 为空时全显示「待生成」。 */
+const outlineNodes = computed(() => graph.value.nodes.map((node) => displayNode(node)))
 const timelineNode = computed(() => graph.value.nodes.find((node) => node.type === 'timeline') || null)
 const timelineClips = computed<VideoWorkflowTimelineClip[]>(() => Array.isArray(timelineNode.value?.config.clips)
   ? timelineNode.value!.config.clips as VideoWorkflowTimelineClip[]
@@ -389,23 +401,30 @@ const workspaceLifecycle = computed(() => {
   if (dirty.value) return 'dirty'
   return 'ready'
 })
-const saveState = computed(() => {
+const saveStateLabel = computed(() => {
   if (!activeWorkflow.value) return '未关联工作流'
-  if (revisionConflict.value) return '修订冲突 · 已保留本地副本'
+  if (revisionConflict.value) return '修订冲突'
   if (saving.value) return '保存中…'
-  if (dirty.value && !backendAvailable.value) return '离线草稿已保留'
+  if (dirty.value && !backendAvailable.value) return '离线草稿'
   if (dirty.value) return '待保存'
-  return `已加载 · R${activeWorkflow.value.revision}`
+  return '已保存'
+})
+const saveState = computed(() => {
+  if (!activeWorkflow.value) return saveStateLabel.value
+  if (revisionConflict.value) return `${saveStateLabel.value} · 已保留本地副本 · R${activeWorkflow.value.revision}`
+  return `${saveStateLabel.value} · R${activeWorkflow.value.revision}`
 })
 const workspaceLifecycleHint = computed(() => ({
   loading: '正在加载工作区…',
   unbound: '当前为空白预览画布，请从模板创建工作流后再编辑和生成',
   conflict: '服务器版本与本地草稿冲突，请先处理修订',
   saving: '正在保存到服务器…',
-  dirty: '本地修改尚未保存',
-  ready: '工作流已关联服务器，可正常编辑和生成',
+  dirty: '本地修改约 30 秒后自动保存，也可立即点保存；点修订号打开版本历史',
+  ready: '工作流已关联服务器；点修订号打开版本历史并可切换画布快照',
 } as Record<string, string>)[workspaceLifecycle.value] || '')
 const canOperateWorkflow = computed(() => Boolean(activeWorkflow.value) && !revisionConflict.value)
+const canManualSave = computed(() => canOperateWorkflow.value && !saving.value)
+const saveButtonPending = computed(() => canManualSave.value && dirty.value)
 const outputSettingsLabel = computed(() => `${graph.value.settings.aspect_ratio} · ${graph.value.settings.resolution}`)
 const runStatus = computed(() => ({
   queued: '排队中', running: '生成中', awaiting_character_approval: '待选角色', awaiting_storyboard_approval: '待确认分镜',
@@ -435,13 +454,8 @@ const workspaceContextBar = computed<WorkspaceContextBar | null>(() => {
       showContinueApproval: true,
     }
   }
-  if (isRunActive.value) {
-    return {
-      kind: 'running',
-      text: runStatus.value || '运行中',
-      progress: activeRun.value?.progress,
-    }
-  }
+  // Header already shows run progress + stop; pure running has no bar actions → omit.
+  if (isRunActive.value) return null
   if (conflictDraftKey.value) {
     return {
       kind: 'draft',
@@ -451,7 +465,7 @@ const workspaceContextBar = computed<WorkspaceContextBar | null>(() => {
   }
   return null
 })
-const showHeaderRunProgress = computed(() => Boolean(runStatus.value || awaitingApproval.value))
+const showHeaderRunProgress = computed(() => isRunActive.value)
 const headerRunStats = computed(() => {
   const nodeRuns = activeRun.value?.node_runs || []
   const total = nodeRuns.length
@@ -475,11 +489,45 @@ const headerRunStats = computed(() => {
     : `${label}，进度 ${progress}%`
   return { progress, active, done, total, label, indeterminate, nodeText, ariaLabel }
 })
+function runHasPreviewOutput(run: VideoWorkflowRun | null | undefined, allowCanvasFallback: boolean) {
+  if (run?.output?.asset_id && (run.output_version_id || run.output_asset_version_id)) return true
+  const directURL = run?.output_url
+  if (directURL && !String(directURL).includes('purpose=preview')) return true
+  if (!allowCanvasFallback) return false
+  const compose = graph.value.nodes.find((node) => node.type === 'compose')
+  return Boolean(compose?.output?.url || compose?.output?.output_url)
+}
+const hasPreviewOutput = computed(() => runHasPreviewOutput(activeRun.value, true))
+const previewStatusLabel = computed(() => (
+  hasPreviewOutput.value ? '成片已就绪，点击预览播放' : '最终成片生成后可预览'
+))
 const workspaceStyle = computed(() => ({
   '--left-panel': panelLayout.libraryOpen ? `${panelLayout.left}px` : '0px',
   '--right-panel': panelLayout.inspectorOpen ? `${panelLayout.right}px` : '0px',
 }))
 const modKeyCode = computed(() => typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? 'Meta' : 'Control')
+const modKeyLabel = computed(() => modKeyCode.value === 'Meta' ? '⌘' : 'Ctrl')
+const saveButtonTitle = computed(() => {
+  if (!activeWorkflow.value) return '请先创建工作流'
+  if (revisionConflict.value) return '修订冲突，请先处理后再保存'
+  if (saving.value) return '正在保存…'
+  if (dirty.value) return `立即保存（${modKeyLabel.value}+S）；未保存时约 30 秒后自动保存`
+  return `已保存 · R${activeWorkflow.value.revision}`
+})
+const revisionBadgeTitle = computed(() => {
+  if (!activeWorkflow.value) return '查看版本历史'
+  if (viewingRevision.value != null && viewingRevision.value !== activeWorkflow.value.revision) {
+    return `版本历史：画布正在查看 R${viewingRevision.value}（服务器当前 R${activeWorkflow.value.revision}）`
+  }
+  return `查看版本历史（当前画布 R${activeWorkflow.value.revision}）`
+})
+const revisionBadgeLabel = computed(() => {
+  if (!activeWorkflow.value) return ''
+  if (viewingRevision.value != null && viewingRevision.value !== activeWorkflow.value.revision) {
+    return `R${viewingRevision.value}`
+  }
+  return `R${activeWorkflow.value.revision}`
+})
 const selectedCompatibleSources = computed(() => {
   if (!connectionTarget.value) return []
   const target = graph.value.nodes.find((node) => node.id === connectionTarget.value?.nodeID)
@@ -1019,6 +1067,10 @@ async function loadWorkspace(workflow?: VideoWorkflow | null) {
   runHistoryTotal.value = 0
   runHistoryDetail.value = null
   runDetailCache.value = {}
+  revisionHistoryItems.value = []
+  revisionHistoryTotal.value = 0
+  revisionHistoryVisible.value = false
+  viewingRevision.value = next?.revision ?? null
   nodeHistoryLoading.value = false
   nodeHistoryGeneration += 1
   activeRun.value = null
@@ -1127,29 +1179,7 @@ async function expandHistoryRun(run: VideoWorkflowRun) {
   }
 }
 
-function openRunHistory() {
-  if (!requireActiveWorkflow('查看生成历史')) return
-  runHistoryVisible.value = true
-  runHistoryDetail.value = null
-  void loadRunHistory(true)
-}
-
-async function inspectHistoryRun(run: VideoWorkflowRun) {
-  runHistoryActionID.value = run.id
-  try {
-    runHistoryDetail.value = await getVideoWorkflowRun(run.id, true)
-    runDetailCache.value = { ...runDetailCache.value, [run.id]: runHistoryDetail.value }
-    runHistoryItems.value = runHistoryItems.value.map((item) => (
-      item.id === run.id
-        ? {
-            ...item,
-            node_runs: runHistoryDetail.value?.node_runs || item.node_runs,
-            graph_snapshot: runHistoryDetail.value?.graph_snapshot || item.graph_snapshot,
-          }
-        : item
-    ))
-  } catch { ElMessage.error('运行详情加载失败') } finally { runHistoryActionID.value = '' }
-}
+async function loadSelectedNodeHistory() {
   const workflowID = activeWorkflow.value?.id
   const nodeID = selectedNodeID.value
   if (!workflowID || !nodeID) return
@@ -1173,6 +1203,11 @@ async function inspectHistoryRun(run: VideoWorkflowRun) {
     for (const detail of details) if (detail) cache[detail.id] = detail
     for (const run of page.items) if (run.node_runs) cache[run.id] = run
     runDetailCache.value = cache
+    runHistoryItems.value = runHistoryItems.value.map((run) => {
+      const detail = cache[run.id]
+      if (!detail?.node_runs || run.node_runs?.length) return run
+      return { ...run, node_runs: detail.node_runs, graph_snapshot: run.graph_snapshot || detail.graph_snapshot }
+    })
   } catch {
     if (generation === nodeHistoryGeneration) ElMessage.error('节点历史加载失败，请重试')
   } finally {
@@ -1187,12 +1222,128 @@ function openRunHistory() {
   void loadRunHistory(true)
 }
 
+async function loadRevisionHistory(reset = true) {
+  const workflowID = activeWorkflow.value?.id
+  if (!workflowID || revisionHistoryLoading.value) return
+  revisionHistoryLoading.value = true
+  try {
+    const offset = reset ? 0 : revisionHistoryItems.value.length
+    const page = await listVideoWorkflowRevisions(workflowID, { limit: 50, offset })
+    if (activeWorkflow.value?.id !== workflowID) return
+    const merged = reset ? page.items : [...revisionHistoryItems.value, ...page.items]
+    revisionHistoryItems.value = [...new Map(merged.map((item) => [item.revision, item])).values()]
+      .sort((a, b) => b.revision - a.revision)
+    revisionHistoryTotal.value = page.total
+  } catch {
+    ElMessage.error('版本历史加载失败，请重试')
+  } finally {
+    revisionHistoryLoading.value = false
+  }
+}
+
+function openRevisionHistory() {
+  if (!requireActiveWorkflow('查看版本历史')) return
+  revisionHistoryVisible.value = true
+  void loadRevisionHistory(true)
+}
+
+async function switchToRevision(item: VideoWorkflowRevisionListItem) {
+  if (!requireActiveWorkflow('切换版本')) return
+  if (isRunActive.value) {
+    ElMessage.warning('当前有运行进行中，请先停止后再切换版本')
+    return
+  }
+  if (viewingRevision.value === item.revision) {
+    ElMessage.info(`画布已在查看 R${item.revision}`)
+    return
+  }
+  if (dirty.value) {
+    try {
+      await ElMessageBox.confirm(
+        `当前有未保存修改。切换到 R${item.revision} 会用该版本画布覆盖本地草稿，是否继续？`,
+        '切换版本',
+        { type: 'warning', confirmButtonText: '切换', cancelButtonText: '取消' },
+      )
+    } catch {
+      return
+    }
+  }
+  revisionHistoryAction.value = item.revision
+  try {
+    const detail = await getVideoWorkflowRevision(activeWorkflow.value!.id, item.revision)
+    invalidateImageTransformContext()
+    pushUndo()
+    graph.value = migrateVideoWorkflowGraph(cloneWorkflowGraph(detail.graph))
+    viewingRevision.value = detail.revision
+    selectedNodeID.value = ''
+    selectedNodeIDs.value = []
+    selectedEdgeIDs.value = []
+    undoStack.value = []
+    redoStack.value = []
+    if (detail.is_current || detail.revision === activeWorkflow.value?.revision) {
+      dirty.value = false
+      localStorage.removeItem(draftKey())
+      ElMessage.success(`已恢复查看服务器当前版本 R${detail.revision}`)
+    } else {
+      markDirty()
+      ElMessage.success(`已切换到 R${detail.revision}；保存后将作为新修订写入`)
+    }
+    syncFlow()
+  } catch {
+    ElMessage.error('切换版本失败')
+  } finally {
+    revisionHistoryAction.value = null
+  }
+}
+
 async function inspectHistoryRun(run: VideoWorkflowRun) {
   runHistoryActionID.value = run.id
   try {
     runHistoryDetail.value = await getVideoWorkflowRun(run.id, true)
     runDetailCache.value = { ...runDetailCache.value, [run.id]: runHistoryDetail.value }
+    runHistoryItems.value = runHistoryItems.value.map((item) => (
+      item.id === run.id
+        ? {
+            ...item,
+            node_runs: runHistoryDetail.value?.node_runs || item.node_runs,
+            graph_snapshot: runHistoryDetail.value?.graph_snapshot || item.graph_snapshot,
+          }
+        : item
+    ))
   } catch { ElMessage.error('运行详情加载失败') } finally { runHistoryActionID.value = '' }
+}
+
+async function switchToHistoryRun(run: VideoWorkflowRun) {
+  if (!requireActiveWorkflow('切换历史运行')) return
+  if (isRunActive.value && activeRun.value?.id !== run.id) {
+    ElMessage.warning('当前有运行进行中，请先停止后再切换历史结果')
+    return
+  }
+  if (activeRun.value?.id === run.id && (run.node_runs?.length || activeRun.value.node_runs?.length)) {
+    ElMessage.info(`当前已在查看 R${run.workflow_revision} 的运行结果`)
+    return
+  }
+  runHistoryActionID.value = run.id
+  try {
+    const detail = (run.node_runs?.length ? run : null)
+      || (runDetailCache.value[run.id]?.node_runs?.length ? runDetailCache.value[run.id] : null)
+      || await getVideoWorkflowRun(run.id, true)
+    activeRun.value = detail
+    runDetailCache.value = { ...runDetailCache.value, [run.id]: detail }
+    upsertRunHistory(detail)
+    rememberRun(activeWorkflow.value!.id, detail.id)
+    if (['queued', 'running', 'awaiting_character_approval', 'awaiting_storyboard_approval', 'cancel_pending'].includes(detail.status || '')) {
+      startPolling()
+    } else {
+      stopPolling()
+    }
+    syncFlow()
+    ElMessage.success(`已切换到 R${detail.workflow_revision} 的运行结果`)
+  } catch {
+    ElMessage.error('切换历史运行失败')
+  } finally {
+    runHistoryActionID.value = ''
+  }
 }
 
 function openCreateWorkflow() {
@@ -1325,6 +1476,7 @@ async function performSaveWorkflow(silent = false): Promise<VideoWorkflow | null
     backendAvailable.value = true
     if (changeSequence.value === sequence) {
       dirty.value = false
+      viewingRevision.value = activeWorkflow.value.revision
       localStorage.removeItem(draftKey())
     } else scheduleSave()
     if (!silent) ElMessage.success(`已保存 R${activeWorkflow.value.revision}`)
@@ -1354,6 +1506,35 @@ async function flushSave(): Promise<boolean> {
     if (!saved || revisionConflict.value) return false
   }
   return !dirty.value
+}
+
+async function saveNow() {
+  if (!activeWorkflow.value) {
+    ElMessage.warning('请先从模板创建工作流')
+    return
+  }
+  if (revisionConflict.value) {
+    ElMessage.warning('修订冲突，请先加载服务器版本或恢复本地草稿')
+    return
+  }
+  if (saveTimer) {
+    window.clearTimeout(saveTimer)
+    saveTimer = null
+  }
+  if (!dirty.value) {
+    ElMessage.info(`已是最新 · R${activeWorkflow.value.revision}`)
+    return
+  }
+  const ok = await flushSave()
+  if (ok) {
+    ElMessage.success(`已保存 R${activeWorkflow.value.revision}`)
+    return
+  }
+  if (revisionConflict.value) {
+    ElMessage.error('修订冲突，保存未完成')
+    return
+  }
+  ElMessage.error(backendAvailable.value ? '保存失败，请稍后重试' : '网络不可用，草稿已保存在本机')
 }
 
 async function reloadWorkflow() {
@@ -2883,6 +3064,7 @@ function handleCanvasKeydown(event: KeyboardEvent) {
   const target = event.target as HTMLElement | null
   if (target?.matches('input, textarea, select, [contenteditable="true"]') || target?.closest('.el-dialog, .el-message-box')) return
   const mod = event.metaKey || event.ctrlKey
+  if (mod && event.key.toLowerCase() === 's') { event.preventDefault(); void saveNow(); return }
   if (mod && event.key.toLowerCase() === 'z') { event.preventDefault(); event.shiftKey ? redo() : undo(); return }
   if (mod && event.key.toLowerCase() === 'y') { event.preventDefault(); redo(); return }
   if (mod && event.key.toLowerCase() === 'c') { event.preventDefault(); copySelectedNodes(); return }
@@ -3074,12 +3256,35 @@ onBeforeUnmount(() => {
             <strong v-else class="workflow-placeholder">未创建工作流</strong>
             <button class="icon-button rename-button" type="button" title="重命名工作流" :disabled="!activeWorkflow" @click="renameActiveWorkflow"><EditPen /></button>
           </div>
-          <div
-            class="save-state"
-            :class="[workspaceLifecycle, { offline: !backendAvailable }]"
-            :title="`${saveState} · ${workspaceLifecycleHint}`"
-            aria-live="polite"
-          ><i /><span>{{ saveState }}</span></div>
+          <div class="save-controls" role="group" :aria-label="`保存状态：${saveState}`">
+            <div
+              class="save-state"
+              :class="[workspaceLifecycle, { offline: !backendAvailable }]"
+              :title="`${saveState} · ${workspaceLifecycleHint}`"
+              aria-live="polite"
+            >
+              <i />
+              <span>{{ saveStateLabel }}</span>
+              <button
+                v-if="activeWorkflow"
+                type="button"
+                class="revision-badge"
+                :class="{ previewing: viewingRevision != null && viewingRevision !== activeWorkflow.revision }"
+                :title="revisionBadgeTitle"
+                :aria-label="revisionBadgeTitle"
+                @click="openRevisionHistory"
+              >{{ revisionBadgeLabel }}</button>
+            </div>
+            <button
+              class="save-button"
+              type="button"
+              :class="{ pending: saveButtonPending, busy: saving }"
+              :disabled="!canManualSave"
+              :title="saveButtonTitle"
+              :aria-label="saveButtonTitle"
+              @click="saveNow"
+            >{{ saving ? '保存中' : '保存' }}</button>
+          </div>
         </div>
 
         <div
@@ -3091,7 +3296,7 @@ onBeforeUnmount(() => {
             class="header-run-progress"
             :class="{ indeterminate: headerRunStats.indeterminate }"
             role="progressbar"
-            :aria-valuenow="headerRunStats.progress"
+            :aria-valuenow="headerRunStats.indeterminate ? undefined : headerRunStats.progress"
             aria-valuemin="0"
             aria-valuemax="100"
             :aria-label="headerRunStats.ariaLabel"
@@ -3099,7 +3304,9 @@ onBeforeUnmount(() => {
             aria-live="polite"
           >
             <span v-if="!headerPhone" class="header-run-label">{{ headerRunStats.label }}</span>
-            <i class="header-run-track" aria-hidden="true"><em :style="{ width: `${headerRunStats.progress}%` }" /></i>
+            <i class="header-run-track" aria-hidden="true">
+              <em :style="headerRunStats.indeterminate ? undefined : { width: `${headerRunStats.progress}%` }" />
+            </i>
             <b class="header-run-pct">{{ headerRunStats.progress }}%</b>
             <span class="header-run-nodes">{{ headerRunStats.nodeText }}</span>
           </div>
@@ -3128,7 +3335,15 @@ onBeforeUnmount(() => {
             </template>
           </el-dropdown>
 
-          <button v-if="!headerCompact" class="preview-button" type="button" @click="previewOutput"><VideoPlay />预览</button>
+          <button
+            v-if="!headerCompact"
+            class="preview-button"
+            type="button"
+            :class="hasPreviewOutput ? 'is-ready' : 'is-empty'"
+            :title="previewStatusLabel"
+            :aria-label="previewStatusLabel"
+            @click="previewOutput"
+          ><VideoPlay />预览</button>
 
           <div class="header-primary-group">
             <el-dropdown
@@ -3356,7 +3571,7 @@ onBeforeUnmount(() => {
       <transition name="toast"><div v-if="deletionToast" class="undo-toast" role="status">已删除 {{ deletionToast.count }} 个节点<button @click="restoreDeletedNodes">撤销</button><span>5秒</span></div></transition>
       <div class="save-live" aria-live="polite">{{ saveState }}</div>
 
-      <VideoWorkflowOutline v-model="outlineVisible" :nodes="graph.nodes" :edge-count="graph.edges.length" :clip-count="timelineClips.length" @select="selectNode" />
+      <VideoWorkflowOutline v-model="outlineVisible" :nodes="outlineNodes" :edge-count="graph.edges.length" :clip-count="timelineClips.length" @select="selectNode" />
       <VideoWorkflowValidationIssues
         v-model="validationIssuesVisible"
         :issues="validationIssues"
@@ -3379,14 +3594,30 @@ onBeforeUnmount(() => {
         :total="runHistoryTotal"
         :loading="runHistoryLoading"
         :action-run-i-d="runHistoryActionID"
+        :current-run-i-d="activeRun?.id || ''"
         :detail="runHistoryDetail"
         @refresh="loadRunHistory(true)"
         @load-more="loadRunHistory(false)"
         @inspect="inspectHistoryRun"
+        @expand="expandHistoryRun"
+        @switch="switchToHistoryRun"
         @back="runHistoryDetail = null"
         @preview="previewHistoryOutput"
         @download="downloadHistoryOutput"
         @generate="generateFromHistory"
+      />
+
+      <VideoWorkflowRevisionHistory
+        v-model="revisionHistoryVisible"
+        :items="revisionHistoryItems"
+        :total="revisionHistoryTotal"
+        :loading="revisionHistoryLoading"
+        :action-revision="revisionHistoryAction"
+        :viewing-revision="viewingRevision"
+        :current-revision="activeWorkflow?.revision || 0"
+        @refresh="loadRevisionHistory(true)"
+        @load-more="loadRevisionHistory(false)"
+        @switch="switchToRevision"
       />
 
       <el-dialog v-model="connectionDialogVisible" title="添加连接" width="460px">
@@ -3545,10 +3776,13 @@ onBeforeUnmount(() => {
 .back-button, .icon-button { width: 30px; height: 30px; display: grid; place-items: center; color: #475569; background: #fff; border: 1px solid #dbe2ea; border-radius: 5px; cursor: pointer; flex: 0 0 auto; }.back-button svg, .icon-button svg { width: 14px; }.icon-button:disabled { opacity: .35; cursor: default; }.back-button:hover, .icon-button:not(:disabled):hover { color: #2563eb; background: #eff6ff; border-color: #93c5fd; }
 .workspace-actions { width: 30px; height: 30px; }.workspace-actions .icon-button[aria-busy="true"] { color: #2563eb; background: #eff6ff; }.workspace-menu-item { min-width: 104px; display: flex; align-items: center; gap: 8px; }.workspace-menu-item svg { width: 14px; color: #64748b; }.workspace-menu-item.danger { color: #dc2626; }.menu-badge { min-width: 16px; margin-left: auto; padding: 1px 5px; color: #1d4ed8; background: #dbeafe; border-radius: 999px; font-size: 10px; text-align: center; }.json-file-input { display: none; }
 .workflow-name { min-width: 0; flex: 1 1 160px; max-width: 280px; display: flex; align-items: center; gap: 4px; }.workflow-name strong { overflow: hidden; font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }.workflow-name .workflow-placeholder { color: #94a3b8; font-weight: 500; }.workflow-name .rename-button { width: 26px; height: 26px; flex: 0 0 auto; border: none; background: transparent; color: #64748b; }.workflow-name .rename-button:hover:not(:disabled) { color: #2563eb; background: #eff6ff; }.workflow-name .rename-button svg { width: 13px; }.workflow-name :deep(.el-select) { width: 100%; }.workflow-name :deep(.el-select__wrapper) { box-shadow: none; font-size: 15px; font-weight: 650; }
-.save-state { display: flex; align-items: center; gap: 6px; color: #475569; white-space: nowrap; font-size: 11px; flex: 0 0 auto; }.save-state i { width: 8px; height: 8px; background: #22c55e; border-radius: 50%; flex: 0 0 auto; }.save-state.unbound i { background: #94a3b8; }.save-state.ready i { background: #22c55e; }.save-state.dirty i, .save-state.saving i { background: #f59e0b; }.save-state.conflict i, .save-state.offline i { background: #ef4444; }
+.save-controls { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; min-width: 0; }
+.save-state { display: flex; align-items: center; gap: 6px; color: #475569; white-space: nowrap; font-size: 11px; flex: 0 1 auto; min-width: 0; }.save-state span { overflow: hidden; text-overflow: ellipsis; }.save-state i { width: 8px; height: 8px; background: #22c55e; border-radius: 50%; flex: 0 0 auto; }.save-state.unbound i { background: #94a3b8; }.save-state.ready i { background: #22c55e; }.save-state.dirty i, .save-state.saving i { background: #f59e0b; }.save-state.conflict i, .save-state.offline i { background: #ef4444; }
+.revision-badge { height: 22px; padding: 0 7px; color: #1d4ed8; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 999px; cursor: pointer; font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; flex: 0 0 auto; }.revision-badge:hover { color: #fff; background: #2563eb; border-color: #2563eb; }.revision-badge.previewing { color: #0f766e; background: #ccfbf1; border-color: #99f6e4; }
+.save-button { height: 28px; padding: 0 10px; color: #334155; background: #fff; border: 1px solid #dbe2ea; border-radius: 5px; cursor: pointer; white-space: nowrap; font-size: 11px; font-weight: 600; flex: 0 0 auto; }.save-button:hover:not(:disabled) { color: #2563eb; background: #eff6ff; border-color: #93c5fd; }.save-button.pending { color: #fff; background: #2563eb; border-color: #2563eb; }.save-button.pending:hover:not(:disabled) { color: #fff; background: #1d4ed8; border-color: #1d4ed8; }.save-button.busy, .save-button:disabled { opacity: .55; cursor: default; }
 .workspace-lifecycle-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; color: #92400e; background: #fffbeb; border-bottom: 1px solid #fde68a; font-size: 12px; }.workspace-lifecycle-banner button { height: 28px; padding: 0 12px; color: #fff; background: #2563eb; border: 0; border-radius: 5px; cursor: pointer; white-space: nowrap; font-size: 11px; }.workspace-lifecycle-banner button:hover { background: #1d4ed8; }
 .workspace-context-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 36px; padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-size: 12px; }.workspace-context-bar-main { min-width: 0; display: flex; align-items: center; gap: 8px; }.workspace-context-bar-main span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.workspace-context-bar-main b { color: #2563eb; flex: 0 0 auto; }.workspace-context-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: #38bdf8; }.workspace-context-bar-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }.context-bar-button { height: 28px; padding: 0 10px; color: #fff; background: #2563eb; border: 0; border-radius: 5px; cursor: pointer; white-space: nowrap; font-size: 11px; }.context-bar-button:hover:not(:disabled) { background: #1d4ed8; }.context-bar-button:disabled { opacity: .55; cursor: default; }.context-bar-button--ghost { color: #1d4ed8; background: transparent; border: 1px solid #93c5fd; }.context-bar-button--ghost:hover:not(:disabled) { color: #1e40af; background: #eff6ff; }.workspace-context-bar.is-conflict, .workspace-context-bar.is-draft { color: #9a3412; background: #fff7ed; border-bottom-color: #fdba74; }.workspace-context-bar.is-conflict .workspace-context-dot, .workspace-context-bar.is-draft .workspace-context-dot { background: #ea580c; }.workspace-context-bar.is-approval { color: #92400e; background: #fffbeb; border-bottom-color: #fde68a; }.workspace-context-bar.is-approval .workspace-context-dot { background: #f59e0b; }.workspace-context-bar.is-running { color: #1e3a5f; background: #eff6ff; border-bottom-color: #bfdbfe; }
-.output-settings-button, .preview-button, .stop-button { height: 30px; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 0 9px; color: #334155; background: #fff; border: 1px solid #dbe2ea; border-radius: 5px; cursor: pointer; white-space: nowrap; font-size: 11px; }.output-settings-button:hover, .preview-button:hover { color: #2563eb; background: #eff6ff; border-color: #93c5fd; }.preview-button svg, .stop-button svg { width: 14px; }.stop-button { color: #dc2626; }
+.output-settings-button, .preview-button, .stop-button { height: 30px; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 0 9px; color: #334155; background: #fff; border: 1px solid #dbe2ea; border-radius: 5px; cursor: pointer; white-space: nowrap; font-size: 11px; }.output-settings-button:hover { color: #2563eb; background: #eff6ff; border-color: #93c5fd; }.preview-button.is-empty { color: #64748b; background: #f8fafc; border-color: #e2e8f0; }.preview-button.is-empty:hover { color: #475569; background: #f1f5f9; border-color: #cbd5e1; }.preview-button.is-ready { color: #166534; background: #dcfce7; border-color: #86efac; font-weight: 650; }.preview-button.is-ready:hover { color: #14532d; background: #bbf7d0; border-color: #4ade80; }.preview-button svg, .stop-button svg { width: 14px; }.stop-button { color: #dc2626; }
 .output-settings :deep(.el-dropdown-menu__item.is-active) { color: #1d4ed8; font-weight: 650; }
 .generate-button { height: 30px; flex: 0 0 auto; }.generate-button :deep(.el-button) { height: 30px; border-radius: 5px; }.generate-button :deep(svg) { width: 12px; }
 .workspace-grid { position: relative; height: calc(100% - 56px); display: grid; grid-template-columns: var(--left-panel) minmax(0, 1fr) var(--right-panel); grid-template-areas: "library canvas inspector"; }
@@ -3566,7 +3800,9 @@ onBeforeUnmount(() => {
 button, select { font-family: inherit; } button:focus-visible, select:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
 @media (max-width: 1279px) {
   .brand-block { display: none; }
-  .save-state span { display: none; }
+  .save-state.ready span,
+  .save-state.unbound span,
+  .save-state.loading span { display: none; }
 }
 @media (max-width: 767px) {
   .workflow-name { max-width: none; }
