@@ -105,6 +105,12 @@ function showOriginal() {
     return
   }
   usingOriginal.value = true
+  if (activeSrc.value === target) {
+    // 原图与当前预览地址相同，不会触发新的 img load 事件。
+    imageLoading.value = false
+    resetTransform()
+    return
+  }
   activeSrc.value = target
   imageLoading.value = true
   resetTransform()
@@ -225,6 +231,7 @@ async function downloadImage() {
         class="image-preview-stage"
         :class="{ 'is-dragging': dragging }"
         v-loading="currentLoading"
+        :aria-busy="currentLoading"
         @wheel.prevent="onWheel"
         @pointerdown="onPointerDown"
         @pointermove="onPointerMove"
