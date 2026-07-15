@@ -76,6 +76,11 @@ func (r *Runtime) executeRun(ctx context.Context, run *Run) error {
 			outputs[copy.NodeID] = runtimeNodeOutput{VersionID: copy.OutputVersionID, JSON: copy.Output}
 		}
 	}
+	if run.RunMode == RunModeNodeOnly {
+		if err := r.hydrateUpstreamOutputs(ctx, run, selected, states, outputs); err != nil {
+			return err
+		}
+	}
 	incoming := incomingEdges(run.GraphSnapshot, selected)
 	waitingCharacter, waitingStoryboard := false, false
 	completed := 0
@@ -1108,7 +1113,8 @@ func incomingEdges(graph Graph, selected map[string]bool) map[string][]Edge {
 		inputOrder[node.ID] = ports
 	}
 	for _, edge := range graph.Edges {
-		if selected[edge.Source] && selected[edge.Target] {
+		// 目标已选即可；源可来自 hydrate 的上游（node_only 不重跑上游）。
+		if selected[edge.Target] {
 			out[edge.Target] = append(out[edge.Target], edge)
 		}
 	}
@@ -1138,6 +1144,68 @@ func incomingEdges(graph Graph, selected map[string]bool) map[string][]Edge {
 		})
 		out[target] = edges
 	}
+	return out
+}
+
+func (r *Runtime) hydrateUpstreamOutputs(ctx context.Context, run *Run, selected map[string]bool, states map[string]*NodeRun, outputs map[string]runtimeNodeOutput) error {
+	required := requiredUpstreamNodeIDs(run.GraphSnapshot, selected)
+	missing := make([]string, 0, len(required))
+	for _, nodeID := range required {
+		if selected[nodeID] {
+			continue
+		}
+		if out, ok := outputs[nodeID]; ok && (out.VersionID != "" || len(out.JSON) > 0) {
+			continue
+		}
+		if state := states[nodeID]; state != nil && state.Status == NodeRunSucceeded {
+			outputs[nodeID] = runtimeNodeOutput{VersionID: state.OutputVersionID, JSON: state.Output}
+			continue
+		}
+		missing = append(missing, nodeID)
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	latest, err := r.config.Store.ListLatestSucceededNodeOutputs(ctx, run.UserID, run.WorkflowID, missing)
+	if err != nil {
+		return fmt.Errorf("%w: load upstream outputs: %v", errRecoverableRuntimePersistence, err)
+	}
+	found := make(map[string]struct{}, len(latest))
+	for i := range latest {
+		item := latest[i]
+		copy := item
+		if states[copy.NodeID] == nil {
+			states[copy.NodeID] = &copy
+		} else if states[copy.NodeID].Status != NodeRunSucceeded {
+			states[copy.NodeID] = &copy
+		}
+		outputs[copy.NodeID] = runtimeNodeOutput{VersionID: copy.OutputVersionID, JSON: copy.Output}
+		found[copy.NodeID] = struct{}{}
+	}
+	absent := make([]string, 0)
+	for _, nodeID := range missing {
+		if _, ok := found[nodeID]; !ok {
+			absent = append(absent, nodeID)
+		}
+	}
+	if len(absent) > 0 {
+		return fmt.Errorf("上游节点尚无成功产出：%s；请先运行上游或选择「连带上游重跑」", strings.Join(absent, ", "))
+	}
+	return nil
+}
+
+func requiredUpstreamNodeIDs(graph Graph, selected map[string]bool) []string {
+	seen := make(map[string]bool)
+	for _, edge := range graph.Edges {
+		if selected[edge.Target] && !selected[edge.Source] {
+			seen[edge.Source] = true
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for nodeID := range seen {
+		out = append(out, nodeID)
+	}
+	sort.Strings(out)
 	return out
 }
 

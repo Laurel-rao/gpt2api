@@ -335,8 +335,8 @@ func normalizeStartRunInput(input StartRunInput) (StartRunInput, error) {
 	if input.RunMode == "" {
 		input.RunMode = RunModeFull
 	}
-	if input.RunMode != RunModeFull && input.RunMode != RunModeNodeOnly && input.RunMode != RunModeDownstream {
-		return input, fmt.Errorf("%w: run_mode must be full, node_only or downstream", ErrInvalidInput)
+	if input.RunMode != RunModeFull && input.RunMode != RunModeNodeOnly && input.RunMode != RunModeUpstream && input.RunMode != RunModeDownstream {
+		return input, fmt.Errorf("%w: run_mode must be full, node_only, upstream or downstream", ErrInvalidInput)
 	}
 	if input.RunMode == RunModeFull && input.StartNodeID != "" {
 		return input, fmt.Errorf("%w: full run must not set start_node_id", ErrInvalidInput)
@@ -512,8 +512,8 @@ func (s *Service) EstimateRunWithInput(ctx context.Context, userID uint64, workf
 }
 
 func validateRunSelection(graph Graph, mode RunMode, startNodeID string) error {
-	if mode != RunModeFull && mode != RunModeNodeOnly && mode != RunModeDownstream {
-		return fmt.Errorf("%w: run_mode must be full, node_only or downstream", ErrInvalidInput)
+	if mode != RunModeFull && mode != RunModeNodeOnly && mode != RunModeUpstream && mode != RunModeDownstream {
+		return fmt.Errorf("%w: run_mode must be full, node_only, upstream or downstream", ErrInvalidInput)
 	}
 	if mode == RunModeFull {
 		if strings.TrimSpace(startNodeID) != "" {

@@ -21,5 +21,11 @@ describe('VideoWorkflowRunConfirm', () => {
       '运行当前及下游',
       { confirmButtonText: '确认运行', cancelButtonText: '取消', type: 'warning' },
     )
+    await (wrapper.vm as any).open('upstream', { token: 'estimate-token-2', total_credits: 10 })
+    expect(confirmMock).toHaveBeenLastCalledWith(
+      '预计消耗 10 积分。确认后开始生成。',
+      '运行当前节点并重跑上游',
+      { confirmButtonText: '确认运行', cancelButtonText: '取消', type: 'warning' },
+    )
   })
 })

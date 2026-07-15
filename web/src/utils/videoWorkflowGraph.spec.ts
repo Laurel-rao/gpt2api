@@ -43,8 +43,8 @@ function withoutEdge(graph: VideoWorkflowGraph, predicate: (edge: VideoWorkflowE
 
 describe('video workflow graph v2', () => {
   it('uses the backend run-mode contract', () => {
-    const modes: VideoWorkflowRunMode[] = ['full', 'node_only', 'downstream']
-    expect(modes).toEqual(['full', 'node_only', 'downstream'])
+    const modes: VideoWorkflowRunMode[] = ['full', 'node_only', 'upstream', 'downstream']
+    expect(modes).toEqual(['full', 'node_only', 'upstream', 'downstream'])
   })
 
   it('prefers baked image previews and generated video outputs', () => {

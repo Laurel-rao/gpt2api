@@ -5,6 +5,7 @@ import type { VideoWorkflowEstimate, VideoWorkflowRunMode } from '@/api/videoWor
 function runTitle(mode: VideoWorkflowRunMode) {
   if (mode === 'full') return '生成完整成片'
   if (mode === 'node_only') return '运行当前节点'
+  if (mode === 'upstream') return '运行当前节点并重跑上游'
   return '运行当前及下游'
 }
 

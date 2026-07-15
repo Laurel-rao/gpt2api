@@ -1321,6 +1321,44 @@ func (d *SQLDAO) FindCachedAssetVersion(ctx context.Context, userID uint64, inpu
 	return &out, err
 }
 
+func (d *SQLDAO) ListLatestSucceededNodeOutputs(ctx context.Context, userID uint64, workflowID string, nodeIDs []string) ([]NodeRun, error) {
+	if len(nodeIDs) == 0 {
+		return nil, nil
+	}
+	query, args, err := sqlx.In(`
+SELECT nr.node_run_id, nr.run_id, nr.node_id, nr.node_type, nr.input_hash, nr.status, nr.progress,
+       COALESCE(nr.model_snapshot, JSON_OBJECT()) AS model_snapshot, nr.upstream_task_id,
+       COALESCE(nr.provider_state, JSON_OBJECT()) AS provider_state,
+       nr.output_version_id, COALESCE(nr.output_json, JSON_OBJECT()) AS output_json,
+	       nr.credit_cost, nr.cache_hit, nr.attempt, nr.error_code, COALESCE(nr.error_message, '') AS error_message,
+       nr.created_at, nr.started_at, nr.finished_at
+  FROM video_workflow_node_runs nr
+  INNER JOIN video_workflow_runs r
+    ON r.run_id=nr.run_id AND r.user_id=? AND r.workflow_id=?
+  INNER JOIN (
+    SELECT nr2.node_id, MAX(nr2.finished_at) AS finished_at
+      FROM video_workflow_node_runs nr2
+      INNER JOIN video_workflow_runs r2
+        ON r2.run_id=nr2.run_id AND r2.user_id=? AND r2.workflow_id=?
+     WHERE nr2.node_id IN (?)
+       AND nr2.status='succeeded'
+       AND nr2.finished_at IS NOT NULL
+     GROUP BY nr2.node_id
+  ) latest
+    ON latest.node_id=nr.node_id AND latest.finished_at=nr.finished_at
+ WHERE nr.status='succeeded'
+ ORDER BY nr.node_id ASC`, userID, workflowID, userID, workflowID, nodeIDs)
+	if err != nil {
+		return nil, err
+	}
+	query = d.db.Rebind(query)
+	var out []NodeRun
+	if err := d.db.SelectContext(ctx, &out, query, args...); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (d *SQLDAO) UsedAssetBytes(ctx context.Context, userID uint64) (int64, error) {
 	var used int64
 	err := d.db.GetContext(ctx, &used, `SELECT COALESCE(SUM(size_bytes), 0) FROM video_workflow_asset_versions WHERE owner_user_id=? AND deleted_at IS NULL`, userID)

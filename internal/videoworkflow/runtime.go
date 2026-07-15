@@ -70,6 +70,7 @@ type RuntimeStore interface {
 	CreateAssetVersion(context.Context, *AssetVersion) error
 	GetAssetVersion(context.Context, uint64, string) (*AssetVersion, error)
 	FindCachedAssetVersion(context.Context, uint64, string) (*AssetVersion, error)
+	ListLatestSucceededNodeOutputs(context.Context, uint64, string, []string) ([]NodeRun, error)
 	UsedAssetBytes(context.Context, uint64) (int64, error)
 	AddAssetReference(context.Context, *AssetReference, string) error
 	CreateCharge(context.Context, *ChargeReservation) error
@@ -737,12 +738,22 @@ func selectedNodeIDs(graph Graph, mode RunMode, startNodeID string) (map[string]
 		reverse[edge.Target] = append(reverse[edge.Target], edge.Source)
 		forward[edge.Source] = append(forward[edge.Source], edge.Target)
 	}
-	visitClosureAllowed(startNodeID, reverse, active, selected)
-	if mode == RunModeDownstream {
+	selected[startNodeID] = true
+	switch mode {
+	case RunModeNodeOnly:
+		// 仅当前节点；上游产出在执行时 hydrate。
+	case RunModeUpstream:
+		// visitClosureAllowed 会把自己与上游一并写入；先清空后从起点遍历。
+		selected = make(map[string]bool, len(graph.Nodes))
+		visitClosureAllowed(startNodeID, reverse, active, selected)
+	case RunModeDownstream:
+		selected = make(map[string]bool, len(graph.Nodes))
 		visitClosureAllowed(startNodeID, forward, active, selected)
 		for id := range selected {
 			visitClosureAllowed(id, reverse, active, selected)
 		}
+	default:
+		return nil, fmt.Errorf("videoworkflow: unsupported run mode %q", mode)
 	}
 	return selected, nil
 }

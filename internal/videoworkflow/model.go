@@ -80,6 +80,7 @@ type RunMode string
 const (
 	RunModeFull       RunMode = "full"
 	RunModeNodeOnly   RunMode = "node_only"
+	RunModeUpstream   RunMode = "upstream" // 当前节点 + 全部上游重跑
 	RunModeDownstream RunMode = "downstream"
 )
 

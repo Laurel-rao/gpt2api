@@ -3079,7 +3079,7 @@ function handleCanvasKeydown(event: KeyboardEvent) {
   if (mod && event.key.toLowerCase() === 'v') { event.preventDefault(); pasteNodes(); return }
   if (mod && event.key.toLowerCase() === 'd') { event.preventDefault(); duplicateSelectedNodes(); return }
   if (mod && event.key.toLowerCase() === 'a') { event.preventDefault(); selectedNodeIDs.value = graph.value.nodes.map((node) => node.id); selectedNodeID.value = selectedNodeIDs.value.at(-1) || ''; syncFlow(); return }
-  if (mod && event.key === 'Enter') { event.preventDefault(); void startRun('full'); return }
+  if (mod && event.key === 'Enter') { event.preventDefault(); void startRun('node_only'); return }
   if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); selectedEdgeIDs.value.length ? removeSelectedEdges() : void deleteSelectedNodes(); return }
   if (event.key === 'Escape') { clearSelection(); return }
   if (event.key.toLowerCase() === 'v') { activeTool.value = 'select'; return }
@@ -3363,11 +3363,16 @@ onBeforeUnmount(() => {
               :disabled="runningAction || !canOperateWorkflow"
               :button-props="{ loading: runningAction }"
               :title="canOperateWorkflow ? undefined : '请先从模板创建工作流'"
-              @click="startRun('full')"
+              @click="startRun('node_only')"
               @command="(command: VideoWorkflowRunMode) => startRun(command)"
             >
-              生成成片
-              <template #dropdown><el-dropdown-menu><el-dropdown-item command="node_only">运行当前节点</el-dropdown-item><el-dropdown-item command="downstream">运行当前及下游</el-dropdown-item><el-dropdown-item divided command="full">完整运行</el-dropdown-item></el-dropdown-menu></template>
+              运行此节点
+              <template #dropdown><el-dropdown-menu>
+                <el-dropdown-item command="node_only">运行当前节点</el-dropdown-item>
+                <el-dropdown-item command="upstream">连带上游重跑</el-dropdown-item>
+                <el-dropdown-item command="downstream">运行当前及下游</el-dropdown-item>
+                <el-dropdown-item divided command="full">完整运行</el-dropdown-item>
+              </el-dropdown-menu></template>
             </el-dropdown>
             <button v-else class="stop-button" type="button" :disabled="runningAction" @click="stopRun"><VideoPause />停止</button>
           </div>

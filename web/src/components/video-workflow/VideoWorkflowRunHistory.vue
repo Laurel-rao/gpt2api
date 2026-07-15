@@ -39,7 +39,7 @@ const statusLabels: Record<VideoWorkflowRunStatus, string> = {
   cancel_pending: '停止中', canceled: '已停止', succeeded: '已完成', failed: '失败',
 }
 const modeLabels: Record<VideoWorkflowRunMode, string> = {
-  full: '完整成片', node_only: '当前节点', downstream: '当前及下游',
+  full: '完整成片', node_only: '当前节点', upstream: '当前+上游', downstream: '当前及下游',
 }
 
 function statusLabel(status: VideoWorkflowRunStatus) { return statusLabels[status] || status }

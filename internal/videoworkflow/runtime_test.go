@@ -13,6 +13,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -44,8 +45,53 @@ func TestRuntimeEstimateTokenAndSelection(t *testing.T) {
 		t.Fatalf("mutated graph token error=%v", err)
 	}
 	parts, err := selectedNodeIDs(blankVideoCanvasTemplate().Graph, RunModeNodeOnly, "background_1")
-	if err != nil || len(parts) != 3 || !parts["brief"] || !parts["scene_1"] || !parts["background_1"] {
+	if err != nil || len(parts) != 1 || !parts["background_1"] {
 		t.Fatalf("node_only selection=%v err=%v", parts, err)
+	}
+	upstream, err := selectedNodeIDs(blankVideoCanvasTemplate().Graph, RunModeUpstream, "background_1")
+	if err != nil || len(upstream) != 3 || !upstream["brief"] || !upstream["scene_1"] || !upstream["background_1"] {
+		t.Fatalf("upstream selection=%v err=%v", upstream, err)
+	}
+}
+
+func TestSelectedNodeIDs_NodeOnlyExcludesAncestors(t *testing.T) {
+	graph := blankVideoCanvasTemplate().Graph
+	only, err := selectedNodeIDs(graph, RunModeNodeOnly, "compose")
+	if err != nil || len(only) != 1 || !only["compose"] {
+		t.Fatalf("node_only compose=%v err=%v", only, err)
+	}
+	withUpstream, err := selectedNodeIDs(graph, RunModeUpstream, "compose")
+	if err != nil || !withUpstream["compose"] || !withUpstream["timeline"] || !withUpstream["video_1"] {
+		t.Fatalf("upstream compose=%v err=%v", withUpstream, err)
+	}
+}
+
+func TestHydrateUpstreamOutputs_LoadsLatestSucceeded(t *testing.T) {
+	store := newMemoryRuntimeStore()
+	runtime, err := NewRuntime(RuntimeConfig{Store: store, EstimateSecret: "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished := time.Now()
+	store.runs["prev"] = &Run{ID: "prev", UserID: 7, WorkflowID: "wf", Status: RunSucceeded}
+	store.nodes["timeline-prev"] = &NodeRun{
+		ID: "timeline-prev", RunID: "prev", NodeID: "timeline", Status: NodeRunSucceeded,
+		OutputVersionID: "", Output: json.RawMessage(`{"clips":[{"id":"clip_1","version_id":"v1","trim_in_ms":0,"trim_out_ms":1000}]}`),
+		FinishedAt: &finished,
+	}
+	run := &Run{ID: "curr", UserID: 7, WorkflowID: "wf", RunMode: RunModeNodeOnly, StartNodeID: "compose", GraphSnapshot: blankVideoCanvasTemplate().Graph}
+	selected := map[string]bool{"compose": true}
+	states := map[string]*NodeRun{}
+	outputs := map[string]runtimeNodeOutput{}
+	if err := runtime.hydrateUpstreamOutputs(context.Background(), run, selected, states, outputs); err != nil {
+		t.Fatal(err)
+	}
+	if outputs["timeline"].JSON == nil || !strings.Contains(string(outputs["timeline"].JSON), "clip_1") {
+		t.Fatalf("timeline output=%+v", outputs["timeline"])
+	}
+	run.WorkflowID = "other"
+	if err := runtime.hydrateUpstreamOutputs(context.Background(), run, selected, map[string]*NodeRun{}, map[string]runtimeNodeOutput{}); err == nil || !strings.Contains(err.Error(), "尚无成功产出") {
+		t.Fatalf("missing hydrate err=%v", err)
 	}
 }
 
@@ -121,7 +167,7 @@ func TestRuntimeDAGImageGenerationAndCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	graph := blankVideoCanvasTemplate().Graph
-	first := &Run{ID: "run-1", UserID: 7, WorkflowID: "workflow", RequestID: "request-1", RunMode: RunModeNodeOnly, StartNodeID: "background_1", GraphSnapshot: graph, Status: RunRunning}
+	first := &Run{ID: "run-1", UserID: 7, WorkflowID: "workflow", RequestID: "request-1", RunMode: RunModeUpstream, StartNodeID: "background_1", GraphSnapshot: graph, Status: RunRunning}
 	store.runs[first.ID] = first
 	if err := runtime.executeRun(context.Background(), first); err != nil {
 		t.Fatal(err)
@@ -134,7 +180,7 @@ func TestRuntimeDAGImageGenerationAndCache(t *testing.T) {
 		t.Fatalf("background node=%+v", background)
 	}
 
-	second := &Run{ID: "run-2", UserID: 7, WorkflowID: "workflow", RequestID: "request-2", RunMode: RunModeNodeOnly, StartNodeID: "background_1", GraphSnapshot: graph, Status: RunRunning}
+	second := &Run{ID: "run-2", UserID: 7, WorkflowID: "workflow", RequestID: "request-2", RunMode: RunModeUpstream, StartNodeID: "background_1", GraphSnapshot: graph, Status: RunRunning}
 	store.runs[second.ID] = second
 	if err := runtime.executeRun(context.Background(), second); err != nil {
 		t.Fatal(err)
@@ -156,7 +202,7 @@ func TestRuntimeCharacterApprovalUsesInputHashAndCandidate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run := &Run{ID: "approval-run", UserID: 7, WorkflowID: "workflow", RequestID: "approval-request", RunMode: RunModeNodeOnly,
+	run := &Run{ID: "approval-run", UserID: 7, WorkflowID: "workflow", RequestID: "approval-request", RunMode: RunModeUpstream,
 		StartNodeID: "role_heroine", GraphSnapshot: templates[0].Graph, Status: RunRunning}
 	store.runs[run.ID] = run
 	err = runtime.executeRun(context.Background(), run)
@@ -216,7 +262,7 @@ func TestRuntimeNodeCommitFailureCleansMediaAndPreservesProviderCost(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	run := &Run{ID: "media-commit-failure", UserID: 7, WorkflowID: "workflow", RunMode: RunModeNodeOnly,
+	run := &Run{ID: "media-commit-failure", UserID: 7, WorkflowID: "workflow", RunMode: RunModeUpstream,
 		StartNodeID: "background_1", GraphSnapshot: blankVideoCanvasTemplate().Graph, Status: RunRunning}
 	base.runs[run.ID] = run
 	if err := runtime.executeRun(context.Background(), run); err == nil {
@@ -249,7 +295,7 @@ func TestRuntimeNodeCommitResponseErrorReconcilesAndKeepsReferencedMedia(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	run := &Run{ID: "media-commit-ambiguous", UserID: 7, WorkflowID: "workflow", RunMode: RunModeNodeOnly,
+	run := &Run{ID: "media-commit-ambiguous", UserID: 7, WorkflowID: "workflow", RunMode: RunModeUpstream,
 		StartNodeID: "background_1", GraphSnapshot: blankVideoCanvasTemplate().Graph, Status: RunRunning}
 	base.runs[run.ID] = run
 	if err := runtime.executeRun(context.Background(), run); err != nil {
@@ -276,7 +322,7 @@ func TestRuntimeNodeCommitUnknownReconciliationNeverFinalizesFailed(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	run := &Run{ID: "media-commit-unknown", UserID: 7, RunMode: RunModeNodeOnly, StartNodeID: "background_1", GraphSnapshot: blankVideoCanvasTemplate().Graph, Status: RunRunning}
+	run := &Run{ID: "media-commit-unknown", UserID: 7, RunMode: RunModeUpstream, StartNodeID: "background_1", GraphSnapshot: blankVideoCanvasTemplate().Graph, Status: RunRunning}
 	base.runs[run.ID] = run
 	runtime.executeClaimed(run)
 	node := base.nodeByRunAndNode(run.ID, "background_1")
@@ -298,13 +344,13 @@ func TestRuntimeCachedNodeCommitResponseErrorReconciles(t *testing.T) {
 		t.Fatal(err)
 	}
 	graph := blankVideoCanvasTemplate().Graph
-	first := &Run{ID: "cache-source", UserID: 7, RunMode: RunModeNodeOnly, StartNodeID: "background_1", GraphSnapshot: graph, Status: RunRunning}
+	first := &Run{ID: "cache-source", UserID: 7, RunMode: RunModeUpstream, StartNodeID: "background_1", GraphSnapshot: graph, Status: RunRunning}
 	base.runs[first.ID] = first
 	if err := runtime.executeRun(context.Background(), first); err != nil {
 		t.Fatal(err)
 	}
 	store.failCachedCommit, store.commitThenError = true, true
-	second := &Run{ID: "cache-ambiguous", UserID: 7, RunMode: RunModeNodeOnly, StartNodeID: "background_1", GraphSnapshot: graph, Status: RunRunning}
+	second := &Run{ID: "cache-ambiguous", UserID: 7, RunMode: RunModeUpstream, StartNodeID: "background_1", GraphSnapshot: graph, Status: RunRunning}
 	base.runs[second.ID] = second
 	if err := runtime.executeRun(context.Background(), second); err != nil {
 		t.Fatal(err)
@@ -324,7 +370,7 @@ func TestRuntimeFencedProviderPhasesRecoverWithoutDuplicateSubmission(t *testing
 		if err != nil {
 			t.Fatal(err)
 		}
-		run := &Run{ID: "start-ack", UserID: 7, RunMode: RunModeNodeOnly, StartNodeID: "background_1", GraphSnapshot: blankVideoCanvasTemplate().Graph, Status: RunRunning}
+		run := &Run{ID: "start-ack", UserID: 7, RunMode: RunModeUpstream, StartNodeID: "background_1", GraphSnapshot: blankVideoCanvasTemplate().Graph, Status: RunRunning}
 		base.runs[run.ID] = run
 		if err := runtime.executeRun(context.Background(), run); err != nil {
 			t.Fatal(err)
@@ -342,7 +388,7 @@ func TestRuntimeFencedProviderPhasesRecoverWithoutDuplicateSubmission(t *testing
 		if err != nil {
 			t.Fatal(err)
 		}
-		run := &Run{ID: "not-submitted-recovery", UserID: 7, RunMode: RunModeNodeOnly, StartNodeID: "background_1", GraphSnapshot: blankVideoCanvasTemplate().Graph, Status: RunRunning}
+		run := &Run{ID: "not-submitted-recovery", UserID: 7, RunMode: RunModeUpstream, StartNodeID: "background_1", GraphSnapshot: blankVideoCanvasTemplate().Graph, Status: RunRunning}
 		base.runs[run.ID] = run
 		err = runtime.executeRun(context.Background(), run)
 		if !errors.Is(err, errRecoverableRuntimePersistence) || generator.calls != 0 {
@@ -368,7 +414,7 @@ func TestRuntimeFencedProviderPhasesRecoverWithoutDuplicateSubmission(t *testing
 		if err != nil {
 			t.Fatal(err)
 		}
-		run := &Run{ID: "submitting-no-task", UserID: 7, RunMode: RunModeNodeOnly, StartNodeID: "background_1", GraphSnapshot: blankVideoCanvasTemplate().Graph, Status: RunRunning}
+		run := &Run{ID: "submitting-no-task", UserID: 7, RunMode: RunModeUpstream, StartNodeID: "background_1", GraphSnapshot: blankVideoCanvasTemplate().Graph, Status: RunRunning}
 		base.runs[run.ID] = run
 		_ = runtime.executeRun(context.Background(), run)
 		base.mu.Lock()
@@ -394,7 +440,7 @@ func TestRuntimeCacheReadErrorAndInflightProviderNeverGenerateOrOverwriteCost(t 
 		if err != nil {
 			t.Fatal(err)
 		}
-		run := &Run{ID: "cache-read-error", UserID: 7, RunMode: RunModeNodeOnly, StartNodeID: "background_1", GraphSnapshot: blankVideoCanvasTemplate().Graph, Status: RunRunning}
+		run := &Run{ID: "cache-read-error", UserID: 7, RunMode: RunModeUpstream, StartNodeID: "background_1", GraphSnapshot: blankVideoCanvasTemplate().Graph, Status: RunRunning}
 		store.runs[run.ID] = run
 		runtime.executeClaimed(run)
 		if run.Status != RunRunning || generator.calls != 0 {
@@ -410,7 +456,7 @@ func TestRuntimeCacheReadErrorAndInflightProviderNeverGenerateOrOverwriteCost(t 
 		if err != nil {
 			t.Fatal(err)
 		}
-		run := &Run{ID: "inflight-cache", UserID: 7, RunMode: RunModeNodeOnly, StartNodeID: "background_1", GraphSnapshot: blankVideoCanvasTemplate().Graph, Status: RunRunning}
+		run := &Run{ID: "inflight-cache", UserID: 7, RunMode: RunModeUpstream, StartNodeID: "background_1", GraphSnapshot: blankVideoCanvasTemplate().Graph, Status: RunRunning}
 		base.runs[run.ID] = run
 		_ = runtime.executeRun(context.Background(), run)
 		node := base.nodeByRunAndNode(run.ID, "background_1")
@@ -487,7 +533,7 @@ func TestRuntimeApprovalPauseErrorsStayRecoverable(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			run := &Run{ID: "pause-" + tt.name, UserID: 7, RunMode: RunModeNodeOnly, StartNodeID: "role_heroine", GraphSnapshot: templates[0].Graph, Status: RunRunning}
+			run := &Run{ID: "pause-" + tt.name, UserID: 7, RunMode: RunModeUpstream, StartNodeID: "role_heroine", GraphSnapshot: templates[0].Graph, Status: RunRunning}
 			base.runs[run.ID] = run
 			runtime.executeClaimed(run)
 			if run.Status != tt.wantStatus || run.Status == RunFailed {
@@ -513,7 +559,7 @@ func TestRuntimeSuccessfulFinalizationErrorsNeverDowngradeRun(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			run := &Run{ID: "finalize-" + tt.name, UserID: 7, RunMode: RunModeNodeOnly, StartNodeID: "background_1", GraphSnapshot: blankVideoCanvasTemplate().Graph, Status: RunRunning}
+			run := &Run{ID: "finalize-" + tt.name, UserID: 7, RunMode: RunModeUpstream, StartNodeID: "background_1", GraphSnapshot: blankVideoCanvasTemplate().Graph, Status: RunRunning}
 			base.runs[run.ID] = run
 			runtime.executeClaimed(run)
 			if run.Status != tt.wantStatus || run.Status == RunFailed {
@@ -543,7 +589,7 @@ func TestRuntimeProviderCostAcknowledgementIsReconciled(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			run := &Run{ID: "cost-" + tt.name, UserID: 7, RunMode: RunModeNodeOnly, StartNodeID: "background_1", GraphSnapshot: blankVideoCanvasTemplate().Graph, Status: RunRunning}
+			run := &Run{ID: "cost-" + tt.name, UserID: 7, RunMode: RunModeUpstream, StartNodeID: "background_1", GraphSnapshot: blankVideoCanvasTemplate().Graph, Status: RunRunning}
 			base.runs[run.ID] = run
 			runtime.executeClaimed(run)
 			node := base.nodeByRunAndNode(run.ID, "background_1")
@@ -576,7 +622,7 @@ func TestRuntimeSlotAcquireErrorsNeverFailNodeBeforeProvider(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			run := &Run{ID: "slot-error-" + tt.name, UserID: 7, RunMode: RunModeNodeOnly, StartNodeID: "background_1", GraphSnapshot: blankVideoCanvasTemplate().Graph, Status: RunRunning}
+			run := &Run{ID: "slot-error-" + tt.name, UserID: 7, RunMode: RunModeUpstream, StartNodeID: "background_1", GraphSnapshot: blankVideoCanvasTemplate().Graph, Status: RunRunning}
 			base.runs[run.ID] = run
 			runtime.executeClaimed(run)
 			node := base.nodeByRunAndNode(run.ID, "background_1")
@@ -595,7 +641,7 @@ func TestRuntimeNodeRunPersistenceErrorsStayRecoverable(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		run := &Run{ID: "list-node-error", UserID: 7, RunMode: RunModeNodeOnly, StartNodeID: "background_1", GraphSnapshot: blankVideoCanvasTemplate().Graph, Status: RunRunning}
+		run := &Run{ID: "list-node-error", UserID: 7, RunMode: RunModeUpstream, StartNodeID: "background_1", GraphSnapshot: blankVideoCanvasTemplate().Graph, Status: RunRunning}
 		store.runs[run.ID] = run
 		runtime.executeClaimed(run)
 		if run.Status != RunRunning {
@@ -620,7 +666,7 @@ func TestRuntimeNodeRunPersistenceErrorsStayRecoverable(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			run := &Run{ID: "create-node-" + tt.name, UserID: 7, RunMode: RunModeNodeOnly, StartNodeID: "background_1", GraphSnapshot: blankVideoCanvasTemplate().Graph, Status: RunRunning}
+			run := &Run{ID: "create-node-" + tt.name, UserID: 7, RunMode: RunModeUpstream, StartNodeID: "background_1", GraphSnapshot: blankVideoCanvasTemplate().Graph, Status: RunRunning}
 			base.runs[run.ID] = run
 			runtime.executeClaimed(run)
 			if tt.wantSuccess {
@@ -701,7 +747,7 @@ func TestRuntimeBoundImageVersionSkipsGenerationAndSignsVideoReference(t *testin
 	graph := blankVideoCanvasTemplate().Graph
 	index := findNodeIndex(graph, "background_1")
 	graph.Nodes[index].AssetID, graph.Nodes[index].AssetVersionID = "asset-1", "version-1"
-	run := &Run{ID: "bound-run", UserID: 7, WorkflowID: "workflow", RequestID: "bound-request", RunMode: RunModeNodeOnly,
+	run := &Run{ID: "bound-run", UserID: 7, WorkflowID: "workflow", RequestID: "bound-request", RunMode: RunModeUpstream,
 		StartNodeID: "background_1", GraphSnapshot: graph, Status: RunRunning}
 	store.runs[run.ID] = run
 	if err := runtime.executeRun(context.Background(), run); err != nil {
@@ -718,7 +764,7 @@ func TestRuntimeBoundImageVersionSkipsGenerationAndSignsVideoReference(t *testin
 
 	store.versions["foreign-version"] = &AssetVersion{ID: "foreign-version", AssetID: "foreign-asset", OwnerUserID: 8, Status: AssetReady, MIMEType: "image/png", FilePath: path}
 	graph.Nodes[index].AssetID, graph.Nodes[index].AssetVersionID = "foreign-asset", "foreign-version"
-	foreign := &Run{ID: "foreign-run", UserID: 7, WorkflowID: "workflow", RequestID: "foreign-request", RunMode: RunModeNodeOnly,
+	foreign := &Run{ID: "foreign-run", UserID: 7, WorkflowID: "workflow", RequestID: "foreign-request", RunMode: RunModeUpstream,
 		StartNodeID: "background_1", GraphSnapshot: graph, Status: RunRunning}
 	store.runs[foreign.ID] = foreign
 	if err := runtime.executeRun(context.Background(), foreign); err == nil {
@@ -738,7 +784,7 @@ func TestRuntimeBoundImageReferenceWriteErrorStaysRecoverable(t *testing.T) {
 	graph := blankVideoCanvasTemplate().Graph
 	index := findNodeIndex(graph, "background_1")
 	graph.Nodes[index].AssetID, graph.Nodes[index].AssetVersionID = "asset-1", "version-1"
-	run := &Run{ID: "bound-reference-error", UserID: 7, RunMode: RunModeNodeOnly, StartNodeID: "background_1", GraphSnapshot: graph, Status: RunRunning}
+	run := &Run{ID: "bound-reference-error", UserID: 7, RunMode: RunModeUpstream, StartNodeID: "background_1", GraphSnapshot: graph, Status: RunRunning}
 	store.runs[run.ID] = run
 	runtime, err := NewRuntime(RuntimeConfig{Store: store, WorkerID: "worker", EstimateSecret: "secret"})
 	if err != nil {
@@ -757,7 +803,7 @@ func TestRuntimeBoundImageVersionReadErrorStaysRecoverable(t *testing.T) {
 	graph := blankVideoCanvasTemplate().Graph
 	index := findNodeIndex(graph, "background_1")
 	graph.Nodes[index].AssetID, graph.Nodes[index].AssetVersionID = "asset-1", "version-1"
-	run := &Run{ID: "bound-version-read-error", UserID: 7, RunMode: RunModeNodeOnly, StartNodeID: "background_1", GraphSnapshot: graph, Status: RunRunning}
+	run := &Run{ID: "bound-version-read-error", UserID: 7, RunMode: RunModeUpstream, StartNodeID: "background_1", GraphSnapshot: graph, Status: RunRunning}
 	store.runs[run.ID] = run
 	runtime, err := NewRuntime(RuntimeConfig{Store: store, WorkerID: "worker", EstimateSecret: "secret"})
 	if err != nil {
@@ -1024,7 +1070,7 @@ func TestRuntimeVideoSubmissionPersistenceFailureNeverResubmits(t *testing.T) {
 	graph := blankVideoCanvasTemplate().Graph
 	background := findNodeIndex(graph, "background_1")
 	graph.Nodes[background].AssetID, graph.Nodes[background].AssetVersionID = "asset", "version"
-	run := &Run{ID: "submission-run", UserID: 7, WorkflowID: "workflow", RequestID: "request", RunMode: RunModeNodeOnly,
+	run := &Run{ID: "submission-run", UserID: 7, WorkflowID: "workflow", RequestID: "request", RunMode: RunModeUpstream,
 		StartNodeID: "video_1", GraphSnapshot: graph, Status: RunRunning}
 	base.runs[run.ID] = run
 	err = runtime.executeRun(context.Background(), run)
@@ -1060,7 +1106,7 @@ func TestRuntimeVideoSubmissionTransientPersistenceFailureResumesDurableTask(t *
 	graph := blankVideoCanvasTemplate().Graph
 	background := findNodeIndex(graph, "background_1")
 	graph.Nodes[background].AssetID, graph.Nodes[background].AssetVersionID = "asset", "version"
-	run := &Run{ID: "transient-submission-run", UserID: 7, WorkflowID: "workflow", RequestID: "request", RunMode: RunModeNodeOnly,
+	run := &Run{ID: "transient-submission-run", UserID: 7, WorkflowID: "workflow", RequestID: "request", RunMode: RunModeUpstream,
 		StartNodeID: "video_1", GraphSnapshot: graph, Status: RunRunning}
 	base.runs[run.ID] = run
 	err = runtime.executeRun(context.Background(), run)
@@ -1086,7 +1132,7 @@ func TestRuntimeCanceledSubmittedVideoStaysRunningAndResumesOnNewWorker(t *testi
 	graph := blankVideoCanvasTemplate().Graph
 	background := findNodeIndex(graph, "background_1")
 	graph.Nodes[background].AssetID, graph.Nodes[background].AssetVersionID = "asset", "version"
-	run := &Run{ID: "canceled-submitted-video", UserID: 7, RunMode: RunModeNodeOnly, StartNodeID: "video_1", GraphSnapshot: graph, Status: RunRunning}
+	run := &Run{ID: "canceled-submitted-video", UserID: 7, RunMode: RunModeUpstream, StartNodeID: "video_1", GraphSnapshot: graph, Status: RunRunning}
 	store.runs[run.ID] = run
 	firstGenerator := &cancelAfterSubmittedVideoGenerator{}
 	first, err := NewRuntime(RuntimeConfig{Store: store, WorkerID: "worker-a", EstimateSecret: "secret", AssetRoot: root, VideoGenerator: firstGenerator,
@@ -1155,7 +1201,7 @@ func TestRuntimeVideoRecoveryAcceptsLegacyNodeIDSortedHashes(t *testing.T) {
 	for left, right := 0, len(graph.Edges)-1; left < right; left, right = left+1, right-1 {
 		graph.Edges[left], graph.Edges[right] = graph.Edges[right], graph.Edges[left]
 	}
-	selected, err := selectedNodeIDs(graph, RunModeNodeOnly, "video_1")
+	selected, err := selectedNodeIDs(graph, RunModeUpstream, "video_1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1204,7 +1250,7 @@ func TestRuntimeVideoRecoveryAcceptsLegacyNodeIDSortedHashes(t *testing.T) {
 			if err := os.WriteFile(referencePath, makeRuntimePNG(t), 0o640); err != nil {
 				t.Fatal(err)
 			}
-			run := &Run{ID: "legacy-" + name, UserID: 7, RunMode: RunModeNodeOnly, StartNodeID: "video_1", GraphSnapshot: graph, Status: RunRunning}
+			run := &Run{ID: "legacy-" + name, UserID: 7, RunMode: RunModeUpstream, StartNodeID: "video_1", GraphSnapshot: graph, Status: RunRunning}
 			store.runs[run.ID] = run
 			store.nodes["brief"] = &NodeRun{ID: "brief", RunID: run.ID, NodeID: "brief", NodeType: NodeStoryBrief, Status: NodeRunSucceeded, Output: json.RawMessage(`{"prompt":"雨夜重逢"}`)}
 			store.nodes["role-heroine"] = &NodeRun{ID: "role-heroine", RunID: run.ID, NodeID: "role_heroine", NodeType: NodeCharacter, Status: NodeRunSucceeded, OutputVersionID: "version-heroine"}
@@ -1241,7 +1287,7 @@ func TestRuntimeNonVideoHashKeepsLegacyNodeIDOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	graph := templates[0].Graph
-	selected, err := selectedNodeIDs(graph, RunModeNodeOnly, "script")
+	selected, err := selectedNodeIDs(graph, RunModeUpstream, "script")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1257,7 +1303,7 @@ func TestRuntimeNonVideoHashKeepsLegacyNodeIDOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := newMemoryRuntimeStore()
-	run := &Run{ID: "legacy-script", UserID: 7, RunMode: RunModeNodeOnly, StartNodeID: "script", GraphSnapshot: graph, Status: RunRunning}
+	run := &Run{ID: "legacy-script", UserID: 7, RunMode: RunModeUpstream, StartNodeID: "script", GraphSnapshot: graph, Status: RunRunning}
 	store.runs[run.ID] = run
 	store.nodes["brief"] = &NodeRun{ID: "brief", RunID: run.ID, NodeID: "brief", NodeType: NodeStoryBrief, Status: NodeRunSucceeded, Output: outputs["brief"].JSON}
 	store.nodes["role-heroine"] = &NodeRun{ID: "role-heroine", RunID: run.ID, NodeID: "role_heroine", NodeType: NodeCharacter, Status: NodeRunSucceeded, OutputVersionID: "version-heroine"}
@@ -1279,7 +1325,7 @@ func TestRuntimeRunningImageWithoutDurableTaskFailsClosed(t *testing.T) {
 	imageGenerator := &fakeRuntimeImageGenerator{data: makeRuntimePNG(t)}
 	runtime, _ := NewRuntime(RuntimeConfig{Store: store, EstimateSecret: "secret", AssetRoot: t.TempDir(), ImageGenerator: imageGenerator})
 	graph := blankVideoCanvasTemplate().Graph
-	run := &Run{ID: "image-recovery", UserID: 7, RunMode: RunModeNodeOnly, StartNodeID: "background_1", GraphSnapshot: graph, Status: RunRunning}
+	run := &Run{ID: "image-recovery", UserID: 7, RunMode: RunModeUpstream, StartNodeID: "background_1", GraphSnapshot: graph, Status: RunRunning}
 	store.runs[run.ID] = run
 	briefOutput := json.RawMessage(`{"prompt":"x"}`)
 	sceneOutput := json.RawMessage(`{"scene":"x"}`)
@@ -2307,6 +2353,36 @@ func (s *memoryRuntimeStore) FindCachedAssetVersion(_ context.Context, userID ui
 	}
 	copy := *version
 	return &copy, nil
+}
+
+func (s *memoryRuntimeStore) ListLatestSucceededNodeOutputs(_ context.Context, userID uint64, workflowID string, nodeIDs []string) ([]NodeRun, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	wanted := make(map[string]struct{}, len(nodeIDs))
+	for _, nodeID := range nodeIDs {
+		wanted[nodeID] = struct{}{}
+	}
+	latest := make(map[string]*NodeRun, len(nodeIDs))
+	for _, node := range s.nodes {
+		if _, ok := wanted[node.NodeID]; !ok || node.Status != NodeRunSucceeded || node.FinishedAt == nil {
+			continue
+		}
+		run := s.runs[node.RunID]
+		if run == nil || run.UserID != userID || run.WorkflowID != workflowID {
+			continue
+		}
+		prev := latest[node.NodeID]
+		if prev == nil || prev.FinishedAt == nil || node.FinishedAt.After(*prev.FinishedAt) {
+			copy := *node
+			latest[node.NodeID] = &copy
+		}
+	}
+	out := make([]NodeRun, 0, len(latest))
+	for _, node := range latest {
+		out = append(out, *node)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].NodeID < out[j].NodeID })
+	return out, nil
 }
 
 func (s *memoryRuntimeStore) GetAssetVersion(_ context.Context, userID uint64, id string) (*AssetVersion, error) {
