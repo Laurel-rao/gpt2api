@@ -60,10 +60,13 @@ func TestBuildComposeFilter_UsesTimelineTrim(t *testing.T) {
 		Duration   string `json:"duration"`
 	}{CodecType: "video"})
 	filter := buildComposeFilterClips(probes, []ComposeClip{{TrimInMS: 1200, TrimOutMS: 9800}}, OutputSpec{Width: 720, Height: 1280})
-	for _, fragment := range []string{"trim=start=1.200:end=9.800", "anullsrc=r=48000:cl=stereo:d=8.600"} {
+	for _, fragment := range []string{"trim=duration=8.600", "tpad=stop_mode=clone:stop_duration=8.600", "anullsrc=r=48000:cl=stereo:d=8.600"} {
 		if !strings.Contains(filter, fragment) {
 			t.Fatalf("filter missing %q: %s", fragment, filter)
 		}
+	}
+	if strings.Contains(filter, "trim=start=") {
+		t.Fatalf("filter should trim by duration after input seek, got: %s", filter)
 	}
 }
 
@@ -214,6 +217,13 @@ func TestCompose_FourClipsTrimmedTo55Point8Seconds(t *testing.T) {
 	}
 	if result.Duration < 55.75 || result.Duration > 55.85 {
 		t.Fatalf("duration %.3f, want 55.800 (+/-0.05)", result.Duration)
+	}
+}
+
+func TestFormatComposeExecError_Killed(t *testing.T) {
+	got := formatComposeExecError(errors.New("signal: killed"), "")
+	if !strings.Contains(got, "内存不足") {
+		t.Fatalf("got %q", got)
 	}
 }
 

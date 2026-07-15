@@ -169,14 +169,24 @@ func (c *Composer) ComposeClips(ctx context.Context, clips []ComposeClip, output
 	defer os.Remove(tempPath)
 
 	args := []string{"-hide_banner", "-loglevel", "error", "-y"}
-	for _, input := range inputs {
-		args = append(args, "-protocol_whitelist", "file,pipe", "-i", input)
+	for _, clip := range clips {
+		start := float64(clip.TrimInMS) / 1000
+		duration := float64(clip.TrimOutMS-clip.TrimInMS) / 1000
+		// -ss/-t 放在 -i 前，只解码入出点窗口，避免整片 scale/tpad 撑爆容器内存。
+		args = append(args,
+			"-ss", formatComposeSeconds(start),
+			"-t", formatComposeSeconds(duration),
+			"-protocol_whitelist", "file,pipe",
+			"-i", clip.Path,
+		)
 	}
 	filter := buildComposeFilterClips(probes, clips, spec)
 	args = append(args,
 		"-filter_complex", filter,
+		"-filter_complex_threads", "2",
 		"-map", "[vout]", "-map", "[aout]",
-		"-c:v", "libx264", "-preset", "medium", "-crf", "20",
+		"-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+		"-threads", "2",
 		"-pix_fmt", "yuv420p", "-r", strconv.Itoa(OutputFPS),
 		"-c:a", "aac", "-b:a", "192k", "-ar", strconv.Itoa(OutputAudioRate), "-ac", "2",
 		"-movflags", "+faststart", tempPath,
@@ -189,7 +199,7 @@ func (c *Composer) ComposeClips(ctx context.Context, clips []ComposeClip, output
 		if len(msg) > 4000 {
 			msg = msg[len(msg)-4000:]
 		}
-		return nil, fmt.Errorf("ffmpeg compose: %w: %s", err, msg)
+		return nil, fmt.Errorf("%s", formatComposeExecError(err, msg))
 	}
 	result, err := c.validateOutputDuration(ctx, tempPath, float64(totalDurationMS)/1000, spec)
 	if err != nil {
@@ -255,17 +265,16 @@ func buildComposeFilterClips(probes []mediaProbe, clips []ComposeClip, spec Outp
 	parts := make([]string, 0, len(probes)*2+1)
 	concatInputs := strings.Builder{}
 	for i, probe := range probes {
-		start := float64(clips[i].TrimInMS) / 1000
-		end := float64(clips[i].TrimOutMS) / 1000
-		duration := end - start
+		duration := float64(clips[i].TrimOutMS-clips[i].TrimInMS) / 1000
+		// 输入侧已按入出点裁切；此处只标准化分辨率/帧率，并在源片段偏短时克隆尾帧补足时长。
 		parts = append(parts, fmt.Sprintf(
-			"[%d:v:0]scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=%d,tpad=stop_mode=clone:stop_duration=15,trim=start=%.3f:end=%.3f,setpts=PTS-STARTPTS[v%d]",
-			i, spec.Width, spec.Height, spec.Width, spec.Height, OutputFPS, start, end, i,
+			"[%d:v:0]scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=%d,tpad=stop_mode=clone:stop_duration=%.3f,trim=duration=%.3f,setpts=PTS-STARTPTS[v%d]",
+			i, spec.Width, spec.Height, spec.Width, spec.Height, OutputFPS, duration, duration, i,
 		))
 		if hasStream(probe, "audio") {
 			parts = append(parts, fmt.Sprintf(
-				"[%d:a:0]aresample=%d,aformat=sample_fmts=fltp:channel_layouts=stereo,apad=whole_dur=15,atrim=start=%.3f:end=%.3f,asetpts=PTS-STARTPTS[a%d]",
-				i, OutputAudioRate, start, end, i,
+				"[%d:a:0]aresample=%d,aformat=sample_fmts=fltp:channel_layouts=stereo,apad=whole_dur=%.3f,atrim=duration=%.3f,asetpts=PTS-STARTPTS[a%d]",
+				i, OutputAudioRate, duration, duration, i,
 			))
 		} else {
 			parts = append(parts, fmt.Sprintf("anullsrc=r=%d:cl=stereo:d=%.3f,asetpts=PTS-STARTPTS[a%d]", OutputAudioRate, duration, i))
@@ -274,6 +283,24 @@ func buildComposeFilterClips(probes []mediaProbe, clips []ComposeClip, spec Outp
 	}
 	parts = append(parts, fmt.Sprintf("%sconcat=n=%d:v=1:a=1[vout][aout]", concatInputs.String(), len(probes)))
 	return strings.Join(parts, ";")
+}
+
+func formatComposeSeconds(value float64) string {
+	return strconv.FormatFloat(value, 'f', 3, 64)
+}
+
+func formatComposeExecError(err error, stderr string) string {
+	errText := strings.TrimSpace(err.Error())
+	if strings.Contains(errText, "signal: killed") {
+		if stderr == "" {
+			return "ffmpeg compose: signal: killed（进程被系统终止，通常是容器内存不足）"
+		}
+		return fmt.Sprintf("ffmpeg compose: signal: killed（进程被系统终止，通常是容器内存不足）: %s", stderr)
+	}
+	if stderr == "" {
+		return fmt.Sprintf("ffmpeg compose: %s", errText)
+	}
+	return fmt.Sprintf("ffmpeg compose: %s: %s", errText, stderr)
 }
 
 func (c *Composer) validateOutput(ctx context.Context, path string, sceneCount int, spec OutputSpec) (*ComposeResult, error) {
