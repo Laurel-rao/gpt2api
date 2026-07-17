@@ -36,7 +36,7 @@ func BuiltinTemplates() ([]Template, error) {
 	if err != nil {
 		return nil, err
 	}
-	globalChairman, err := globalChairmanDramaTemplate(ancient)
+	globalChairman, err := globalChairmanDramaTemplate()
 	if err != nil {
 		return nil, err
 	}
@@ -64,151 +64,286 @@ func upgradeAncientTemplate(template Template) (Template, error) {
 	return template, nil
 }
 
-func globalChairmanDramaTemplate(base Template) (Template, error) {
-	graph, err := CloneGraph(base.Graph)
+func globalChairmanDramaTemplate() (Template, error) {
+	settings := Settings{
+		AspectRatio: AspectRatioPortrait, Resolution: Resolution1080p, FPS: DefaultFPS,
+		SceneDurationMS: SceneDurationMS, CharacterApprovalPolicy: ApprovalAutoFirst,
+		StoryboardApprovalPolicy: ApprovalAuto, TextModel: "default", ImageModel: "gpt-image-2", VideoModel: "doubao-seedance-2-0-fast-260128",
+	}
+	timelineConfig, err := json.Marshal(TimelineConfig{Clips: []TimelineClip{
+		{ID: "clip_1", SourceNodeID: "video_1", SourcePort: "video", TrimOutMS: 7_500},
+		{ID: "clip_2", SourceNodeID: "video_2", SourcePort: "video", TrimOutMS: 7_500},
+		{ID: "clip_3", SourceNodeID: "video_3", SourcePort: "video", TrimOutMS: 7_500},
+		{ID: "clip_4", SourceNodeID: "video_4", SourcePort: "video", TrimOutMS: 7_500},
+	}})
 	if err != nil {
 		return Template{}, err
 	}
-	graph.Settings.AspectRatio = AspectRatioPortrait
-	graph.Settings.Resolution = Resolution1080p
-	graph.Settings.FPS = DefaultFPS
-	graph.Settings.SceneDurationMS = SceneDurationMS
-	graph.Settings.SceneDurationSeconds = 0
-	graph.Settings.CharacterApprovalPolicy = ApprovalAutoFirst
-	graph.Settings.StoryboardApprovalPolicy = ApprovalAuto
-	graph.Settings.TextModel = "default"
-	graph.Settings.ImageModel = "gpt-image-2"
-	graph.Settings.VideoModel = "doubao-seedance-2-0-fast-260128"
-	if err := addGlobalChairmanRivalRole(&graph); err != nil {
-		return Template{}, err
+	var configErr error
+	config := func(fields map[string]any) json.RawMessage {
+		if configErr != nil {
+			return nil
+		}
+		encoded, err := json.Marshal(fields)
+		if err != nil {
+			configErr = err
+			return nil
+		}
+		return encoded
 	}
-	if err := applyGlobalChairmanDramaDefaults(&graph); err != nil {
-		return Template{}, err
+	characterOutputs := []Port{{ID: "candidates", Type: PortImageSet}, {ID: "selected", Type: PortImage}}
+	characterInputs := []Port{
+		{ID: "brief", Type: PortText, Required: true},
+		{ID: "character_plan", Label: "角色生成资产", Type: PortText, Required: true},
 	}
-	NormalizeBackgroundEnvironmentPorts(&graph)
-	template := base
-	template.Code = "global_chairman_drama_seedance"
-	template.Version = 1
-	template.Name = "古人穿越主席短剧 · 30秒单集"
-	template.Description = "近现实架空短剧模板：古代权臣穿越纽港，依靠识人术、纵横术和乱世治理经验，在寰球联合会危机现场打脸升级；自动生成角色图、背景图、4段 Seedance 视频并裁剪合成约30秒单集。"
-	template.SourceURL = ""
-	template.Enabled = true
-	template.Graph = graph
-	return template, nil
-}
-
-func addGlobalChairmanRivalRole(graph *Graph) error {
-	if findTemplateNodeIndex(*graph, "role_rival") < 0 {
-		config := json.RawMessage(`{"name":"亚伦·霍克","adult_age":42,"candidate_count":2,"view":"全身三视图 + 脸部特写 + 服装物料细节"}`)
-		graph.Nodes = append(graph.Nodes, Node{
-			ID: "role_rival", Type: NodeCharacter, RoleID: "rival", Position: Position{X: 300, Y: 470}, PositionMode: PositionAuto, Config: config,
+	scriptInputs := []Port{
+		{ID: "brief", Type: PortText, Required: true},
+		{ID: "outline", Label: "大纲资产", Type: PortText, Required: true},
+		{ID: "character_plan", Label: "角色资产", Type: PortText, Required: true},
+		{ID: "world", Label: "世界观/背景资产", Type: PortText, Required: true},
+		{ID: "director", Label: "Seedance2导演审核", Type: PortText, Required: true},
+		{ID: "hero", Type: PortImage, Required: true},
+		{ID: "heroine", Type: PortImage, Required: true},
+		{ID: "cousin", Type: PortImage, Required: true},
+		{ID: "rival", Type: PortImage, Required: true},
+	}
+	videoInputs := []Port{
+		{ID: "scene", Type: PortScene, Required: true},
+		{ID: "director", Label: "导演审核资产", Type: PortText, Required: true},
+		{ID: "background", Type: PortImage, Required: true},
+		{ID: "hero", Type: PortImage, Required: true},
+		{ID: "heroine", Type: PortImage, Required: true},
+		{ID: "cousin", Type: PortImage, Required: true},
+		{ID: "rival", Type: PortImage, Required: true},
+	}
+	const characterSheetSuffix = "输出角色参考/定妆图，不是剧情镜头：上排全身正面、侧面、背面三视图；中排脸部大特写正面与3/4侧，统一五官、发型、眼神和气质；下排服装与物料细节图，包含面料纹理、领口、徽章、配饰、鞋履、腰带、文件夹或权杖等材质特写；浅底设定稿、布局清晰。所有角色均为虚构成年人；非照片；禁止写实真人脸、真人照片、真实政治人物。"
+	outlinePrompt := "大纲资产：输出《千年权臣：我在纽港执掌寰球联合会》第1集的短剧大纲和30秒节拍。必须写清：1）一句话钩子：毒酒赐死穿越到纽港寰球联合会门口；2）四段7.5秒剧情：落地被嘲、受辱夜学、危机会议识人反杀、主席台金句重逢；3）每段爽点、反转点、情绪推进和结尾钩子；4）古人核心竞争力如何推动剧情：识人术、纵横术、朝堂辩论、乱世治理。要求狗血短剧化，近现实架空名只用米国、罗斯国、东瀛国、华国、纽港、鹰宫、五环楼、寰球联合会。禁止真实政治人物、真实机构名、文字/字幕/LOGO/水印。"
+	characterPlanPrompt := "角色生成资产：为4个角色输出可直接供生图节点使用的定妆规范。谢无咎：大雍权臣，旧黑朝服、血痕、束冠长发，核心技能识人术/纵横术/朝堂辩论/乱世治理；萧明凰：赐死男主的女帝，玄金凤纹长袍与现代黑大衣，追悔火葬场；林晚棠：华国青年外交官，短发深蓝西装、工作证和平板，发现男主合纵图；亚伦·霍克：米国代表，银灰西装鹰形领针，嘲讽后被打脸。每个角色都要写外形、服装材质、表情、表演方式、禁用项。角色均为虚构成年人；非照片；禁止写实真人脸和真实政治人物。"
+	worldPrompt := "世界观/剧情背景资产：输出近现实架空世界设定和四个场景首帧规范。国家/机构名必须架空：米国、罗斯国、东瀛国、华国、纽港、鹰宫、五环楼、寰球联合会。场景1纽港雨夜寰联总部外广场：玻璃幕墙、万国旗、警戒栏、手机直播光点；场景2救助站与地下公共图书馆：旧长椅、自动售货机冷光、国际法书、地图；场景3寰球联合会危机会议厅：环形会议桌、同传耳机、蓝色席牌、世界地图屏；场景4主席台：弧形万国旗、演讲台、聚光灯、记者席闪光。背景图只做图生视频首帧/场景参考，无人空镜或远景剪影，禁止可辨识人物。"
+	directorPrompt := "Seedance2导演审核资产：先按创意总监逻辑审核，再给脚本和视频节点执行。必须产出：source_diagnosis、creative_directions 2-3项、selected_direction、reference_terms_used、compatibility_check、creative_audit。reference_terms_used 只能从词库选择：推镜头、拉镜头、跟拍、环绕拍摄、希区柯克变焦、快切、硬切、闪回、叠化、交叉蒙太奇、电影感、胶片质感、HDR、3D 国漫 CG、冷色调、高对比度、硬光剪影、镜头光晕。creative_audit 四项必须 pass：记忆点、意外感、情绪、叙事；不通过就重写，不输出平庸 prompt。"
+	scriptPrompt := "你是 Seedance 视频创意总监，不是模板填充器。基于上游题材材料和4张角色参考图，先做素材/文案诊断，再做2-3个完全不同的创意方向，选择最有记忆点的一版，完成运镜匹配、搭配验证和创意审核。只输出严格 JSON，不要 Markdown。顶层必须包含 title、source_diagnosis、creative_directions、selected_direction、reference_terms_used、compatibility_check、creative_audit、scenes。creative_directions 每项包含 id、logline、memory_point、unexpected_detail、emotion_arc、risk。selected_direction 必须说明为什么选它。reference_terms_used 只能从 reference.md 词库取词，至少包含：推镜头、拉镜头、跟拍、环绕拍摄、希区柯克变焦、快切、硬切、闪回、叠化、交叉蒙太奇、电影感、胶片质感、HDR、3D 国漫 CG、冷色调、高对比度、硬光剪影、镜头光晕。compatibility_check 必须逐项判断“角色图 + 场景背景 + prompt + 运镜”是否协调，不协调要在 JSON 内给出修正后的 prompt。creative_audit 必须包含 memory_point、unexpectedness、emotion、narrative 四项，值必须为 pass，并写明通过理由。scenes 必须恰好4项，每项 duration_seconds=15、effective_trim_ms=7500，并包含 index、scene_id、title、location_id、characters、dramatic_beat、ancient_competency、shots、dialogue、audio、image_prompt、seedance_prompt。每个 seedance_prompt 必须中文、可直接给即梦使用，0-7.5秒完成有效剧情动作，7.5-15秒做余韵；台词用“角色（情绪）：台词”。必须使用近现实架空名：米国、罗斯国、东瀛国、华国、纽港、鹰宫、五环楼、寰球联合会；不得出现真实国家机构、真实政治人物。禁止文字/字幕/LOGO/水印；禁止写实真人脸、真人照片、角色换脸、参考图拼贴布局入镜。"
+	backgroundPrompt := func(sceneTitle, sceneBrief string) string {
+		return fmt.Sprintf("读取上游 scenes 对应项的 image_prompt、location_id、lighting、props，只提取地点、时间、光影、空间布局、静物道具和氛围，生成“%s”的图生视频首帧/场景参考图。%s。9:16 单镜头、非拼贴、电影感、3D 国漫 CG、HDR、冷色调与高对比度；无人空镜或仅远景不可辨识剪影；禁止近中景可辨识人物、肢体动作和表演；禁止文字/字幕/LOGO/水印；非照片；禁止写实真人脸、真人照片、真实政治人物。", sceneTitle, sceneBrief)
+	}
+	videoPrompt := func(index int, sceneTitle, fallbackBeat string) string {
+		return fmt.Sprintf("9:16，30fps，15秒，Seedance 2.0，电影感、3D 国漫 CG、HDR。读取上游 scene_%d 的 scenes[%d].seedance_prompt，并结合 selected_direction、creative_audit、reference_terms_used、compatibility_check 生成最终即梦中文 prompt；如果上游缺失，就围绕“%s”重写，但必须保留本集核心竞争力：谢无咎用识人术、纵横术、朝堂辩论和乱世治理经验完成现代降维打击。参考图用途：@图片1为场景背景参考，@图片2为男主谢无咎角色参考，@图片3为女帝萧明凰角色参考，@图片4为林晚棠角色参考，@图片5为亚伦·霍克角色参考。0-7.5秒必须完成有效剧情：%s；7.5-15秒只做表情余韵、灯光变化或悬念停顿，方便时间线裁前7.5秒合成30秒。只能使用 reference_terms_used 中的运镜/风格词，不自造镜头词；台词用“角色（情绪）：台词”；音效写环境音、音桥或无声处理。禁止文字/字幕/LOGO/水印；禁止写实真人脸、真人照片、真实政治人物、角色换脸、参考图拼贴布局入镜。", index, index-1, sceneTitle, fallbackBeat)
+	}
+	graph := Graph{SchemaVersion: SchemaVersionV2, Settings: settings}
+	graph.Nodes = []Node{
+		{
+			ID: "brief", Type: NodeStoryBrief, Position: Position{X: 40, Y: 245}, PositionMode: PositionAuto,
+			Config: config(map[string]any{
+				"title":  "Seedance2 创意工作台简报",
+				"prompt": "创建分集短剧《千年权臣：我在纽港执掌寰球联合会》第1集《古装疯子闯寰联》的 9:16、约30秒单集素材。不要套模板，按 seedance2 创意总监流程执行：素材/题材诊断 -> 创意发散 -> 选择最有记忆点方向 -> 文案扩写 -> 运镜匹配 -> 图+prompt+运镜搭配验证 -> 创意审核。题材要求狗血短剧化、强反转、强打脸、结尾钩子；近现实架空命名：米国、罗斯国、东瀛国、华国、纽港、鹰宫、五环楼、寰球联合会。男主谢无咎是大雍权臣，被女帝萧明凰赐死后穿越现代；核心竞争力不是现代学历，而是古代乱世炼出的识人术、纵横术、朝堂辩论、帝王心术、赈灾治国经验。所有角色均为虚构成年人；非照片；禁止写实真人脸、真实政治人物、文字/字幕/LOGO/水印。",
+			}),
+			Outputs: []Port{{ID: "text", Type: PortText}},
+		},
+		{
+			ID: "asset_outline", Type: NodeStoryBrief, Position: Position{X: 300, Y: -170}, PositionMode: PositionAuto,
+			Config: config(map[string]any{
+				"title":  "01 大纲资产 / 30秒狗血节拍",
+				"prompt": outlinePrompt,
+				"episode_outline": []map[string]any{
+					{"time": "0-7.5秒", "title": "毒酒闪回落地纽港", "beat": "被女帝赐死的谢无咎跌落寰联门口，被米国网红嘲笑，睁眼听见危机警报"},
+					{"time": "7.5-15秒", "title": "救助站受辱夜学", "beat": "他被当黑户推开，转身在地下图书馆把现代国际法拆成合纵连横图"},
+					{"time": "15-22.5秒", "title": "危机会议识人反杀", "beat": "亚伦拍桌羞辱，他用座次、手势、停顿点破各国底牌"},
+					{"time": "22.5-30秒", "title": "主席台金句重逢", "beat": "他走向主席台打出金句，萧明凰在人群阴影里红眼出现"},
+				},
+			}),
 			Inputs:  []Port{{ID: "brief", Type: PortText, Required: true}},
-			Outputs: []Port{{ID: "candidates", Type: PortImageSet}, {ID: "selected", Type: PortImage}},
+			Outputs: []Port{{ID: "text", Type: PortText}},
+		},
+		{
+			ID: "asset_characters", Type: NodeStoryBrief, Position: Position{X: 300, Y: -20}, PositionMode: PositionAuto,
+			Config: config(map[string]any{
+				"title":  "02 角色生成资产 / 四人定妆",
+				"prompt": characterPlanPrompt,
+				"character_generation": []map[string]any{
+					{"node_id": "role_hero", "name": "谢无咎", "visual": "旧黑朝服、血痕、束冠长发、冷静压迫眼神", "competency": []string{"识人术", "纵横术", "朝堂辩论", "乱世治理"}},
+					{"node_id": "role_heroine", "name": "萧明凰", "visual": "玄金凤纹长袍、现代黑大衣、金簪发髻、高傲悔意", "function": "结尾追悔火葬场钩子"},
+					{"node_id": "role_cousin", "name": "林晚棠", "visual": "短发、深蓝西装、工作证、平板", "function": "现代规则翻译者"},
+					{"node_id": "role_rival", "name": "亚伦·霍克", "visual": "银灰西装、鹰形领针、冷笑强势坐姿", "function": "米国代表反派"},
+				},
+			}),
+			Inputs:  []Port{{ID: "brief", Type: PortText, Required: true}},
+			Outputs: []Port{{ID: "text", Type: PortText}},
+		},
+		{
+			ID: "asset_world", Type: NodeStoryBrief, Position: Position{X: 300, Y: 130}, PositionMode: PositionAuto,
+			Config: config(map[string]any{
+				"title":  "03 世界观与剧情背景资产",
+				"prompt": worldPrompt,
+				"background_assets": []map[string]any{
+					{"node_id": "background_1", "name": "纽港寰联总部外广场", "elements": []string{"玻璃幕墙", "万国旗", "警戒栏", "路面积水", "直播光点"}},
+					{"node_id": "background_2", "name": "救助站/地下公共图书馆", "elements": []string{"旧长椅", "自动售货机冷光", "国际法书", "世界地图"}},
+					{"node_id": "background_3", "name": "寰球联合会危机会议厅", "elements": []string{"环形会议桌", "同传耳机", "蓝色电子席牌", "世界地图屏"}},
+					{"node_id": "background_4", "name": "主席台", "elements": []string{"弧形万国旗", "中央演讲台", "聚光灯", "记者席闪光"}},
+				},
+			}),
+			Inputs:  []Port{{ID: "brief", Type: PortText, Required: true}},
+			Outputs: []Port{{ID: "text", Type: PortText}},
+		},
+		{
+			ID: "asset_director", Type: NodeStoryBrief, Position: Position{X: 300, Y: 280}, PositionMode: PositionAuto,
+			Config: config(map[string]any{
+				"title":  "04 Seedance2导演审核资产",
+				"prompt": directorPrompt,
+				"audit_schema": map[string]any{
+					"must_pass":      []string{"memory_point", "unexpectedness", "emotion", "narrative"},
+					"must_use_terms": []string{"推镜头", "环绕拍摄", "希区柯克变焦", "快切", "闪回", "叠化", "电影感", "3D 国漫 CG", "冷色调", "高对比度"},
+				},
+			}),
+			Inputs:  []Port{{ID: "brief", Type: PortText, Required: true}},
+			Outputs: []Port{{ID: "text", Type: PortText}},
+		},
+		{
+			ID: "role_hero", Type: NodeCharacter, RoleID: "hero", Position: Position{X: 580, Y: 20}, PositionMode: PositionAuto,
+			Config: config(map[string]any{"title": "角色图：谢无咎 / 古代权臣", "name": "谢无咎", "adult_age": 30, "candidate_count": 2, "view": "全身三视图 + 脸部特写 + 服装物料细节", "prompt": "读取上游角色生成资产。电影感、3D 国漫 CG 角色设定；虚构成年人男主谢无咎（30岁），大雍权臣穿越到现代，剑眉深目，长发束冠但外披旧黑色朝服，胸口有暗色血痕，眼神冷静压迫，像从朝堂与战场里活下来的人；核心竞争力是识人术、纵横术、朝堂辩论和乱世治理经验。" + characterSheetSuffix}),
+			Inputs: characterInputs, Outputs: characterOutputs,
+		},
+		{
+			ID: "role_heroine", Type: NodeCharacter, RoleID: "heroine", Position: Position{X: 580, Y: 170}, PositionMode: PositionAuto,
+			Config: config(map[string]any{"title": "角色图：萧明凰 / 追悔女帝", "name": "萧明凰", "adult_age": 28, "candidate_count": 2, "view": "全身三视图 + 脸部特写 + 服装物料细节", "prompt": "读取上游角色生成资产。电影感、3D 国漫 CG 角色设定；虚构成年人女帝萧明凰（28岁），玄金凤纹长袍与现代黑色大衣混搭，金簪发髻，眼神高傲又带悔意；她曾赐死谢无咎，现代在主席台阴影里重逢，形成狗血追悔爆点。" + characterSheetSuffix}),
+			Inputs: characterInputs, Outputs: characterOutputs,
+		},
+		{
+			ID: "role_cousin", Type: NodeCharacter, RoleID: "cousin", Position: Position{X: 580, Y: 320}, PositionMode: PositionAuto,
+			Config: config(map[string]any{"title": "角色图：林晚棠 / 现代外交官", "name": "林晚棠", "adult_age": 27, "candidate_count": 2, "view": "全身三视图 + 脸部特写 + 服装物料细节", "prompt": "读取上游角色生成资产。电影感、3D 国漫 CG 角色设定；虚构成年人华国青年外交官林晚棠（27岁），利落短发，白衬衫、深蓝西装、胸前工作证，手持平板和文件夹，眼神清醒坚定；她发现谢无咎把现代冲突画成古代合纵图，是现代规则与古代纵横术的桥梁。" + characterSheetSuffix}),
+			Inputs: characterInputs, Outputs: characterOutputs,
+		},
+		{
+			ID: "role_rival", Type: NodeCharacter, RoleID: "rival", Position: Position{X: 580, Y: 470}, PositionMode: PositionAuto,
+			Config: config(map[string]any{"title": "角色图：亚伦·霍克 / 米国代表", "name": "亚伦·霍克", "adult_age": 42, "candidate_count": 2, "view": "全身三视图 + 脸部特写 + 服装物料细节", "prompt": "读取上游角色生成资产。电影感、3D 国漫 CG 角色设定；虚构成年人米国代表亚伦·霍克（42岁），银灰西装、鹰形领针、冷笑表情，坐姿强势，眼神精明多疑；他先嘲笑谢无咎是古装疯子，随后在危机会议现场被看穿选票、能源和军工订单底牌。" + characterSheetSuffix}),
+			Inputs: characterInputs, Outputs: characterOutputs,
+		},
+		{
+			ID: "script", Type: NodeScript, Position: Position{X: 860, Y: 245}, PositionMode: PositionAuto,
+			Config: config(map[string]any{"title": "05 剧本生成 / 创意审核后输出JSON", "scene_count": 4, "prompt": scriptPrompt}),
+			Inputs: scriptInputs, Outputs: []Port{{ID: "script", Type: PortScript}},
+		},
+	}
+	sceneTitles := []string{"毒酒闪回落地纽港", "救助站受辱夜学", "危机会议识人反杀", "主席台金句重逢"}
+	backgrounds := []string{
+		"纽港雨夜，寰球联合会总部外广场，玻璃幕墙、万国旗、警戒栏、路面积水反光、手机直播光点",
+		"纽港救助站与地下公共图书馆之间的深夜走廊，旧长椅、自动售货机冷光、国际法书堆、世界地图",
+		"寰球联合会危机会议厅，环形会议桌、同声传译耳机、蓝色电子席牌、巨幅世界地图屏幕、冷白顶光",
+		"寰球联合会主席台，弧形万国旗、中央演讲台、聚光灯、玻璃穹顶、远处记者席闪光",
+	}
+	videoBeats := []string{
+		"毒酒入喉的闪回叠化到纽港雨夜，谢无咎穿染血朝服跌落在寰球联合会门口，被米国网红嘲笑后猛然睁眼",
+		"救助站工作人员把谢无咎推开，他转入地下图书馆快切夜学，林晚棠看到他把冲突国利益线画成合纵图",
+		"亚伦·霍克在危机会议厅拍桌嘲讽，谢无咎用希区柯克变焦和环绕拍摄压住全场，点破各方真实底牌",
+		"主席台聚光灯亮起，谢无咎走向演讲台打出金句，萧明凰在阴影中红着眼出现，旧日赐死者重逢",
+	}
+	for i := 1; i <= 4; i++ {
+		y := float64(20 + (i-1)*200)
+		sceneID := fmt.Sprintf("scene_%d", i)
+		backgroundID := fmt.Sprintf("background_%d", i)
+		videoID := fmt.Sprintf("video_%d", i)
+		graph.Nodes = append(graph.Nodes,
+			Node{
+				ID: sceneID, Type: NodeScene, SceneID: sceneID, DurationSeconds: SceneDuration,
+				Position: Position{X: 860, Y: y}, PositionMode: PositionAuto,
+				Config: config(map[string]any{"index": i, "title": sceneTitles[i-1]}),
+				Inputs: []Port{{ID: "script", Type: PortScript, Required: true}}, Outputs: []Port{{ID: "scene", Type: PortScene}},
+			},
+			Node{
+				ID: backgroundID, Type: NodeBackground, SceneID: sceneID,
+				Position: Position{X: 1080, Y: y}, PositionMode: PositionAuto,
+				Config: config(map[string]any{"title": fmt.Sprintf("背景图：%s", sceneTitles[i-1]), "candidate_count": 1, "prompt": backgroundPrompt(sceneTitles[i-1], backgrounds[i-1])}),
+				Inputs: []Port{
+					{ID: "environment", Label: backgroundEnvironmentPortLabel, Type: PortScene, Required: true},
+					{ID: "world", Label: "世界观/背景资产", Type: PortText, Required: true},
+				}, Outputs: []Port{{ID: "image", Type: PortImage}},
+			},
+			Node{
+				ID: videoID, Type: NodeVideo, SceneID: sceneID, DurationSeconds: SceneDuration,
+				Position: Position{X: 1300, Y: y}, PositionMode: PositionAuto,
+				Config: config(map[string]any{"title": fmt.Sprintf("视频%d：%s", i, sceneTitles[i-1]), "duration_seconds": SceneDuration, "prompt": videoPrompt(i, sceneTitles[i-1], videoBeats[i-1])}),
+				Inputs: videoInputs, Outputs: []Port{{ID: "video", Type: PortVideo}},
+			},
+		)
+	}
+	graph.Nodes = append(graph.Nodes,
+		Node{
+			ID: "timeline", Type: NodeTimeline, Locked: true, Position: Position{X: 1560, Y: 320}, PositionMode: PositionAuto,
+			Config: timelineConfig,
+			Inputs: []Port{
+				{ID: "clip_1", Type: PortVideo, Required: true},
+				{ID: "clip_2", Type: PortVideo, Required: true},
+				{ID: "clip_3", Type: PortVideo, Required: true},
+				{ID: "clip_4", Type: PortVideo, Required: true},
+			},
+			Outputs: []Port{{ID: "videos", Type: PortVideoList}},
+		},
+		Node{
+			ID: "compose", Type: NodeCompose, Locked: true, Position: Position{X: 1800, Y: 320}, PositionMode: PositionAuto,
+			Inputs: []Port{{ID: "videos", Type: PortVideoList, Required: true}}, Outputs: []Port{{ID: "video", Type: PortVideo}},
+		},
+	)
+	graph.Edges = []Edge{
+		{ID: "e_brief_asset_outline", Source: "brief", SourcePort: "text", Target: "asset_outline", TargetPort: "brief"},
+		{ID: "e_brief_asset_characters", Source: "brief", SourcePort: "text", Target: "asset_characters", TargetPort: "brief"},
+		{ID: "e_brief_asset_world", Source: "brief", SourcePort: "text", Target: "asset_world", TargetPort: "brief"},
+		{ID: "e_brief_asset_director", Source: "brief", SourcePort: "text", Target: "asset_director", TargetPort: "brief"},
+		{ID: "e_brief_hero", Source: "brief", SourcePort: "text", Target: "role_hero", TargetPort: "brief"},
+		{ID: "e_brief_heroine", Source: "brief", SourcePort: "text", Target: "role_heroine", TargetPort: "brief"},
+		{ID: "e_brief_cousin", Source: "brief", SourcePort: "text", Target: "role_cousin", TargetPort: "brief"},
+		{ID: "e_brief_rival", Source: "brief", SourcePort: "text", Target: "role_rival", TargetPort: "brief"},
+		{ID: "e_brief_script", Source: "brief", SourcePort: "text", Target: "script", TargetPort: "brief"},
+		{ID: "e_asset_outline_script", Source: "asset_outline", SourcePort: "text", Target: "script", TargetPort: "outline"},
+		{ID: "e_asset_characters_script", Source: "asset_characters", SourcePort: "text", Target: "script", TargetPort: "character_plan"},
+		{ID: "e_asset_world_script", Source: "asset_world", SourcePort: "text", Target: "script", TargetPort: "world"},
+		{ID: "e_asset_director_script", Source: "asset_director", SourcePort: "text", Target: "script", TargetPort: "director"},
+		{ID: "e_asset_characters_hero", Source: "asset_characters", SourcePort: "text", Target: "role_hero", TargetPort: "character_plan"},
+		{ID: "e_asset_characters_heroine", Source: "asset_characters", SourcePort: "text", Target: "role_heroine", TargetPort: "character_plan"},
+		{ID: "e_asset_characters_cousin", Source: "asset_characters", SourcePort: "text", Target: "role_cousin", TargetPort: "character_plan"},
+		{ID: "e_asset_characters_rival", Source: "asset_characters", SourcePort: "text", Target: "role_rival", TargetPort: "character_plan"},
+		{ID: "e_hero_script", Source: "role_hero", SourcePort: "selected", Target: "script", TargetPort: "hero"},
+		{ID: "e_heroine_script", Source: "role_heroine", SourcePort: "selected", Target: "script", TargetPort: "heroine"},
+		{ID: "e_cousin_script", Source: "role_cousin", SourcePort: "selected", Target: "script", TargetPort: "cousin"},
+		{ID: "e_rival_script", Source: "role_rival", SourcePort: "selected", Target: "script", TargetPort: "rival"},
+		{ID: "e_timeline_compose", Source: "timeline", SourcePort: "videos", Target: "compose", TargetPort: "videos"},
+	}
+	for i := 1; i <= 4; i++ {
+		sceneID := fmt.Sprintf("scene_%d", i)
+		backgroundID := fmt.Sprintf("background_%d", i)
+		videoID := fmt.Sprintf("video_%d", i)
+		graph.Edges = append(graph.Edges,
+			Edge{ID: fmt.Sprintf("e_script_scene_%d", i), Source: "script", SourcePort: "script", Target: sceneID, TargetPort: "script"},
+			Edge{ID: fmt.Sprintf("e_scene_background_%d", i), Source: sceneID, SourcePort: "scene", Target: backgroundID, TargetPort: "environment"},
+			Edge{ID: fmt.Sprintf("e_asset_world_background_%d", i), Source: "asset_world", SourcePort: "text", Target: backgroundID, TargetPort: "world"},
+			Edge{ID: fmt.Sprintf("e_scene_video_%d", i), Source: sceneID, SourcePort: "scene", Target: videoID, TargetPort: "scene"},
+			Edge{ID: fmt.Sprintf("e_asset_director_video_%d", i), Source: "asset_director", SourcePort: "text", Target: videoID, TargetPort: "director"},
+			Edge{ID: fmt.Sprintf("e_background_video_%d", i), Source: backgroundID, SourcePort: "image", Target: videoID, TargetPort: "background"},
+			Edge{ID: fmt.Sprintf("e_hero_video_%d", i), Source: "role_hero", SourcePort: "selected", Target: videoID, TargetPort: "hero"},
+			Edge{ID: fmt.Sprintf("e_heroine_video_%d", i), Source: "role_heroine", SourcePort: "selected", Target: videoID, TargetPort: "heroine"},
+			Edge{ID: fmt.Sprintf("e_cousin_video_%d", i), Source: "role_cousin", SourcePort: "selected", Target: videoID, TargetPort: "cousin"},
+			Edge{ID: fmt.Sprintf("e_rival_video_%d", i), Source: "role_rival", SourcePort: "selected", Target: videoID, TargetPort: "rival"},
+			Edge{ID: fmt.Sprintf("e_video_timeline_%d", i), Source: videoID, SourcePort: "video", Target: "timeline", TargetPort: fmt.Sprintf("clip_%d", i)},
+		)
+		graph.Groups = append(graph.Groups, Group{
+			ID: fmt.Sprintf("scene_group_%d", i), Type: "scene", SceneID: sceneID, Enabled: true, DurationSeconds: SceneDuration,
+			NodeIDs: []string{sceneID, backgroundID, videoID}, Position: Position{X: 840, Y: float64(0 + (i-1)*200)}, Size: Size{Width: 680, Height: 170},
 		})
 	}
-	if err := ensureTemplateNodeInput(graph, "script", Port{ID: "rival", Type: PortImage, Required: true}); err != nil {
-		return err
+	if configErr != nil {
+		return Template{}, configErr
 	}
-	if err := ensureTemplateEdge(graph, Edge{ID: "e_brief_rival", Source: "brief", SourcePort: "text", Target: "role_rival", TargetPort: "brief"}); err != nil {
-		return err
+	NormalizeBackgroundEnvironmentPorts(&graph)
+	template := Template{
+		Code: "global_chairman_drama_seedance", Version: 2, Name: "古人穿越主席短剧 · Seedance2 资产拆解版",
+		Description: "近现实架空分集短剧工作流：画布显式拆出大纲资产、角色生成资产、世界观/剧情背景资产和 Seedance2 导演审核资产，再生成4张角色参考图、4张场景首帧、4段15秒 Seedance 视频并裁剪合成约30秒单集。",
+		Enabled:     true, Graph: graph,
 	}
-	if err := ensureTemplateEdge(graph, Edge{ID: "e_rival_script", Source: "role_rival", SourcePort: "selected", Target: "script", TargetPort: "rival"}); err != nil {
-		return err
+	briefIndex := findTemplateNodeIndex(template.Graph, "brief")
+	if briefIndex < 0 {
+		return Template{}, fmt.Errorf("global chairman brief node not found")
 	}
-	for i := 1; i <= 4; i++ {
-		videoID := fmt.Sprintf("video_%d", i)
-		if err := ensureTemplateNodeInput(graph, videoID, Port{ID: "rival", Type: PortImage, Required: true}); err != nil {
-			return err
-		}
-		if err := ensureTemplateEdge(graph, Edge{
-			ID: fmt.Sprintf("e_rival_video_%d", i), Source: "role_rival", SourcePort: "selected",
-			Target: videoID, TargetPort: "rival",
-		}); err != nil {
-			return err
-		}
+	if err := applyGlobalChairmanBriefAssetPackage(&template.Graph.Nodes[briefIndex]); err != nil {
+		return Template{}, err
 	}
-	reorderTemplateInputs(graph, "script", []string{"brief", "hero", "heroine", "cousin", "rival"})
-	for i := 1; i <= 4; i++ {
-		reorderTemplateInputs(graph, fmt.Sprintf("video_%d", i), []string{"scene", "background", "hero", "heroine", "cousin", "rival"})
-	}
-	return nil
-}
-
-func applyGlobalChairmanDramaDefaults(graph *Graph) error {
-	const characterSheetSuffix = "输出一张角色设定参考图：上排全身正面、侧面、背面三视图；中排脸部大特写（正面与3/4侧）刻画五官、发型、眼神、妆容或表情细节；下排服装与物料细节图（面料纹理、领口、徽章、配饰、鞋履、腰带或文件夹等材质特写）；浅底设定稿、布局清晰；统一面容、发型、服装和气质；虚构成年人；非照片、非写实真人脸、非真实政治人物。"
-	characterPrompts := map[string]string{
-		"role_hero":    "电影感3D国漫角色设定；虚构成年人男主谢无咎（30岁），大雍权臣穿越到现代，剑眉深目，长发束冠但外披旧黑色朝服，胸口有暗色血痕，眼神冷静压迫，气质像从朝堂和战场里活下来的人；核心竞争力是识人术、纵横术、朝堂辩论和乱世治理经验。" + characterSheetSuffix,
-		"role_heroine": "电影感3D国漫角色设定；虚构成年人女帝萧明凰（28岁），古代帝王气场，玄金凤纹长袍与现代黑色大衣混搭，发髻插金簪，眼神高傲又带悔意；她曾赐死男主，现代重逢后成为情绪爆点。" + characterSheetSuffix,
-		"role_cousin":  "电影感3D国漫角色设定；虚构成年人现代外交官林晚棠（27岁），华国青年外交官，利落短发，白色衬衫、深蓝西装、胸前工作证，手持平板和文件夹，眼神清醒坚定；她发现男主的古代纵横术有现代外交价值。" + characterSheetSuffix,
-		"role_rival":   "电影感3D国漫角色设定；虚构成年人米国代表亚伦·霍克（42岁），银灰西装、鹰形领针、冷笑表情，坐姿强势，眼神精明多疑；他代表强势阵营，先嘲笑男主是古装疯子，后在会议现场被男主看穿底牌。" + characterSheetSuffix,
-	}
-	characterNames := map[string]string{
-		"role_hero": "谢无咎", "role_heroine": "萧明凰", "role_cousin": "林晚棠", "role_rival": "亚伦·霍克",
-	}
-	backgroundPrompts := map[string]string{
-		"background_1": "近未来电影感3D国漫场景背景；纽港雨夜，寰球联合会总部外广场，玻璃幕墙、万国旗、直播屏幕、警戒栏、路面积水反光；无人空镜或仅远景不可辨识剪影；非照片、非写实真人；9:16单镜头、非拼贴，保持真实都市空间层次。",
-		"background_2": "近未来电影感3D国漫场景背景；纽港救助站与地下公共图书馆之间的夜间走廊，旧长椅、自动售货机、荧光灯、堆叠法律书和语言教材；无人空镜或仅远景不可辨识剪影；非照片、非写实真人；9:16单镜头、非拼贴。",
-		"background_3": "近未来电影感3D国漫场景背景；寰球联合会危机会议厅，环形会议桌、同声传译耳机、蓝色电子席牌、巨幅世界地图屏幕、冷白顶光；无人空镜或仅远景不可辨识剪影；非照片、非写实真人；9:16单镜头、非拼贴。",
-		"background_4": "近未来电影感3D国漫场景背景；寰球联合会主席台，万国旗成弧形排列，中央演讲台、聚光灯、玻璃穹顶、远处记者席灯光闪烁；无人空镜或仅远景不可辨识剪影；非照片、非写实真人；9:16单镜头、非拼贴。",
-	}
-	videoPrompts := map[string]string{
-		"video_1": "9:16，30fps，15秒，电影感3D国漫短剧。参考图用途：@图片1为场景背景参考，@图片2为男主谢无咎参考，@图片3为女帝萧明凰参考，@图片4为现代外交官林晚棠参考，@图片5为米国代表亚伦·霍克参考。前8秒作为正片素材：闪白转场，古代毒酒入喉的记忆叠化到纽港雨夜，谢无咎穿染血朝服跌落在寰球联合会门口，围观直播手机灯亮起，低角度推镜头到他睁眼；情绪从濒死到冷醒。使用闪回、叠化、低角度、推镜头、胶片颗粒、冷色调。台词（围观者嘲讽）：“古装疯子还想进寰联？”禁止文字、字幕、LOGO、水印；虚构成年人；非照片、非写实真人脸。",
-		"video_2": "9:16，30fps，15秒，电影感3D国漫短剧。参考图用途：@图片1为场景背景参考，@图片2为男主谢无咎参考，@图片3为女帝萧明凰参考，@图片4为现代外交官林晚棠参考，@图片5为米国代表亚伦·霍克参考。前8秒作为正片素材：救助站夜灯下，谢无咎被工作人员推开，下一秒他在地下图书馆疯狂翻阅国际法和各国史料，手指划过地图，眼神越来越锋利；林晚棠在远处注意到他把冲突国利益线画成古代合纵图。使用交叉蒙太奇、快切、特写、焦点转移、冷暖对比。台词（谢无咎低声）：“换了衣冠，权力还是那些权力。”禁止文字、字幕、LOGO、水印；虚构成年人；非照片、非写实真人脸。",
-		"video_3": "9:16，30fps，15秒，电影感3D国漫短剧。参考图用途：@图片1为场景背景参考，@图片2为男主谢无咎参考，@图片3为女帝萧明凰参考，@图片4为现代外交官林晚棠参考，@图片5为米国代表亚伦·霍克参考。前8秒作为正片素材：危机会议厅内，亚伦拍桌冷笑，代表们争吵，谢无咎从翻译席缓缓起身，全场嘲笑瞬间被希区柯克变焦压成静默；他用眼神扫过每个人的手指、座次、停顿，像审早朝一样点破各方底牌。使用希区柯克变焦、环绕拍摄、特写、硬切、高对比度。台词（谢无咎冷声）：“诸位不是想停战，是在等一个体面认输的台阶。”禁止文字、字幕、LOGO、水印；虚构成年人；非照片、非写实真人脸。",
-		"video_4": "9:16，30fps，15秒，电影感3D国漫短剧。参考图用途：@图片1为场景背景参考，@图片2为男主谢无咎参考，@图片3为女帝萧明凰参考，@图片4为现代外交官林晚棠参考，@图片5为米国代表亚伦·霍克参考。前8秒作为正片素材：主席台聚光灯亮起，亚伦表情僵住，林晚棠震惊抬眼，萧明凰从人群阴影里出现红了眼；谢无咎整理袖口走向演讲台，万国旗在身后展开。使用仰拍、拉镜头、慢动作、镜头光晕、硬光剪影。台词（谢无咎平静）：“陛下，当年你怕我掌一国；如今，我要调停天下。”结尾留悬念，禁止文字、字幕、LOGO、水印；虚构成年人；非照片、非写实真人脸。",
-	}
-	for i := range graph.Nodes {
-		node := &graph.Nodes[i]
-		var prompt string
-		switch {
-		case node.ID == "brief":
-			prompt = "创建分集短剧《千年权臣：我在纽港执掌寰球联合会》第1集《古装疯子闯寰联》的30秒单集素材。近现实架空命名：米国、罗斯国、东瀛国、华国、纽港、鹰宫、五环楼、寰球联合会。男主谢无咎是大雍权臣，被女帝萧明凰赐死后穿越到现代；他的核心竞争力不是现代学历，而是古代乱世炼出的识人术、纵横术、朝堂辩论、帝王心术和赈灾治国经验。第1集四段：穿越落地被嘲笑、救助站受辱并夜学、危机会议看穿各国底牌、主席台金句反杀并埋女帝重逢悬念。风格为狗血短剧、强打脸、电影感3D国漫；所有角色均为虚构成年人；非照片、非写实真人脸、非真实政治人物。"
-			if err := applyGlobalChairmanBriefAssetPackage(node); err != nil {
-				return err
-			}
-		case node.ID == "script" || node.Type == NodeScript:
-			prompt = "基于上游材料包，仅输出严格 JSON，不要 Markdown。格式为 {\"title\":\"千年权臣：我在纽港执掌寰球联合会 第1集\",\"scenes\":[...]}。生成4个 scenes，每个 scene 固定15秒，但前7.5秒必须完成有效剧情动作，供时间线裁剪合成约30秒。每个 scene 包含 index、location、time、summary、characters、dialogue、camera、action、expression、lighting、audio、image_prompt、video_prompt。剧情：1穿越落地被米国网红嘲笑；2救助站受辱后夜学现代规则，林晚棠发现他的合纵图；3寰球联合会危机会议，亚伦·霍克嘲讽，谢无咎用识人术点破各方底牌；4主席台前金句打脸，萧明凰在阴影里重逢。必须使用架空名：米国、罗斯国、东瀛国、华国、纽港、寰球联合会。角色均为虚构成年人；非照片、非写实真人脸。"
-		case characterPrompts[node.ID] != "":
-			prompt = characterPrompts[node.ID]
-			if err := setTemplateNodeStringField(node, "name", characterNames[node.ID]); err != nil {
-				return fmt.Errorf("set global chairman character name for %s: %w", node.ID, err)
-			}
-			if err := setTemplateNodeStringField(node, "view", "全身三视图 + 脸部特写 + 服装物料细节"); err != nil {
-				return fmt.Errorf("set global chairman view for %s: %w", node.ID, err)
-			}
-		case backgroundPrompts[node.ID] != "":
-			prompt = backgroundPrompts[node.ID]
-		case node.Type == NodeBackground:
-			prompt = "生成近现实架空短剧场景背景；无人空镜或仅远景不可辨识剪影；禁止近中景人物与肢体动作；道具仅可静置；非照片、非写实真人脸；9:16单镜头、非拼贴，保持电影感3D国漫美术与清晰空间层次。"
-		case videoPrompts[node.ID] != "":
-			prompt = videoPrompts[node.ID]
-		case node.Type == NodeVideo:
-			prompt = "9:16，30fps，15秒，电影感3D国漫短剧。参考图用途：@图片1为场景背景参考，@图片2为男主谢无咎参考，@图片3为女帝萧明凰参考，@图片4为现代外交官林晚棠参考，@图片5为米国代表亚伦·霍克参考。前8秒作为正片素材，动作和情绪必须前置完成；禁止文字、字幕、LOGO、水印；虚构成年人；非照片、非写实真人脸。"
-		case node.Type == NodeTimeline:
-			var config TimelineConfig
-			if err := json.Unmarshal(node.Config, &config); err != nil {
-				return fmt.Errorf("decode global chairman timeline: %w", err)
-			}
-			if len(config.Clips) != 4 {
-				return fmt.Errorf("global chairman timeline has %d clips, want 4", len(config.Clips))
-			}
-			for i := range config.Clips {
-				config.Clips[i].TrimInMS = 0
-				config.Clips[i].TrimOutMS = 7_500
-			}
-			encodedConfig, err := json.Marshal(config)
-			if err != nil {
-				return err
-			}
-			node.Config = encodedConfig
-		}
-		if prompt != "" {
-			if err := setTemplateNodePrompt(node, prompt); err != nil {
-				return fmt.Errorf("set global chairman prompt for %s: %w", node.ID, err)
-			}
-		}
-	}
-	return nil
+	return template, nil
 }
 
 func applyAncientDramaV4Defaults(graph *Graph) error {
@@ -356,20 +491,60 @@ func applyAncientDramaBriefAssetPackage(node *Node) error {
 
 func applyGlobalChairmanBriefAssetPackage(node *Node) error {
 	fields := map[string]any{
-		"series_bible": map[string]any{
-			"title":        "千年权臣：我在纽港执掌寰球联合会",
-			"format":       "近现实架空竖屏短剧；单集约30秒；4段7.5秒高密度素材",
-			"theme":        "古代乱世技能在现代国际秩序中的降维打击",
-			"style":        "电影感3D国漫；冷色现代会议空间与古代血色闪回对比；狗血短剧节奏",
-			"memory_point": "男主用古代朝堂识人术看穿现代谈判底牌",
-			"emotion_arc":  []string{"濒死穿越", "受辱夜学", "会议反杀", "主席台金句"},
-			"world_terms":  []string{"米国", "罗斯国", "东瀛国", "华国", "纽港", "鹰宫", "五环楼", "寰球联合会"},
-			"safety":       []string{"虚构成年人", "近现实架空", "非照片", "非写实真人脸", "非真实政治人物", "禁止字幕/LOGO/水印"},
+		"source_materials": map[string]any{
+			"user_intent":       "分集短剧素材，9:16，每条约30秒；故事要狗血、短剧化，并让古人的技能成为现代核心竞争力。",
+			"series_title":      "千年权臣：我在纽港执掌寰球联合会",
+			"episode_title":     "第1集 古装疯子闯寰联",
+			"source_hook":       "男主被女帝赐毒酒后穿越到纽港寰球联合会门口，被现代人嘲笑，却在危机会议中用古代朝堂能力完成反杀。",
+			"aspect_ratio":      "9:16",
+			"final_duration_ms": 30000,
+			"generation_plan":   "4段15秒 Seedance 视频，每段前7.5秒完成有效剧情，时间线各裁0-7500ms合成30秒。",
+			"safety":            []string{"虚构成年人", "近现实架空", "非照片", "禁止写实真人脸", "禁止真实政治人物", "禁止文字/字幕/LOGO/水印"},
+		},
+		"seedance2_workflow": []string{
+			"素材/题材诊断：识别用户输入里的题材、核心爽点、风险和缺失信息",
+			"创意发散：至少生成2-3个完全不同方向，不直接套固定模板",
+			"方向选择：选择最有记忆点、意外感、情绪和叙事的一版",
+			"文案扩写：把方向扩成可直接生成的中文 Seedance prompt",
+			"运镜匹配：只从 reference.md 词库中选运镜、节奏、风格词",
+			"搭配验证：检查角色参考图、场景首帧、prompt、运镜是否协调",
+			"创意审核：记忆点、意外感、情绪、叙事四项必须通过后再进入视频节点",
+		},
+		"creative_direction_candidates": []map[string]any{
+			{
+				"id": "A", "name": "古装疯子当场封神",
+				"logline":         "人人嘲笑他不懂现代文明，他却像审早朝一样读出每个代表的真实底牌。",
+				"memory_point":    "用古代识人术破解现代危机会议",
+				"unexpected":      "古代权臣不靠手机和学历，而靠停顿、座次、手势判断局势",
+				"emotion_arc":     []string{"濒死", "被辱", "冷醒", "反杀"},
+				"recommended_use": "第1集主线，最适合30秒短剧强钩子",
+			},
+			{
+				"id": "B", "name": "女帝追悔火葬场",
+				"logline":         "她曾怕他权倾朝野，如今看见他站上寰球联合会主席台。",
+				"memory_point":    "旧日赐死与现代登顶形成狗血反差",
+				"unexpected":      "女帝不是立刻相认，而是在人群阴影里亲眼看见他被万国注视",
+				"emotion_arc":     []string{"狠心", "错失", "震惊", "追悔"},
+				"recommended_use": "第1集结尾钩子",
+			},
+			{
+				"id": "C", "name": "乱世治理降维打击",
+				"logline":         "现代专家争论停战条款，他把赈灾、粮道、盟约和人心拆成一张古代战时治理图。",
+				"memory_point":    "古代乱世治理经验变成现代国际方案",
+				"unexpected":      "不是玄学开挂，而是古代制度经验迁移到现代危机处理",
+				"emotion_arc":     []string{"混乱", "识破", "定策", "敬畏"},
+				"recommended_use": "后续升级集延展",
+			},
+		},
+		"world_bible": map[string]any{
+			"fictional_names": []string{"米国", "罗斯国", "东瀛国", "华国", "纽港", "鹰宫", "五环楼", "寰球联合会"},
+			"naming_rule":     "地点、国家、机构与现实类似但必须架空；不得使用真实政治人物姓名、真实联合机构名称或真实会议事件。",
+			"visual_style":    []string{"电影感", "3D 国漫 CG", "HDR", "冷色调", "高对比度", "胶片质感", "硬光剪影", "镜头光晕"},
 		},
 		"character_bible": []map[string]any{
 			{
 				"id": "hero", "node_id": "role_hero", "name": "谢无咎", "age": 30, "role": "古代权臣男主",
-				"motivation": "在现代活下去，并证明权力可以用来止战而不是夺命", "core_skill": []string{"识人术", "纵横术", "朝堂辩论", "乱世治理", "帝王心术"},
+				"motivation": "在现代活下去，并证明权力可以用来止战而不是夺命", "core_skill": []string{"识人术", "纵横术", "朝堂辩论", "乱世治理", "帝王心术", "赈灾治国"},
 				"relationship": "被女帝赐死；被林晚棠发现才能；被亚伦·霍克公开羞辱后反杀",
 				"appearance":   "旧黑色朝服、暗色血痕、束冠长发、冷静压迫的眼神",
 				"performance":  "很少激动，用停顿、扫视、低声判断制造压迫感",
@@ -396,17 +571,23 @@ func applyGlobalChairmanBriefAssetPackage(node *Node) error {
 				"performance":  "先拍桌压人，后表情僵硬、手指停止敲桌",
 			},
 		},
+		"core_competency_matrix": []map[string]any{
+			{"ancient_skill": "识人术", "modern_gap": "现代谈判依赖资料和简报，容易忽略人的微表情、座次、停顿和临场恐惧", "scene_use": "危机会议中看穿亚伦手指停顿、代表席位交换和发言顺序变化"},
+			{"ancient_skill": "纵横术", "modern_gap": "现代代表各说各话，缺少把利益线快速重组的能力", "scene_use": "把罗斯国、东瀛国、米国、华国的诉求画成合纵图"},
+			{"ancient_skill": "朝堂辩论", "modern_gap": "现代会议语言礼貌却含混，缺少一锤定音的公开反杀", "scene_use": "用一句“不是想停战，是想体面认输”压住全场"},
+			{"ancient_skill": "乱世治理", "modern_gap": "现代危机处理分部门割裂，缺少战后粮道、赈济、人心安抚的一体化视角", "scene_use": "后续可升级为联合停火和救援方案"},
+		},
 		"scene_bible": []map[string]any{
 			{"id": "arrival_plaza", "node_id": "background_1", "name": "纽港寰球联合会总部外广场", "time": "雨夜", "lighting": "冷蓝玻璃幕墙、手机直播灯、路面积水反光", "props": []string{"万国旗", "警戒栏", "直播屏幕", "手机灯"}, "rule": "无人空镜或远景剪影"},
 			{"id": "night_study", "node_id": "background_2", "name": "救助站与地下公共图书馆走廊", "time": "深夜", "lighting": "荧光灯与自动售货机冷光", "props": []string{"旧长椅", "国际法书", "地图", "平板"}, "rule": "无人空镜"},
 			{"id": "crisis_hall", "node_id": "background_3", "name": "寰球联合会危机会议厅", "time": "白天会议", "lighting": "冷白顶光与蓝色电子席牌", "props": []string{"环形会议桌", "同声传译耳机", "世界地图屏幕"}, "rule": "空场景，不出现可辨识人物"},
 			{"id": "chair_podium", "node_id": "background_4", "name": "寰球联合会主席台", "time": "聚光灯时刻", "lighting": "主席台聚光灯、旗帜背光、记者席闪光", "props": []string{"中央演讲台", "万国旗", "玻璃穹顶"}, "rule": "空镜无特写人物"},
 		},
-		"episode_route": []map[string]any{
-			{"episode_id": "ep_1", "scene_id": "scene_1", "title": "穿越落地", "goal": "用毒酒闪回和纽港雨夜建立强钩子", "conflict": "古代权臣被现代人当成古装疯子", "hook": "他睁眼时听见寰联警报"},
-			{"episode_id": "ep_1", "scene_id": "scene_2", "title": "受辱夜学", "goal": "证明核心竞争力不是学历，而是把现代规则翻译成古代权力图谱", "conflict": "救助站羞辱与身份黑户", "hook": "林晚棠发现他的合纵图"},
-			{"episode_id": "ep_1", "scene_id": "scene_3", "title": "会议反杀", "goal": "用识人术和纵横术打脸米国代表", "conflict": "亚伦嘲讽他不懂现代文明", "hook": "谢无咎点破各方不是想停战而是想体面下台"},
-			{"episode_id": "ep_1", "scene_id": "scene_4", "title": "主席台悬念", "goal": "用金句完成爽点并埋女帝重逢", "conflict": "旧日赐死者亲眼看见他被万国注视", "hook": "萧明凰在人群阴影中出现"},
+		"scene_strategy": []map[string]any{
+			{"scene_id": "scene_1", "title": "穿越落地", "goal": "用毒酒闪回和纽港雨夜建立强钩子", "conflict": "古代权臣被现代人当成古装疯子", "hook": "他睁眼时听见寰联警报"},
+			{"scene_id": "scene_2", "title": "受辱夜学", "goal": "证明核心竞争力不是学历，而是把现代规则翻译成古代权力图谱", "conflict": "救助站羞辱与身份黑户", "hook": "林晚棠发现他的合纵图"},
+			{"scene_id": "scene_3", "title": "会议反杀", "goal": "用识人术和纵横术打脸米国代表", "conflict": "亚伦嘲讽他不懂现代文明", "hook": "谢无咎点破各方不是想停战而是想体面下台"},
+			{"scene_id": "scene_4", "title": "主席台悬念", "goal": "用金句完成爽点并埋女帝重逢", "conflict": "旧日赐死者亲眼看见他被万国注视", "hook": "萧明凰在人群阴影中出现"},
 		},
 		"storyboard_contract": map[string]any{
 			"scene_count":            4,
@@ -414,14 +595,32 @@ func applyGlobalChairmanBriefAssetPackage(node *Node) error {
 			"effective_trim_ms_each": 7500,
 			"final_duration_ms":      30000,
 			"time_ranges":            []string{"0-2秒", "2-5秒", "5-7.5秒", "7.5-15秒余韵"},
-			"shot_fields":            []string{"index", "location", "time", "summary", "characters", "dialogue", "camera", "action", "expression", "lighting", "audio", "image_prompt", "video_prompt"},
-			"allowed_camera_terms":   []string{"大远景", "全景", "中景", "近景", "特写", "推镜头", "拉镜头", "环绕拍摄", "低角度", "仰拍", "希区柯克变焦", "快切", "闪回", "叠化", "硬切", "镜头光晕"},
+			"shot_fields":            []string{"index", "scene_id", "title", "location_id", "characters", "dramatic_beat", "ancient_competency", "shots", "dialogue", "audio", "image_prompt", "seedance_prompt"},
+			"must_output_fields":     []string{"source_diagnosis", "creative_directions", "selected_direction", "reference_terms_used", "compatibility_check", "creative_audit", "scenes"},
+		},
+		"reference_terms_contract": map[string]any{
+			"camera":    []string{"大远景", "全景", "中景", "近景", "特写", "推镜头", "拉镜头", "摇镜头", "移镜头", "跟拍", "环绕拍摄", "手持跟拍", "希区柯克变焦", "低角度", "仰拍", "焦点转移"},
+			"rhythm":    []string{"快切", "硬切", "闪回", "叠化", "交叉蒙太奇", "平行蒙太奇", "音桥", "无声处理"},
+			"style":     []string{"电影感", "胶片质感", "HDR", "3D 国漫 CG", "冷色调", "高对比度", "硬光剪影", "镜头光晕"},
+			"rule":      "脚本节点和视频节点只能从 reference.md 词库选词，不自造镜头语言或风格词。",
+			"must_list": "脚本输出 reference_terms_used，方便视频节点复用并做搭配验证。",
+		},
+		"creative_audit_contract": map[string]any{
+			"memory_point":   "观众必须记住：古代权臣用朝堂识人术看穿现代谈判底牌",
+			"unexpectedness": "必须有现代人缺少而古人独有的能力反杀，不只是换装穿越",
+			"emotion":        "情绪从濒死、受辱、冷醒、反杀到旧爱重逢",
+			"narrative":      "每7.5秒都必须完成从A到B的变化，不能只是静态展示",
+			"pass_required":  true,
+		},
+		"compatibility_check_contract": map[string]any{
+			"check_items": []string{"角色参考图是否与角色身份一致", "场景首帧是否能承接剧情", "运镜是否适合竖屏短剧", "prompt 是否前7.5秒完成动作", "是否避免真实政治人物和写实真人脸"},
+			"repair_rule": "如不协调，脚本节点必须在 compatibility_check 中给出修正后的 seedance_prompt，而不是继续输出平庸提示词。",
 		},
 		"seedance_contract": map[string]any{
 			"image_references": []string{"@图片1为场景背景参考", "@图片2为男主谢无咎参考", "@图片3为女帝萧明凰参考", "@图片4为现代外交官林晚棠参考", "@图片5为米国代表亚伦·霍克参考"},
 			"prompt_language":  "中文",
-			"video_prefix":     "9:16，30fps，15秒，电影感3D国漫短剧",
-			"must_include":     []string{"前8秒完成有效剧情", "打脸台词", "环境音或音桥", "禁止字幕/LOGO/水印"},
+			"video_prefix":     "9:16，30fps，15秒，Seedance 2.0，电影感，3D 国漫 CG，HDR",
+			"must_include":     []string{"读取 creative_audit", "读取 scenes[i].seedance_prompt", "读取 reference_terms_used", "读取 compatibility_check", "前7.5秒完成有效剧情", "打脸台词", "环境音或音桥", "禁止文字/字幕/LOGO/水印"},
 		},
 	}
 	for key, value := range fields {

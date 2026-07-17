@@ -34,11 +34,14 @@ func TestBuiltinTemplatesGraphV2(t *testing.T) {
 		t.Fatalf("unexpected ancient template: nodes=%d name=%q settings=%+v", len(ancient.Graph.Nodes), ancient.Name, ancient.Graph.Settings)
 	}
 	globalChairman := byCode["global_chairman_drama_seedance"]
-	if len(globalChairman.Graph.Nodes) != 20 || globalChairman.Version != 1 ||
+	if len(globalChairman.Graph.Nodes) != 24 || globalChairman.Version != 2 ||
 		globalChairman.Graph.Settings.CharacterApprovalPolicy != ApprovalAutoFirst ||
 		globalChairman.Graph.Settings.StoryboardApprovalPolicy != ApprovalAuto ||
 		globalChairman.Graph.Settings.Resolution != Resolution1080p ||
-		!strings.Contains(globalChairman.Name, "30秒单集") {
+		!strings.Contains(globalChairman.Name, "资产拆解版") ||
+		!strings.Contains(globalChairman.Description, "大纲资产") ||
+		!strings.Contains(globalChairman.Description, "角色生成资产") ||
+		!strings.Contains(globalChairman.Description, "剧情背景资产") {
 		t.Fatalf("unexpected global chairman template: nodes=%d name=%q settings=%+v", len(globalChairman.Graph.Nodes), globalChairman.Name, globalChairman.Graph.Settings)
 	}
 	blank := byCode["blank_video_canvas"]
@@ -211,31 +214,110 @@ func TestGlobalChairmanDramaTemplateThirtySecondWorkflow(t *testing.T) {
 			}
 		}
 	}
-	assertInputOrder("script", []string{"brief", "hero", "heroine", "cousin", "rival"})
-	assertInputOrder("video_1", []string{"scene", "background", "hero", "heroine", "cousin", "rival"})
+	assertInputOrder("script", []string{"brief", "outline", "character_plan", "world", "director", "hero", "heroine", "cousin", "rival"})
+	assertInputOrder("role_hero", []string{"brief", "character_plan"})
+	assertInputOrder("background_1", []string{"environment", "world"})
+	assertInputOrder("video_1", []string{"scene", "director", "background", "hero", "heroine", "cousin", "rival"})
 
-	promptOf := func(nodeID string) string {
+	configOf := func(nodeID string) map[string]json.RawMessage {
 		t.Helper()
 		node := drama.Graph.Nodes[findNodeIndex(drama.Graph, nodeID)]
-		var config struct {
-			Prompt string `json:"prompt"`
-		}
+		var config map[string]json.RawMessage
 		if err := json.Unmarshal(node.Config, &config); err != nil {
 			t.Fatalf("%s config: %v", nodeID, err)
 		}
-		return config.Prompt
+		return config
 	}
+	promptOf := func(nodeID string) string {
+		t.Helper()
+		config := configOf(nodeID)
+		var prompt string
+		if raw := config["prompt"]; len(raw) != 0 {
+			if err := json.Unmarshal(raw, &prompt); err != nil {
+				t.Fatalf("%s prompt: %v", nodeID, err)
+			}
+		}
+		return prompt
+	}
+
+	briefConfig := configOf("brief")
+	for _, key := range []string{
+		"source_materials", "seedance2_workflow", "creative_direction_candidates", "world_bible",
+		"core_competency_matrix", "reference_terms_contract", "creative_audit_contract", "compatibility_check_contract", "seedance_contract",
+	} {
+		if len(briefConfig[key]) == 0 || string(briefConfig[key]) == "null" {
+			t.Fatalf("brief config lacks %s: %s", key, drama.Graph.Nodes[findNodeIndex(drama.Graph, "brief")].Config)
+		}
+	}
+	for _, keyword := range []string{"素材/题材诊断", "创意发散", "运镜匹配", "搭配验证", "创意审核", "不要套模板", "识人术", "纵横术"} {
+		prompt := promptOf("brief")
+		if !strings.Contains(prompt, keyword) {
+			t.Fatalf("brief prompt lacks %q: %s", keyword, prompt)
+		}
+	}
+
 	for nodeID, keywords := range map[string][]string{
-		"brief":        {"米国", "寰球联合会", "识人术", "纵横术"},
-		"role_rival":   {"米国代表", "亚伦·霍克", "非真实政治人物"},
-		"background_3": {"寰球联合会危机会议厅", "9:16单镜头", "非拼贴"},
-		"video_3":      {"希区柯克变焦", "体面认输", "@图片5为米国代表亚伦·霍克参考"},
+		"asset_outline":    {"大纲资产", "30秒节拍", "四段7.5秒剧情", "识人术", "纵横术"},
+		"asset_characters": {"角色生成资产", "谢无咎", "萧明凰", "林晚棠", "亚伦·霍克", "禁止写实真人脸"},
+		"asset_world":      {"世界观/剧情背景资产", "纽港", "寰球联合会", "场景1", "背景图只做图生视频首帧/场景参考"},
+		"asset_director":   {"Seedance2导演审核资产", "creative_directions", "reference_terms_used", "creative_audit", "不输出平庸 prompt"},
 	} {
 		prompt := promptOf(nodeID)
 		for _, keyword := range keywords {
 			if !strings.Contains(prompt, keyword) {
 				t.Fatalf("%s prompt lacks %q: %s", nodeID, keyword, prompt)
 			}
+		}
+	}
+
+	scriptPrompt := promptOf("script")
+	for _, keyword := range []string{
+		"视频创意总监", "不是模板填充器", "严格 JSON", "source_diagnosis", "creative_directions",
+		"selected_direction", "creative_audit", "compatibility_check", "reference_terms_used", "seedance_prompt",
+		"推镜头", "希区柯克变焦", "交叉蒙太奇", "电影感", "3D 国漫 CG", "冷色调",
+		"pass", "米国", "寰球联合会", "禁止文字/字幕/LOGO/水印", "禁止写实真人脸",
+	} {
+		if !strings.Contains(scriptPrompt, keyword) {
+			t.Fatalf("script prompt lacks %q: %s", keyword, scriptPrompt)
+		}
+	}
+
+	for _, nodeID := range []string{"role_hero", "role_heroine", "role_cousin", "role_rival"} {
+		prompt := promptOf(nodeID)
+		for _, keyword := range []string{"角色参考/定妆图", "不是剧情镜头", "虚构成年人", "禁止写实真人脸", "真实政治人物"} {
+			if !strings.Contains(prompt, keyword) {
+				t.Fatalf("%s prompt lacks %q: %s", nodeID, keyword, prompt)
+			}
+		}
+	}
+	for _, nodeID := range []string{"background_1", "background_2", "background_3", "background_4"} {
+		prompt := promptOf(nodeID)
+		for _, keyword := range []string{"图生视频首帧/场景参考图", "无人空镜", "禁止近中景可辨识人物", "禁止文字/字幕/LOGO/水印", "禁止写实真人脸", "非拼贴"} {
+			if !strings.Contains(prompt, keyword) {
+				t.Fatalf("%s prompt lacks %q: %s", nodeID, keyword, prompt)
+			}
+		}
+	}
+	for _, nodeID := range []string{"video_1", "video_2", "video_3", "video_4"} {
+		prompt := promptOf(nodeID)
+		for _, keyword := range []string{
+			"selected_direction", "creative_audit", "reference_terms_used", "compatibility_check", "seedance_prompt",
+			"@图片1为场景背景参考", "@图片2为男主谢无咎角色参考", "@图片3为女帝萧明凰角色参考",
+			"@图片4为林晚棠角色参考", "@图片5为亚伦·霍克角色参考", "0-7.5秒", "禁止文字/字幕/LOGO/水印",
+			"禁止写实真人脸", "不自造镜头词",
+		} {
+			if !strings.Contains(prompt, keyword) {
+				t.Fatalf("%s prompt lacks %q: %s", nodeID, keyword, prompt)
+			}
+		}
+		if strings.Contains(prompt, "图1=场景背景") {
+			t.Fatalf("video %s still uses legacy image mapping: %s", nodeID, prompt)
+		}
+	}
+	for _, keyword := range []string{"希区柯克变焦", "环绕拍摄", "真实底牌"} {
+		prompt := promptOf("video_3")
+		if !strings.Contains(prompt, keyword) {
+			t.Fatalf("video_3 prompt lacks %q: %s", keyword, prompt)
 		}
 	}
 }
