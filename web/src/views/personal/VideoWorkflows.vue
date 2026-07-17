@@ -240,6 +240,8 @@ const mediaPreviewNode = ref<VideoWorkflowNode | null>(null)
 const mediaPreviewURL = ref('')
 const mediaPreviewLoading = ref(false)
 const mediaPreviewError = ref('')
+const selectedComposePlaybackURL = ref('')
+const selectedComposePlaybackLoading = ref(false)
 const panelLayout = reactive({ left: 248, right: 320, libraryOpen: true, inspectorOpen: true })
 const lastNonFocusLayout = ref<VideoWorkflowPanelVisibility | null>(null)
 const canvasViewport = reactive({ x: 0, y: 0, zoom: 1 })
@@ -262,6 +264,7 @@ let workspaceGeneration = 0
 let nodeHistoryGeneration = 0
 let nodeHistoryErrorToastAt = 0
 let mediaPreviewGeneration = 0
+let selectedComposePlaybackGeneration = 0
 let componentUnmounted = false
 let edgeCurveHistorySnapshot: VideoWorkflowGraph | null = null
 let visualEdgeLogicalIDs = new Map<string, string[]>()
@@ -312,6 +315,24 @@ const activeRunNodeMap = computed(() => new Map(
   (activeRun.value?.node_runs || []).map((item) => [item.node_id, item]),
 ))
 const selectedNodeRun = computed(() => activeRunNodeMap.value.get(selectedNodeID.value) || null)
+const selectedComposePlaybackSignature = computed(() => {
+  if (selectedNode.value?.type !== 'compose') return ''
+  const nodeRun = selectedNodeRun.value
+  return [
+    selectedNodeID.value,
+    activeRun.value?.id || '',
+    activeRun.value?.output_version_id || '',
+    activeRun.value?.output_asset_version_id || '',
+    activeRun.value?.output?.id || '',
+    activeRun.value?.output?.asset_id || '',
+    activeRun.value?.output_url || '',
+    nodeRun?.output_version_id || '',
+    nodeRun?.output?.version_id || '',
+    nodeRun?.output?.output_version_id || '',
+    nodeRun?.output?.output_url || '',
+    nodeRun?.output?.url || '',
+  ].join('|')
+})
 const selectedNodeUpstreams = computed(() => {
   const target = selectedNode.value
   if (!target) return []
@@ -667,6 +688,72 @@ function directMediaBinding(node: VideoWorkflowNode) {
     || '',
   )
   return assetID && versionID ? { assetID, versionID, previewURL: '' } : null
+}
+
+function assetIDForVersion(versionID: string) {
+  if (!versionID) return ''
+  if (activeRun.value?.output?.id === versionID && activeRun.value.output.asset_id) return activeRun.value.output.asset_id
+  const asset = assets.value.find((item) => item.versions?.some((version) => version.id === versionID))
+  return asset?.id || ''
+}
+
+function firstPlayableOutputURL(...values: any[]) {
+  for (const value of values) {
+    const url = typeof value === 'string' ? value.trim() : ''
+    if (url && !/[?&]purpose=preview(?:&|$)/.test(url)) return url
+  }
+  return ''
+}
+
+async function refreshSelectedComposePlaybackURL() {
+  const generation = ++selectedComposePlaybackGeneration
+  selectedComposePlaybackURL.value = ''
+  selectedComposePlaybackLoading.value = false
+  if (selectedNode.value?.type !== 'compose') return
+
+  const nodeRun = selectedNodeRun.value
+  const directURL = firstPlayableOutputURL(
+    nodeRun?.output?.playback_url,
+    nodeRun?.output?.video_url,
+    nodeRun?.output?.url,
+    nodeRun?.output?.output_url,
+    activeRun.value?.output_url,
+  )
+  if (directURL) {
+    selectedComposePlaybackURL.value = directURL
+    return
+  }
+
+  const versionID = String(
+    activeRun.value?.output_version_id
+    || activeRun.value?.output_asset_version_id
+    || nodeRun?.output_version_id
+    || nodeRun?.output?.version_id
+    || nodeRun?.output?.output_version_id
+    || '',
+  )
+  const assetID = String(
+    activeRun.value?.output?.asset_id
+    || nodeRun?.output?.asset_id
+    || nodeRun?.output?.output_asset_id
+    || assetIDForVersion(versionID)
+    || '',
+  )
+  if (!assetID || !versionID) return
+
+  selectedComposePlaybackLoading.value = true
+  try {
+    const signed = await signVideoAssetVersion(assetID, versionID, 'seedance')
+    if (!componentUnmounted && generation === selectedComposePlaybackGeneration) {
+      selectedComposePlaybackURL.value = signed.url
+    }
+  } catch {
+    // 保留输出页封面和底部“播放成片”入口。
+  } finally {
+    if (!componentUnmounted && generation === selectedComposePlaybackGeneration) {
+      selectedComposePlaybackLoading.value = false
+    }
+  }
 }
 
 function mediaBindingForNode(node: VideoWorkflowNode) {
@@ -3203,6 +3290,10 @@ watch(() => activeRun.value?.status, (status) => {
   if (status === 'awaiting_storyboard_approval') openStoryboardApproval()
 })
 
+watch(selectedComposePlaybackSignature, () => {
+  void refreshSelectedComposePlaybackURL()
+}, { immediate: true })
+
 watch(edgeDisplayMode, () => {
   selectedSummaryEdgeID.value = ''
   syncFlow()
@@ -3541,6 +3632,8 @@ onBeforeUnmount(() => {
           :model-options="selectedNodeModelOptions"
           :revision="activeWorkflow?.revision || 0"
           :running="isRunActive"
+          :compose-playback-url="selectedComposePlaybackURL"
+          :compose-playback-loading="selectedComposePlaybackLoading"
           :timeline-source-titles="timelineSourceTitles"
           @update-title="updateNodeTitle"
           @update-config="updateNodeConfig"

@@ -68,6 +68,8 @@ const props = withDefaults(defineProps<{
   modelOptions?: InspectorModelOption[]
   revision?: number
   running?: boolean
+  composePlaybackUrl?: string
+  composePlaybackLoading?: boolean
   timelineSourceTitles?: Record<string, string>
 }>(), {
   upstreams: () => [],
@@ -78,6 +80,8 @@ const props = withDefaults(defineProps<{
   modelOptions: () => [],
   revision: 0,
   running: false,
+  composePlaybackUrl: '',
+  composePlaybackLoading: false,
   timelineSourceTitles: () => ({}),
 })
 
@@ -122,6 +126,7 @@ const videoNode = computed(() => props.node?.type === 'video')
 const mediaNode = computed(() => imageNode.value || videoNode.value)
 const systemNode = computed(() => ['timeline', 'compose'].includes(props.node?.type || ''))
 const selectedHistoryEntry = computed(() => props.history.find((entry) => entry.run_id === selectedHistoryRunID.value) || null)
+const mediaOutputURLKeys = new Set(['output_url', 'preview_url', 'playback_url', 'video_url', 'url'])
 const effectiveOutput = computed(() => {
   const output = selectedHistoryEntry.value?.node_run.output || props.node?.output || {}
   if (!props.node || !output || typeof output !== 'object' || Array.isArray(output)) return output
@@ -160,13 +165,42 @@ const selectedVersion = computed(() => String(
 ))
 const statusText = computed(() => statusLabel(props.node?.status))
 const progress = computed(() => Math.max(0, Math.min(100, Number(props.node?.progress ?? props.latestRun?.progress ?? 0))))
-const outputRows = computed(() => Object.entries(effectiveOutput.value).slice(0, 12).map(([key, value]) => ({
-  key,
-  label: outputLabel(key),
-  value: outputValue(value),
-})))
 const formattedOutput = computed(() => JSON.stringify(effectiveOutput.value, null, 2))
-const hasOutput = computed(() => Boolean(previewURL.value || outputRows.value.length || (!selectedHistoryEntry.value && props.latestRun?.output_version_id)))
+const composeDirectVideoURL = computed(() => {
+  if (props.node?.type !== 'compose') return ''
+  const output = effectiveOutputObject.value
+  for (const key of ['playback_url', 'video_url', 'url', 'output_url']) {
+    const url = cleanOutputURL(output[key])
+    if (url && !isPreviewImageURL(url)) return url
+  }
+  return ''
+})
+const composePosterURL = computed(() => {
+  if (props.node?.type !== 'compose') return ''
+  const output = effectiveOutputObject.value
+  for (const key of ['preview_url', 'output_url', 'url']) {
+    const url = cleanOutputURL(output[key])
+    if (url && isPreviewImageURL(url)) return url
+  }
+  return ''
+})
+const composeVideoURL = computed(() => {
+  if (props.node?.type !== 'compose') return ''
+  return selectedHistoryEntry.value ? composeDirectVideoURL.value : props.composePlaybackUrl || composeDirectVideoURL.value
+})
+const hasComposePreview = computed(() => Boolean(
+  props.node?.type === 'compose'
+  && (composeVideoURL.value || composePosterURL.value || (!selectedHistoryEntry.value && props.composePlaybackLoading)),
+))
+const outputRows = computed(() => Object.entries(effectiveOutputObject.value)
+  .filter(([key]) => !(props.node?.type === 'compose' && hasComposePreview.value && mediaOutputURLKeys.has(key)))
+  .slice(0, 12)
+  .map(([key, value]) => ({
+    key,
+    label: outputLabel(key),
+    value: outputValue(value),
+  })))
+const hasOutput = computed(() => Boolean(previewURL.value || hasComposePreview.value || outputRows.value.length || (!selectedHistoryEntry.value && props.latestRun?.output_version_id)))
 const timelineDuration = computed(() => (props.node?.config?.clips || []).reduce((total: number, clip: any) => (
   total + Math.max(0, Number(clip.trim_out_ms || 0) - Number(clip.trim_in_ms || 0))
 ), 0))
@@ -233,6 +267,14 @@ function outputValue(value: any) {
   if (value && typeof value === 'object') return JSON.stringify(value).slice(0, 240)
   if (value === null || value === undefined || value === '') return '--'
   return String(value)
+}
+
+function cleanOutputURL(value: any) {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function isPreviewImageURL(url: string) {
+  return /[?&]purpose=preview(?:&|$)/.test(url) || /\.(?:jpe?g|png|webp|gif)(?:[?#]|$)/i.test(url)
 }
 
 function formatDate(value?: string) {
@@ -374,6 +416,30 @@ function applyCrop() {
 
           <div v-if="node.outputs?.length" class="output-ports">
             <div v-for="port in node.outputs" :key="port.id"><i /><span>{{ port.label || port.id }}</span><code>{{ port.type }}</code></div>
+          </div>
+
+          <div v-if="node.type === 'compose' && hasComposePreview" class="compose-output-preview">
+            <div class="compose-output-player">
+              <video
+                v-if="composeVideoURL"
+                :src="composeVideoURL"
+                :poster="composePosterURL || undefined"
+                controls
+                playsinline
+                preload="metadata"
+                aria-label="成片视频预览"
+              />
+              <img v-else-if="composePosterURL" :src="composePosterURL" alt="成片封面预览" draggable="false" />
+              <span v-else><VideoCamera /><small>正在准备预览</small></span>
+              <button
+                v-if="!composeVideoURL && !selectedHistoryEntry"
+                class="compose-play-button"
+                type="button"
+                :disabled="composePlaybackLoading"
+                @click="emit('preview-output')"
+              ><VideoPlay /><span>{{ composePlaybackLoading ? '准备中' : '播放成片' }}</span></button>
+              <em>{{ composeVideoURL ? '视频预览' : '封面预览' }}</em>
+            </div>
           </div>
 
           <div v-if="outputRows.length" class="output-fields">
@@ -526,7 +592,7 @@ function applyCrop() {
   background: #111318;
   border-radius: 6px;
 }
-.image-preview img, .image-preview video { width: 100%; height: 100%; object-fit: contain; pointer-events: none; }.image-preview > span { display: grid; place-items: center; gap: 8px; color: #94a3b8; }.image-preview > span svg { width: 30px; }.image-preview small { font-size: 10px; }.image-preview > em { position: absolute; right: 7px; bottom: 7px; padding: 2px 5px; color: #e2e8f0; background: rgba(15, 23, 42, .75); border-radius: 3px; font-size: 9px; font-style: normal; }.inspector-preview-button { position: absolute; z-index: 2; left: 50%; top: 50%; height: 34px; display: flex; align-items: center; gap: 6px; padding: 0 11px; color: #fff; background: rgba(15, 23, 42, .88); border: 1px solid rgba(255, 255, 255, .7); border-radius: 5px; opacity: 0; cursor: pointer; transform: translate(-50%, -50%); transition: opacity .18s ease, background .18s ease; font-size: 10px; }.inspector-preview-button.video, .image-preview:hover .inspector-preview-button, .image-preview:focus-within .inspector-preview-button { opacity: 1; }.inspector-preview-button:hover { background: #2563eb; }.inspector-preview-button svg { width: 14px; }.version-field { padding: 0 14px 12px; border-bottom: 1px solid #eef2f7; }.output-ports { padding: 8px 14px; border-bottom: 1px solid #eef2f7; }.output-ports > div { min-height: 28px; display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; gap: 7px; }.output-ports i { width: 7px; height: 7px; background: #16a34a; border-radius: 50%; }.output-ports span { color: #334155; font-size: 9px; }.output-ports code { color: #64748b; font-size: 8px; }.output-fields > div { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 8px; padding: 9px 14px; border-bottom: 1px solid #eef2f7; }.output-fields > div span { color: #64748b; font-size: 8px; }.output-fields p { min-width: 0; margin: 0; overflow-wrap: anywhere; color: #334155; font-size: 9px; line-height: 1.5; }.output-fields details { margin: 10px 14px; }.output-fields summary { color: #2563eb; cursor: pointer; font-size: 9px; }.output-fields pre { max-height: 280px; overflow: auto; padding: 10px; color: #334155; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 5px; white-space: pre-wrap; overflow-wrap: anywhere; font: 9px/1.5 "SFMono-Regular", Consolas, monospace; }.output-empty { min-height: 180px; }.output-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; padding: 12px 14px 0; }.output-actions button { height: 34px; display: flex; align-items: center; justify-content: center; gap: 5px; color: #2563eb; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 5px; cursor: pointer; font-size: 9px; }.output-actions svg { width: 13px; }
+.image-preview img, .image-preview video { width: 100%; height: 100%; object-fit: contain; pointer-events: none; }.image-preview > span { display: grid; place-items: center; gap: 8px; color: #94a3b8; }.image-preview > span svg { width: 30px; }.image-preview small { font-size: 10px; }.image-preview > em { position: absolute; right: 7px; bottom: 7px; padding: 2px 5px; color: #e2e8f0; background: rgba(15, 23, 42, .75); border-radius: 3px; font-size: 9px; font-style: normal; }.inspector-preview-button { position: absolute; z-index: 2; left: 50%; top: 50%; height: 34px; display: flex; align-items: center; gap: 6px; padding: 0 11px; color: #fff; background: rgba(15, 23, 42, .88); border: 1px solid rgba(255, 255, 255, .7); border-radius: 5px; opacity: 0; cursor: pointer; transform: translate(-50%, -50%); transition: opacity .18s ease, background .18s ease; font-size: 10px; }.inspector-preview-button.video, .image-preview:hover .inspector-preview-button, .image-preview:focus-within .inspector-preview-button { opacity: 1; }.inspector-preview-button:hover { background: #2563eb; }.inspector-preview-button svg { width: 14px; }.version-field { padding: 0 14px 12px; border-bottom: 1px solid #eef2f7; }.output-ports { padding: 8px 14px; border-bottom: 1px solid #eef2f7; }.output-ports > div { min-height: 28px; display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; gap: 7px; }.output-ports i { width: 7px; height: 7px; background: #16a34a; border-radius: 50%; }.output-ports span { color: #334155; font-size: 9px; }.output-ports code { color: #64748b; font-size: 8px; }.compose-output-preview { padding: 12px 14px; border-bottom: 1px solid #eef2f7; }.compose-output-player { position: relative; height: clamp(180px, 38vh, 320px); display: grid; place-items: center; overflow: hidden; background: #111318; border-radius: 6px; }.compose-output-player video, .compose-output-player img { width: 100%; height: 100%; object-fit: contain; }.compose-output-player > span { display: grid; place-items: center; gap: 8px; color: #94a3b8; }.compose-output-player > span svg { width: 30px; }.compose-output-player small { font-size: 10px; }.compose-output-player > em { position: absolute; right: 7px; bottom: 7px; padding: 2px 5px; color: #e2e8f0; background: rgba(15, 23, 42, .75); border-radius: 3px; font-size: 9px; font-style: normal; }.compose-play-button { position: absolute; left: 50%; top: 50%; height: 36px; display: flex; align-items: center; gap: 6px; padding: 0 12px; color: #fff; background: rgba(37, 99, 235, .92); border: 1px solid rgba(255, 255, 255, .7); border-radius: 5px; cursor: pointer; transform: translate(-50%, -50%); font-size: 10px; font-weight: 650; }.compose-play-button:disabled { opacity: .65; cursor: wait; }.compose-play-button svg { width: 14px; }.output-fields > div { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 8px; padding: 9px 14px; border-bottom: 1px solid #eef2f7; }.output-fields > div span { color: #64748b; font-size: 8px; }.output-fields p { min-width: 0; margin: 0; overflow-wrap: anywhere; color: #334155; font-size: 9px; line-height: 1.5; }.output-fields details { margin: 10px 14px; }.output-fields summary { color: #2563eb; cursor: pointer; font-size: 9px; }.output-fields pre { max-height: 280px; overflow: auto; padding: 10px; color: #334155; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 5px; white-space: pre-wrap; overflow-wrap: anywhere; font: 9px/1.5 "SFMono-Regular", Consolas, monospace; }.output-empty { min-height: 180px; }.output-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; padding: 12px 14px 0; }.output-actions button { height: 34px; display: flex; align-items: center; justify-content: center; gap: 5px; color: #2563eb; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 5px; cursor: pointer; font-size: 9px; }.output-actions svg { width: 13px; }
 .settings-panel { padding-bottom: 14px; }.form-section, .model-section, .media-operations, .parameter-list, .split-fields { padding: 12px 14px; border-bottom: 1px solid #eef2f7; }.form-section { position: relative; }.field-label { display: block; margin: 10px 0 6px; color: #475569; font-size: 10px; }.form-section > .field-label:first-child, .model-section > .field-label:first-child { margin-top: 0; } input, textarea, select { width: 100%; box-sizing: border-box; color: #0f172a; background: #fff; border: 1px solid #cbd5e1; border-radius: 5px; outline: 0; font: inherit; font-size: 11px; } input, select { height: 34px; padding: 0 9px; } textarea { padding: 8px 9px; resize: vertical; line-height: 1.55; } input:focus, textarea:focus, select:focus { border-color: #60a5fa; box-shadow: 0 0 0 2px rgba(37, 99, 235, .1); }.form-section > small { position: absolute; right: 18px; bottom: 15px; color: #64748b; font-size: 8px; }.readonly-value { min-height: 34px; display: flex; align-items: center; justify-content: space-between; color: #64748b; font-size: 9px; }.readonly-value b { color: #334155; }.split-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }.split-fields label { display: grid; gap: 5px; color: #475569; font-size: 9px; }.action-grid { display: grid; gap: 8px; }.action-grid.two { grid-template-columns: 1fr 1fr; }.action-grid button, .asset-button, .transform-grid button { min-height: 34px; display: flex; align-items: center; justify-content: center; gap: 5px; color: #334155; background: #fff; border: 1px solid #cbd5e1; border-radius: 5px; cursor: pointer; font-size: 9px; }.action-grid button:hover, .asset-button:hover, .transform-grid button:hover, .transform-grid button.active { color: #2563eb; background: #eff6ff; border-color: #93c5fd; }.action-grid svg, .asset-button svg, .transform-grid svg { width: 13px; }.asset-button { width: 100%; margin-top: 8px; }.transform-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-top: 9px; }.transform-grid button { min-width: 0; padding: 0 3px; }.flip-icon { width: 13px; font-size: 14px; }.crop-editor { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 9px; padding: 8px; background: #f8fafc; }.crop-editor label { display: grid; gap: 3px; color: #64748b; font-size: 8px; }.crop-editor input { height: 27px; padding: 0 3px; }.crop-editor button { grid-column: 1 / -1; height: 30px; color: #fff; background: #2563eb; border: 0; border-radius: 4px; cursor: pointer; }.parameter-list > div { min-height: 30px; display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #64748b; font-size: 9px; }.parameter-list b, .parameter-list code { max-width: 180px; overflow: hidden; color: #334155; text-overflow: ellipsis; white-space: nowrap; }.timeline-add { width: calc(100% - 28px); height: 34px; margin: 12px 14px 0; color: #2563eb; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 5px; cursor: pointer; font-size: 9px; }
 .inspector-footer { display: grid; grid-template-columns: 34px minmax(0, 1fr) 34px; align-items: center; gap: 8px; padding: 0 12px; border-top: 1px solid #e2e8f0; box-shadow: 0 -4px 12px rgba(15, 23, 42, .04); }.inspector-footer button { height: 36px; display: grid; place-items: center; border-radius: 5px; }.inspector-footer svg { width: 15px; }.delete-button, .history-button { color: #64748b; background: #f8fafc; }.delete-button:hover { color: #dc2626; background: #fef2f2; }.history-button:hover { color: #2563eb; background: #eff6ff; }.run-button { display: flex !important; align-items: center; justify-content: center; gap: 6px; color: #fff; background: #2563eb; font-size: 10px; font-weight: 650; }.run-button:disabled { opacity: .5; cursor: wait; }
 .empty-header { grid-row: 1; }.empty-inspector { grid-row: 2 / -1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #64748b; text-align: center; }.empty-inspector svg { width: 34px; color: #cbd5e1; }.empty-inspector b { color: #334155; font-size: 12px; }.empty-inspector span { font-size: 9px; }

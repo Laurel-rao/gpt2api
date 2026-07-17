@@ -221,6 +221,37 @@ describe('VideoWorkflowInspector', () => {
     expect(wrapper.emitted('update-model')?.[0]).toEqual(['image-next'])
   })
 
+  it('renders compose output as media preview instead of a signed URL field', async () => {
+    const composeNode: VideoWorkflowNode = {
+      id: 'compose',
+      type: 'compose',
+      title: '成片输出',
+      position: { x: 0, y: 0 },
+      config: {},
+      outputs: [{ id: 'video', label: 'video', type: 'video' }],
+      output: {
+        output_url: '/p/vwf/vwv_final?purpose=preview&sig=poster',
+        duration_ms: 40800,
+        width: 1080,
+        height: 1920,
+      },
+    }
+    const wrapper = mount(VideoWorkflowInspector, {
+      props: {
+        node: composeNode,
+        assets: [],
+        composePlaybackUrl: '/p/vwf/vwv_final?purpose=seedance&sig=video',
+      },
+    })
+    await wrapper.findAll('.inspector-tabs button')[3].trigger('click')
+
+    expect(wrapper.find('.compose-output-player video').attributes('src')).toBe('/p/vwf/vwv_final?purpose=seedance&sig=video')
+    expect(wrapper.find('.compose-output-player video').attributes('poster')).toBe('/p/vwf/vwv_final?purpose=preview&sig=poster')
+    const fieldRows = wrapper.findAll('.output-fields > div').map((item) => item.text()).join('|')
+    expect(fieldRows).not.toContain('output_url')
+    expect(fieldRows).toContain('输出时长')
+  })
+
   it('never reapplies metadata transforms to a server-baked image version', () => {
     const transformedNode: VideoWorkflowNode = {
       ...node,
