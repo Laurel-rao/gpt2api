@@ -691,6 +691,18 @@ function assetBindingForNode(node: VideoWorkflowNode | null) {
     || resolveVideoWorkflowAssetBinding(node, fallbackMediaNodeRunForNode(node), assets.value)
 }
 
+function nodeHasImageBinding(node: VideoWorkflowNode | null) {
+  if (!node) return false
+  return Boolean(
+    assetBindingForNode(node)
+    || node.asset_id
+    || node.asset_version_id
+    || node.config.asset_id
+    || node.config.asset_version_id
+    || node.config.preview_url,
+  )
+}
+
 function invalidateImageTransformContext() { imageTransformContextGeneration += 1 }
 
 async function refreshAssets(options: { silent?: boolean } = {}) {
@@ -1541,6 +1553,20 @@ function requireActiveWorkflow(action = '继续操作') {
   return false
 }
 
+async function confirmDangerAction(message: string, title: string, confirmButtonText: string) {
+  try {
+    await ElMessageBox.confirm(message, title, {
+      type: 'warning',
+      confirmButtonText,
+      cancelButtonText: '取消',
+      distinguishCancelAndClose: true,
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function ensureDefaultWorkflow(options: { silent?: boolean } = {}) {
   if (workflows.value.length > 0) return true
   if (!templates.value.length) {
@@ -2021,30 +2047,22 @@ async function deleteActiveWorkflow() {
   const target = activeWorkflow.value
   try {
     if (dirty.value) {
-      try {
-        await ElMessageBox.confirm(
-          `「${target.name}」有未保存草稿。先保存再删除，或放弃草稿直接删除？运行历史与素材不会随工作流删除。`,
-          '删除工作流',
-          {
-            type: 'warning',
-            confirmButtonText: '先保存再删除',
-            cancelButtonText: '放弃草稿并删除',
-            distinguishCancelAndClose: true,
-          },
-        )
-        if (!await flushSave()) return ElMessage.error('保存失败，已取消删除')
-        if (revisionConflict.value) return ElMessage.warning('请先处理当前修订冲突')
-      } catch (action) {
-        if (action === 'close') return
-        // cancel = 放弃草稿并删除
-      }
-    } else {
-      await ElMessageBox.confirm(
-        `确定删除「${target.name}」？运行历史与素材不会随工作流删除。`,
+      const shouldSave = await confirmDangerAction(
+        `「${target.name}」有未保存草稿。删除前会先保存当前草稿；如果保存失败，本次删除会取消。`,
         '删除工作流',
-        { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+        '保存后继续',
       )
+      if (!shouldSave) return
+      if (!await flushSave()) return ElMessage.error('保存失败，已取消删除')
+      if (revisionConflict.value) return ElMessage.warning('请先处理当前修订冲突')
     }
+    if (activeWorkflow.value?.id !== target.id) return
+    const confirmed = await confirmDangerAction(
+      `确定删除「${target.name}」？删除后工作流配置不可恢复；运行历史与素材不会随工作流删除。`,
+      '再次确认删除',
+      '确认删除',
+    )
+    if (!confirmed) return
     if (activeWorkflow.value?.id !== target.id) return
     await deleteVideoWorkflow(target.id)
     localStorage.removeItem(draftKey(target.id))
@@ -2303,11 +2321,14 @@ async function deleteSelectedNodes() {
   }
   const impact = graph.value.edges.filter((edge) => ids.includes(edge.source) || ids.includes(edge.target)).length
     + timelineClips.value.filter((clip) => ids.includes(clip.source_node_id)).length
-  if (impact) {
-    try {
-      await ElMessageBox.confirm(`将同时移除 ${impact} 个连接或时间线引用。`, '删除节点', { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' })
-    } catch { return }
-  }
+  const confirmed = await confirmDangerAction(
+    impact
+      ? `确定删除 ${ids.length} 个节点？将同时移除 ${impact} 个连接或时间线引用。`
+      : `确定删除 ${ids.length} 个节点？这些节点会从画布中移除。`,
+    '删除节点',
+    '确认删除',
+  )
+  if (!confirmed) return
   const before = cloneWorkflowGraph(graph.value)
   commitGraph((target) => {
     let next = target
@@ -2519,14 +2540,27 @@ function onEdgeUpdate(event: EdgeUpdateEvent) {
   })
 }
 
-function removeSelectedEdges() {
-  if (!selectedEdgeIDs.value.length) return
+async function removeSelectedEdges() {
+  if (!requireActiveWorkflow('删除连线')) return
+  const ids = [...selectedEdgeIDs.value]
+  if (!ids.length) return
+  const confirmed = await confirmDangerAction(
+    `确定删除 ${ids.length} 条连线？相关下游节点会标记为需要重新生成。`,
+    '删除连线',
+    '确认删除',
+  )
+  if (!confirmed) return
   commitGraph((target) => {
-    const removed = target.edges.filter((edge) => selectedEdgeIDs.value.includes(edge.id))
-    target.edges = target.edges.filter((edge) => !selectedEdgeIDs.value.includes(edge.id))
+    const removed = target.edges.filter((edge) => ids.includes(edge.id))
+    target.edges = target.edges.filter((edge) => !ids.includes(edge.id))
     markTargetsStaleFromEdges(target, removed)
   })
-  selectedEdgeIDs.value = []
+  selectedEdgeIDs.value = selectedEdgeIDs.value.filter((id) => !ids.includes(id))
+}
+
+async function deleteCurrentSelection() {
+  if (selectedEdgeIDs.value.length) await removeSelectedEdges()
+  else await deleteSelectedNodes()
 }
 
 function fitViewToCenter(duration = 280) {
@@ -2731,7 +2765,17 @@ function setTimelineClips(target: VideoWorkflowGraph, clips: VideoWorkflowTimeli
   return true
 }
 
-function updateTimelineClips(clips: VideoWorkflowTimelineClip[]) {
+async function updateTimelineClips(clips: VideoWorkflowTimelineClip[]) {
+  const removed = timelineClips.value.filter((clip) => !clips.some((item) => item.id === clip.id))
+  if (removed.length) {
+    const names = removed.map((clip) => timelineSourceTitles.value[clip.source_node_id] || clip.id).join('、')
+    const confirmed = await confirmDangerAction(
+      `确定从时间线删除 ${removed.length} 个片段「${names}」？最终成片将不再包含这些片段。`,
+      '删除时间线片段',
+      '确认删除',
+    )
+    if (!confirmed) return
+  }
   commitGraph((target) => {
     if (!setTimelineClips(target, clips)) {
       ElMessage.warning(`连线不能超过 ${VIDEO_WORKFLOW_MAX_EDGES} 条`)
@@ -2757,13 +2801,22 @@ function addSelectedVideoToTimeline() {
 }
 
 async function replaceImage(file: File) {
-  if (!selectedNode.value) return
+  const node = selectedNode.value
+  if (!node) return
+  if (nodeHasImageBinding(node)) {
+    const confirmed = await confirmDangerAction(
+      `上传替换会覆盖「${nodeTitle(node)}」当前绑定的图片/预览，并把相关下游节点标记为需要重新生成。确定继续？`,
+      '替换图片',
+      '确认替换',
+    )
+    if (!confirmed || selectedNode.value?.id !== node.id) return
+  }
   try {
     const asset = await uploadVideoAsset(file)
     assets.value.unshift(asset)
     if (asset.kind === 'image') {
-      applyAssetToSelected(asset)
-      ElMessage.success('图片已上传为新素材版本')
+      const bound = await applyAssetToSelected(asset)
+      ElMessage.success(bound ? '图片已上传为新素材版本' : '图片已上传，未绑定到当前节点')
     } else {
       ElMessage.success('素材已上传')
     }
@@ -2782,8 +2835,8 @@ async function uploadLibraryAsset(file: File) {
       && selectedNode.value
       && ['background', 'image'].includes(selectedNode.value.type)
     if (canBindImage) {
-      applyAssetToSelected(asset)
-      ElMessage.success('图片已上传并绑定到当前节点')
+      const bound = await applyAssetToSelected(asset, { confirmReplace: true })
+      ElMessage.success(bound ? '图片已上传并绑定到当前节点' : '素材已上传，未替换当前节点图片')
     } else {
       ElMessage.success('素材已上传')
     }
@@ -2792,9 +2845,17 @@ async function uploadLibraryAsset(file: File) {
   }
 }
 
-function applyAssetToSelected(asset: VideoAsset) {
-  if (!selectedNode.value || asset.kind !== 'image') return
+async function applyAssetToSelected(asset: VideoAsset, options: { confirmReplace?: boolean } = {}) {
+  if (!selectedNode.value || asset.kind !== 'image') return false
   const nodeID = selectedNode.value.id
+  if (options.confirmReplace && nodeHasImageBinding(selectedNode.value)) {
+    const confirmed = await confirmDangerAction(
+      `确定用素材「${asset.name || asset.id}」替换「${nodeTitle(selectedNode.value)}」当前绑定的图片/预览？相关下游节点会标记为需要重新生成。`,
+      '替换图片',
+      '确认替换',
+    )
+    if (!confirmed || selectedNode.value?.id !== nodeID) return false
+  }
   invalidateImageTransformContext()
   const version = asset.versions?.find((item) => item.id === asset.current_version_id) || asset.versions?.at(-1)
   const versionTransform = videoWorkflowImageVersionTransformState(version?.id || '', version)
@@ -2816,18 +2877,27 @@ function applyAssetToSelected(asset: VideoAsset) {
   })
   panelTab.value = 'nodes'
   pickingAsset.value = false
+  return true
 }
 
 function chooseAsset() { pickingAsset.value = true; panelTab.value = 'assets'; ElMessage.info('在左侧素材库选择一张图片') }
 function selectAsset(asset: VideoAsset) {
-  if (pickingAsset.value && asset.kind === 'image') applyAssetToSelected(asset)
+  if (pickingAsset.value && asset.kind === 'image') void applyAssetToSelected(asset, { confirmReplace: true })
 }
 
-function applyImageTransform(patch: Record<string, any>) {
-  if (!selectedNode.value) return Promise.resolve()
+async function applyImageTransform(patch: Record<string, any>) {
+  if (!selectedNode.value) return
   const nodeID = selectedNode.value.id
+  if (patch?.reset) {
+    const confirmed = await confirmDangerAction(
+      `确定重置「${nodeTitle(selectedNode.value)}」的裁剪、旋转和翻转设置？相关下游节点会标记为需要重新生成。`,
+      '重置图片变换',
+      '确认重置',
+    )
+    if (!confirmed || selectedNode.value?.id !== nodeID) return
+  }
   const contextGeneration = imageTransformContextGeneration
-  return imageTransformQueue.enqueue(nodeID, async () => {
+  await imageTransformQueue.enqueue(nodeID, async () => {
     if (componentUnmounted || contextGeneration !== imageTransformContextGeneration) return
     const binding = await ensureAssetBinding(nodeID)
     if (componentUnmounted || contextGeneration !== imageTransformContextGeneration) return
@@ -2927,6 +2997,14 @@ async function regenerateSelectedImage() {
   const nodeID = selectedNodeID.value
   const node = graph.value.nodes.find((item) => item.id === nodeID)
   if (!node || !['background', 'image'].includes(node.type)) return startRun('node_only', nodeID)
+  if (nodeHasImageBinding(node)) {
+    const confirmed = await confirmDangerAction(
+      `重新生成会清除「${nodeTitle(node)}」当前绑定的图片/预览，并把相关下游节点标记为需要重新生成。确定继续？`,
+      '重新生成图片',
+      '确认重新生成',
+    )
+    if (!confirmed || selectedNodeID.value !== nodeID) return
+  }
   await startRun('node_only', nodeID, (target) => {
     const index = target.nodes.findIndex((item) => item.id === nodeID)
     if (index < 0) return
@@ -3306,7 +3384,7 @@ function handleCanvasKeydown(event: KeyboardEvent) {
   if (mod && event.key.toLowerCase() === 'd') { event.preventDefault(); duplicateSelectedNodes(); return }
   if (mod && event.key.toLowerCase() === 'a') { event.preventDefault(); selectedNodeIDs.value = graph.value.nodes.map((node) => node.id); selectedNodeID.value = selectedNodeIDs.value.at(-1) || ''; syncFlow(); return }
   if (mod && event.key === 'Enter') { event.preventDefault(); void startRun('node_only'); return }
-  if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); selectedEdgeIDs.value.length ? removeSelectedEdges() : void deleteSelectedNodes(); return }
+  if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); void deleteCurrentSelection(); return }
   if (event.key === 'Escape') { clearSelection(); return }
   if (event.key.toLowerCase() === 'v') { activeTool.value = 'select'; return }
   if (event.key.toLowerCase() === 'h') { activeTool.value = 'pan'; return }
@@ -3743,7 +3821,7 @@ onBeforeUnmount(() => {
           @toggle-enabled="toggleEnabled"
           @toggle-lock="toggleLock"
           @toggle-collapse="toggleCollapse"
-          @delete-selected="selectedEdgeIDs.length ? removeSelectedEdges() : deleteSelectedNodes()"
+          @delete-selected="deleteCurrentSelection"
           @nodes-change="onNodeChanges"
           @edges-change="onEdgeChanges"
           @node-click="selectNode"
