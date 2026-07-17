@@ -19,7 +19,7 @@ import (
 	"github.com/432539/gpt2api/pkg/logger"
 )
 
-const defaultAIZeroBaseURL = "http://123.207.53.152/v1"
+const defaultAIZeroBaseURL = "http://ai.reeko.net.cn/v1"
 
 // AIZeroConfig 是 AI Zero Token/OpenAI-compatible 生图网关配置。
 type AIZeroConfig struct {

@@ -4,7 +4,7 @@
  *
  * 典型用法:
  *   node scripts/net-speed-test.mjs --page https://ai.reeko.net.cn:8081/admin/ops --rounds 3 --concurrency 4
- *   node scripts/net-speed-test.mjs --url https://ai.reeko.net.cn:8081/health --url http://43.167.247.47:8080/admin/ops
+ *   node scripts/net-speed-test.mjs --url https://ai.reeko.net.cn:8081/health --url https://ai.reeko.net.cn:8000/healthz
  *   node scripts/net-speed-test.mjs --preset sub2api --rounds 5 --json output/sub2api-speed.json
  *
  * 说明:
@@ -36,7 +36,7 @@ const presetUrls = {
   sub2api: [
     'https://ai.reeko.net.cn:8081/health',
     'https://ai.reeko.net.cn:8081/admin/ops',
-    'http://43.167.247.47:8080/admin/ops',
+    'https://ai.reeko.net.cn:8000/healthz',
   ],
 }
 

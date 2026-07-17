@@ -17,8 +17,8 @@ if [ -f "$LOCAL_ENV_FILE" ]; then
   set +a
 fi
 
-REMOTE_HOST="${GPT2API_REMOTE_HOST:-123.207.53.152}"
-REMOTE_USER="${GPT2API_REMOTE_USER:-deploy}"
+REMOTE_HOST="${GPT2API_REMOTE_HOST:-64.83.17.240}"
+REMOTE_USER="${GPT2API_REMOTE_USER:-root}"
 REMOTE_PORT="${GPT2API_REMOTE_PORT:-22}"
 REMOTE_DIR="${GPT2API_REMOTE_DIR:-/opt/gpt2api}"
 HTTP_PORT="${GPT2API_HTTP_PORT:-8080}"
@@ -53,8 +53,8 @@ usage() {
   rollback <backup_id>  回滚到指定备份；可加 --restore-db 一并恢复数据库
 
 选项:
-  --host <host>         远端主机，默认 123.207.53.152；也可写入 deploy/remote-release.env
-  --user <user>         SSH 用户，默认 deploy
+  --host <host>         远端主机，默认 64.83.17.240；也可写入 deploy/remote-release.env
+  --user <user>         SSH 用户，默认 root
   --port <port>         SSH 端口，默认 22
   --remote-dir <dir>    远端项目目录，默认 /opt/gpt2api
   --http-port <port>    健康检查端口，默认 8080

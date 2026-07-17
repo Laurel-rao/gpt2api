@@ -81,10 +81,10 @@ func TestVideoPlaygroundImagePayloadURLPrefersDataURLForAPIYI(t *testing.T) {
 func TestVideoPlaygroundAbsoluteURLKeepsForwardedHostPort(t *testing.T) {
 	c := videoPlaygroundTestContext(t, map[string]string{
 		"X-Forwarded-Proto": "http",
-		"X-Forwarded-Host":  "123.207.53.152:8080",
+		"X-Forwarded-Host":  "gateway.example.test:8080",
 	})
 	got := videoPlaygroundAbsoluteURL(c, nil, "/site-assets/ref.mp4")
-	want := "http://123.207.53.152:8080/site-assets/ref.mp4"
+	want := "http://gateway.example.test:8080/site-assets/ref.mp4"
 	if got != want {
 		t.Fatalf("absolute url = %q, want %q", got, want)
 	}
@@ -93,11 +93,11 @@ func TestVideoPlaygroundAbsoluteURLKeepsForwardedHostPort(t *testing.T) {
 func TestVideoPlaygroundAbsoluteURLAddsForwardedPort(t *testing.T) {
 	c := videoPlaygroundTestContext(t, map[string]string{
 		"X-Forwarded-Proto": "http",
-		"X-Forwarded-Host":  "123.207.53.152",
+		"X-Forwarded-Host":  "gateway.example.test",
 		"X-Forwarded-Port":  "8080",
 	})
 	got := videoPlaygroundAbsoluteURL(c, nil, "/site-assets/ref.mp4")
-	want := "http://123.207.53.152:8080/site-assets/ref.mp4"
+	want := "http://gateway.example.test:8080/site-assets/ref.mp4"
 	if got != want {
 		t.Fatalf("absolute url = %q, want %q", got, want)
 	}
@@ -105,7 +105,7 @@ func TestVideoPlaygroundAbsoluteURLAddsForwardedPort(t *testing.T) {
 
 func TestVideoPlaygroundAbsoluteURLUsesConfiguredBase(t *testing.T) {
 	c := videoPlaygroundTestContext(t, map[string]string{
-		"X-Forwarded-Host": "123.207.53.152:8080",
+		"X-Forwarded-Host": "gateway.example.test:8080",
 	})
 	got := videoPlaygroundAbsoluteURL(c, videoPlaygroundTestSettings{
 		settings.SiteAPIBaseURL: "https://cdn.example.com",

@@ -12,7 +12,7 @@ import (
 	"github.com/432539/gpt2api/internal/upstream/chatgpt"
 )
 
-const defaultBaseURL = "http://123.207.53.152/v1"
+const defaultBaseURL = "http://ai.reeko.net.cn/v1"
 const defaultModel = "gpt-5.4"
 
 type Config struct {
