@@ -23,6 +23,7 @@ import {
   Menu,
   MoreFilled,
   Plus,
+  Setting,
   Upload,
   VideoPause,
   VideoPlay,
@@ -48,6 +49,7 @@ import {
   getVideoWorkflow,
   getVideoWorkflowRevision,
   getVideoWorkflowRun,
+  getVideoWorkflowRuntimeSettings,
   listVideoAssets,
   listVideoWorkflowModels,
   listVideoWorkflowRevisions,
@@ -59,6 +61,7 @@ import {
   signVideoAssetVersion,
   transformVideoAssetVersion,
   updateVideoWorkflow,
+  updateVideoWorkflowRuntimeSettings,
   uploadVideoAsset,
   validateVideoWorkflow,
   type VideoAsset,
@@ -73,6 +76,7 @@ import {
   type VideoWorkflowRevisionListItem,
   type VideoWorkflowRun,
   type VideoWorkflowRunMode,
+  type VideoWorkflowRuntimeSettings,
   type VideoWorkflowTemplate,
   type VideoWorkflowTimelineClip,
   type VideoWorkflowValidationIssue,
@@ -147,6 +151,7 @@ type WorkspaceMenuCommand =
   | 'preview'
   | 'history'
   | 'create_workflow'
+  | 'runtime_settings'
   | 'aspect_9_16'
   | 'aspect_16_9'
   | 'aspect_1_1'
@@ -166,18 +171,42 @@ const RUN_STORAGE_KEY = 'gpt2api.video-workflow-runs'
 const LAYOUT_STORAGE_KEY = 'gpt2api.video-workflow-layout.v2'
 const LOCAL_DRAFT_PREFIX = 'gpt2api.video-workflow-draft.'
 const PENDING_RUN_PREFIX = 'gpt2api.video-workflow-pending-run.'
+const DEFAULT_RUNTIME_SETTINGS: VideoWorkflowRuntimeSettings = {
+  worker_concurrency: 4,
+  text_concurrency: 2,
+  image_concurrency: 2,
+  video_concurrency: 2,
+  compose_concurrency: 1,
+}
+const RUNTIME_SETTING_FIELDS: Array<{
+  key: keyof VideoWorkflowRuntimeSettings
+  label: string
+  min: number
+  max: number
+}> = [
+  { key: 'worker_concurrency', label: '工作流', min: 1, max: 16 },
+  { key: 'text_concurrency', label: '文本', min: 1, max: 16 },
+  { key: 'image_concurrency', label: '图片', min: 1, max: 16 },
+  { key: 'video_concurrency', label: '视频', min: 1, max: 16 },
+  { key: 'compose_concurrency', label: '合成', min: 1, max: 8 },
+]
 
 const router = useRouter()
 const loading = ref(true)
 const saving = ref(false)
 const creating = ref(false)
 const runningAction = ref(false)
+const runtimeSettingsVisible = ref(false)
+const runtimeSettingsLoading = ref(false)
+const runtimeSettingsSaving = ref(false)
 const backendAvailable = ref(true)
 const revisionConflict = ref(false)
 const templates = ref<VideoWorkflowTemplate[]>([])
 const workflows = ref<VideoWorkflow[]>([])
 const assets = ref<VideoAsset[]>([])
 const workflowVideoModels = ref<VideoWorkflowModelOption[]>([])
+const runtimeSettings = reactive<VideoWorkflowRuntimeSettings>({ ...DEFAULT_RUNTIME_SETTINGS })
+const runtimeSettingsDraft = reactive<VideoWorkflowRuntimeSettings>({ ...DEFAULT_RUNTIME_SETTINGS })
 const activeWorkflow = ref<VideoWorkflow | null>(null)
 const graph = ref<VideoWorkflowGraph>(createEmptyVideoWorkflowGraph())
 const activeRun = ref<VideoWorkflowRun | null>(null)
@@ -448,6 +477,7 @@ const canOperateWorkflow = computed(() => Boolean(activeWorkflow.value) && !revi
 const canManualSave = computed(() => canOperateWorkflow.value && !saving.value)
 const saveButtonPending = computed(() => canManualSave.value && dirty.value)
 const outputSettingsLabel = computed(() => `${graph.value.settings.aspect_ratio} · ${graph.value.settings.resolution}`)
+const runtimeSettingsLabel = computed(() => `文${runtimeSettings.text_concurrency} · 图${runtimeSettings.image_concurrency} · 视${runtimeSettings.video_concurrency}`)
 const runStatus = computed(() => ({
   queued: '排队中', running: '生成中', awaiting_character_approval: '待选角色', awaiting_storyboard_approval: '待确认分镜',
   cancel_pending: '停止中', canceled: '已停止', succeeded: '已完成', failed: '运行失败',
@@ -1479,12 +1509,56 @@ async function ensureDefaultWorkflow(options: { silent?: boolean } = {}) {
   }
 }
 
+function applyRuntimeSettings(target: VideoWorkflowRuntimeSettings, source: Partial<VideoWorkflowRuntimeSettings>) {
+  for (const field of RUNTIME_SETTING_FIELDS) {
+    const raw = Number(source[field.key])
+    const value = Number.isFinite(raw) ? Math.round(raw) : DEFAULT_RUNTIME_SETTINGS[field.key]
+    target[field.key] = Math.min(field.max, Math.max(field.min, value))
+  }
+}
+
+async function loadRuntimeSettings() {
+  runtimeSettingsLoading.value = true
+  try {
+    applyRuntimeSettings(runtimeSettings, await getVideoWorkflowRuntimeSettings())
+  } catch {
+    backendAvailable.value = false
+  } finally {
+    runtimeSettingsLoading.value = false
+  }
+}
+
+function openRuntimeSettings() {
+  applyRuntimeSettings(runtimeSettingsDraft, runtimeSettings)
+  runtimeSettingsVisible.value = true
+  if (!runtimeSettingsLoading.value) void loadRuntimeSettings().then(() => {
+    if (runtimeSettingsVisible.value) applyRuntimeSettings(runtimeSettingsDraft, runtimeSettings)
+  })
+}
+
+async function saveRuntimeSettings() {
+  applyRuntimeSettings(runtimeSettingsDraft, runtimeSettingsDraft)
+  runtimeSettingsSaving.value = true
+  try {
+    const next = await updateVideoWorkflowRuntimeSettings({ ...runtimeSettingsDraft })
+    applyRuntimeSettings(runtimeSettings, next)
+    applyRuntimeSettings(runtimeSettingsDraft, next)
+    runtimeSettingsVisible.value = false
+    ElMessage.success('并发设置已生效')
+  } catch (error: any) {
+    ElMessage.error(error?.message || '并发设置保存失败')
+  } finally {
+    runtimeSettingsSaving.value = false
+  }
+}
+
 async function bootstrap() {
   loading.value = true
   try {
     const [templateItems, workflowItems, , modelItems] = await Promise.all([
       listVideoWorkflowTemplates(), listVideoWorkflows(), refreshAssets({ silent: true }).catch(() => {}),
       listVideoWorkflowModels().catch(() => []),
+      loadRuntimeSettings().catch(() => {}),
     ])
     if (componentUnmounted) return
     templates.value = templateItems
@@ -1671,6 +1745,10 @@ function handleWorkspaceMenu(command: WorkspaceMenuCommand) {
   }
   if (command === 'create_workflow') {
     createDialogVisible.value = true
+    return
+  }
+  if (command === 'runtime_settings') {
+    openRuntimeSettings()
     return
   }
   if (command === 'aspect_9_16' || command === 'aspect_16_9' || command === 'aspect_1_1' || command === 'resolution_720p' || command === 'resolution_1080p') {
@@ -3436,6 +3514,16 @@ onBeforeUnmount(() => {
 
           <button
             v-if="!headerCompact"
+            class="runtime-settings-button"
+            type="button"
+            :title="runtimeSettingsLoading ? '并发设置加载中' : '并发控制'"
+            aria-label="并发控制"
+            :aria-busy="runtimeSettingsLoading"
+            @click="openRuntimeSettings"
+          ><Setting /><span>{{ runtimeSettingsLabel }}</span></button>
+
+          <button
+            v-if="!headerCompact"
             class="preview-button"
             type="button"
             :class="hasPreviewOutput ? 'is-ready' : 'is-empty'"
@@ -3489,7 +3577,8 @@ onBeforeUnmount(() => {
                     <el-dropdown-item command="resolution_1080p" class="workspace-menu-item">分辨率 1080p</el-dropdown-item>
                     <el-dropdown-item v-if="headerPhone" command="create_workflow" class="workspace-menu-item" divided><Plus />新建工作流</el-dropdown-item>
                   </template>
-                  <el-dropdown-item command="outline" :divided="true"><span class="workspace-menu-item"><Menu />结构大纲</span></el-dropdown-item>
+                  <el-dropdown-item command="runtime_settings" divided><span class="workspace-menu-item"><Setting />并发控制</span></el-dropdown-item>
+                  <el-dropdown-item command="outline"><span class="workspace-menu-item"><Menu />结构大纲</span></el-dropdown-item>
                   <el-dropdown-item command="layout_edit" divided><span class="workspace-menu-item">布局 · 编辑</span></el-dropdown-item>
                   <el-dropdown-item command="layout_compose"><span class="workspace-menu-item">布局 · 构图</span></el-dropdown-item>
                   <el-dropdown-item command="layout_review"><span class="workspace-menu-item">布局 · 审片</span></el-dropdown-item>
@@ -3731,6 +3820,27 @@ onBeforeUnmount(() => {
         <template #footer><el-button @click="connectionDialogVisible = false">取消</el-button><el-button type="primary" :disabled="!connectionSource" @click="addKeyboardConnection">添加连接</el-button></template>
       </el-dialog>
 
+      <el-dialog v-model="runtimeSettingsVisible" title="并发控制" width="min(520px, calc(100vw - 32px))">
+        <div class="runtime-settings-grid">
+          <label v-for="field in RUNTIME_SETTING_FIELDS" :key="field.key" class="runtime-setting-field">
+            <span>{{ field.label }}</span>
+            <el-input-number
+              v-model="runtimeSettingsDraft[field.key]"
+              :min="field.min"
+              :max="field.max"
+              :step="1"
+              :precision="0"
+              controls-position="right"
+              size="small"
+            />
+          </label>
+        </div>
+        <template #footer>
+          <el-button @click="runtimeSettingsVisible = false">取消</el-button>
+          <el-button type="primary" :loading="runtimeSettingsSaving" @click="saveRuntimeSettings">保存</el-button>
+        </template>
+      </el-dialog>
+
       <el-dialog v-model="createDialogVisible" title="创建视频工作流" width="min(520px, calc(100vw - 32px))">
         <el-form label-position="top" class="create-workflow-form">
           <el-form-item label="工作流名称">
@@ -3888,7 +3998,7 @@ onBeforeUnmount(() => {
 .save-button { height: 28px; padding: 0 10px; color: #334155; background: #fff; border: 1px solid #dbe2ea; border-radius: 5px; cursor: pointer; white-space: nowrap; font-size: 11px; font-weight: 600; flex: 0 0 auto; }.save-button:hover:not(:disabled) { color: #2563eb; background: #eff6ff; border-color: #93c5fd; }.save-button.pending { color: #fff; background: #2563eb; border-color: #2563eb; }.save-button.pending:hover:not(:disabled) { color: #fff; background: #1d4ed8; border-color: #1d4ed8; }.save-button.busy, .save-button:disabled { opacity: .55; cursor: default; }
 .workspace-lifecycle-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; color: #92400e; background: #fffbeb; border-bottom: 1px solid #fde68a; font-size: 12px; }.workspace-lifecycle-banner button { height: 28px; padding: 0 12px; color: #fff; background: #2563eb; border: 0; border-radius: 5px; cursor: pointer; white-space: nowrap; font-size: 11px; }.workspace-lifecycle-banner button:hover { background: #1d4ed8; }
 .workspace-context-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 36px; padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-size: 12px; }.workspace-context-bar-main { min-width: 0; display: flex; align-items: center; gap: 8px; }.workspace-context-bar-main span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.workspace-context-bar-main b { color: #2563eb; flex: 0 0 auto; }.workspace-context-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: #38bdf8; }.workspace-context-bar-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }.context-bar-button { height: 28px; padding: 0 10px; color: #fff; background: #2563eb; border: 0; border-radius: 5px; cursor: pointer; white-space: nowrap; font-size: 11px; }.context-bar-button:hover:not(:disabled) { background: #1d4ed8; }.context-bar-button:disabled { opacity: .55; cursor: default; }.context-bar-button--ghost { color: #1d4ed8; background: transparent; border: 1px solid #93c5fd; }.context-bar-button--ghost:hover:not(:disabled) { color: #1e40af; background: #eff6ff; }.workspace-context-bar.is-conflict, .workspace-context-bar.is-draft { color: #9a3412; background: #fff7ed; border-bottom-color: #fdba74; }.workspace-context-bar.is-conflict .workspace-context-dot, .workspace-context-bar.is-draft .workspace-context-dot { background: #ea580c; }.workspace-context-bar.is-approval { color: #92400e; background: #fffbeb; border-bottom-color: #fde68a; }.workspace-context-bar.is-approval .workspace-context-dot { background: #f59e0b; }.workspace-context-bar.is-running { color: #1e3a5f; background: #eff6ff; border-bottom-color: #bfdbfe; }
-.output-settings-button, .preview-button, .stop-button { height: 30px; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 0 9px; color: #334155; background: #fff; border: 1px solid #dbe2ea; border-radius: 5px; cursor: pointer; white-space: nowrap; font-size: 11px; }.output-settings-button:hover { color: #2563eb; background: #eff6ff; border-color: #93c5fd; }.preview-button.is-empty { color: #64748b; background: #f8fafc; border-color: #e2e8f0; }.preview-button.is-empty:hover { color: #475569; background: #f1f5f9; border-color: #cbd5e1; }.preview-button.is-ready { color: #166534; background: #dcfce7; border-color: #86efac; font-weight: 650; }.preview-button.is-ready:hover { color: #14532d; background: #bbf7d0; border-color: #4ade80; }.preview-button svg, .stop-button svg { width: 14px; }.stop-button { color: #dc2626; }
+.output-settings-button, .runtime-settings-button, .preview-button, .stop-button { height: 30px; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 0 9px; color: #334155; background: #fff; border: 1px solid #dbe2ea; border-radius: 5px; cursor: pointer; white-space: nowrap; font-size: 11px; }.output-settings-button:hover, .runtime-settings-button:hover { color: #2563eb; background: #eff6ff; border-color: #93c5fd; }.runtime-settings-button svg { width: 13px; }.runtime-settings-button[aria-busy="true"] { color: #64748b; background: #f8fafc; }.preview-button.is-empty { color: #64748b; background: #f8fafc; border-color: #e2e8f0; }.preview-button.is-empty:hover { color: #475569; background: #f1f5f9; border-color: #cbd5e1; }.preview-button.is-ready { color: #166534; background: #dcfce7; border-color: #86efac; font-weight: 650; }.preview-button.is-ready:hover { color: #14532d; background: #bbf7d0; border-color: #4ade80; }.preview-button svg, .stop-button svg { width: 14px; }.stop-button { color: #dc2626; }
 .output-settings :deep(.el-dropdown-menu__item.is-active) { color: #1d4ed8; font-weight: 650; }
 .generate-button { height: 30px; flex: 0 0 auto; }.generate-button :deep(.el-button) { height: 30px; border-radius: 5px; }.generate-button :deep(svg) { width: 12px; }
 .workspace-grid { position: relative; height: calc(100% - 56px); display: grid; grid-template-columns: var(--left-panel) minmax(0, 1fr) var(--right-panel); grid-template-areas: "library canvas inspector"; }
@@ -3900,6 +4010,7 @@ onBeforeUnmount(() => {
 .panel-restore { position: absolute; z-index: 21; height: 32px; display: flex; align-items: center; gap: 6px; padding: 0 10px; color: #334155; background: rgba(255, 255, 255, .94); border: 1px solid #cbd5e1; border-radius: 5px; box-shadow: 0 4px 14px rgba(15, 23, 42, .14); cursor: pointer; font-size: 11px; backdrop-filter: blur(8px); }.panel-restore:hover { color: #2563eb; background: #eff6ff; border-color: #93c5fd; }.panel-restore svg { width: 13px; }.library-restore { top: 12px; left: 12px; }.inspector-restore { top: 12px; right: 12px; }
 .undo-toast { position: fixed; z-index: 120; left: 50%; bottom: 28px; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; padding: 10px 14px; color: #f8fafc; background: #1e293b; border-radius: 6px; box-shadow: 0 12px 28px rgba(15, 23, 42, .25); font-size: 12px; }.undo-toast button { color: #93c5fd; background: transparent; border: 0; cursor: pointer; font-weight: 650; }.undo-toast span { color: #94a3b8; font-size: 10px; }.toast-enter-active, .toast-leave-active { transition: opacity .18s ease, transform .18s ease; }.toast-enter-from, .toast-leave-to { opacity: 0; transform: translate(-50%, 8px); }
 .save-live { position: fixed; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.runtime-settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }.runtime-setting-field { min-width: 0; display: grid; gap: 6px; color: #475569; font-size: 12px; }.runtime-setting-field span { font-weight: 650; }.runtime-setting-field :deep(.el-input-number) { width: 100%; }
 .create-workflow-form, .template-form-item :deep(.el-form-item__content) { min-width: 0; }.template-form-item :deep(.el-form-item__content) { display: block; }
 .template-list { width: 100%; min-width: 0; display: grid; gap: 8px; }.template-list :deep(.template-option.el-radio) { width: 100%; max-width: 100%; box-sizing: border-box; height: auto; min-height: 58px; align-items: flex-start; margin: 0; padding: 10px 12px; white-space: normal; }.template-list :deep(.el-radio__input) { flex: 0 0 auto; padding-top: 3px; }.template-list :deep(.el-radio__label) { min-width: 0; display: flex; flex-direction: column; gap: 3px; line-height: 1.45; white-space: normal; }.template-list b, .template-list span { min-width: 0; overflow-wrap: anywhere; }.template-list span, .dialog-empty { color: #64748b; font-size: 11px; }.dialog-empty { padding: 20px; }
 .candidate-roles { display: grid; gap: 16px; max-height: 62vh; overflow: auto; }.candidate-roles section header { display: flex; justify-content: space-between; margin-bottom: 8px; }.candidate-roles section header span { color: #64748b; font-size: 11px; }.candidate-roles section > div { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }.candidate-roles button { position: relative; height: 230px; overflow: hidden; color: #64748b; background: #f8fafc; border: 2px solid transparent; border-radius: 5px; }.candidate-roles button.selected { border-color: #2563eb; }.candidate-roles img { width: 100%; height: 100%; object-fit: contain; }.candidate-roles button > svg { position: absolute; right: 8px; top: 8px; width: 24px; padding: 4px; color: #fff; background: #2563eb; border-radius: 50%; }.storyboard-editor :deep(textarea) { font-family: "SFMono-Regular", Consolas, monospace; font-size: 11px; line-height: 1.6; }.json-error { margin-right: 12px; color: #dc2626; font-size: 11px; }
@@ -3916,6 +4027,7 @@ button, select { font-family: inherit; } button:focus-visible, select:focus-visi
   .header-actions { gap: 4px; }
   .workspace-header { gap: 6px; padding-inline: 8px; }
   .workspace-context-bar { flex-wrap: wrap; gap: 8px; }
+  .runtime-settings-grid { grid-template-columns: 1fr; }
   .workspace-grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: "canvas"; }
   .workflow-library, .workflow-inspector, .left-resizer, .right-resizer, .library-restore, .inspector-restore { display: none !important; }
 }

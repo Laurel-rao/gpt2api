@@ -145,6 +145,7 @@ type VideoWorkflowConfig struct {
 	SigningSecret      string `mapstructure:"signing_secret"`
 	PublicBaseURL      string `mapstructure:"public_base_url"`
 	WorkerConcurrency  int    `mapstructure:"worker_concurrency"`
+	TextConcurrency    int    `mapstructure:"text_concurrency"`
 	ImageConcurrency   int    `mapstructure:"image_concurrency"`
 	VideoConcurrency   int    `mapstructure:"video_concurrency"`
 	ComposeConcurrency int    `mapstructure:"compose_concurrency"`
@@ -318,6 +319,7 @@ func setVideoWorkflowDefaults(v *viper.Viper) {
 	v.SetDefault("video_workflow.public_base_url", "")
 	_ = v.BindEnv("video_workflow.public_base_url")
 	v.SetDefault("video_workflow.worker_concurrency", 4)
+	v.SetDefault("video_workflow.text_concurrency", 2)
 	v.SetDefault("video_workflow.image_concurrency", 2)
 	v.SetDefault("video_workflow.video_concurrency", 2)
 	v.SetDefault("video_workflow.compose_concurrency", 1)
@@ -346,6 +348,9 @@ func normalizeVideoWorkflowConfig(c *VideoWorkflowConfig) {
 	}
 	if c.WorkerConcurrency <= 0 {
 		c.WorkerConcurrency = 4
+	}
+	if c.TextConcurrency <= 0 {
+		c.TextConcurrency = 2
 	}
 	if c.ImageConcurrency <= 0 {
 		c.ImageConcurrency = 2

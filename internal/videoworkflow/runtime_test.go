@@ -927,8 +927,8 @@ func TestBuildNodePromptBackgroundStripsPerformanceFields(t *testing.T) {
 		"props":["静置手札","水雲書肆门额"]
 	}`)
 	background := Node{
-		ID:   "background_1",
-		Type: NodeBackground,
+		ID:     "background_1",
+		Type:   NodeBackground,
 		Config: json.RawMessage(`{"prompt":"二维国风动画场景背景；江南石桥清晨；无人空镜；9:16单镜头、非拼贴。"}`),
 	}
 	prompt := buildNodePrompt(background, []Edge{{Source: "scene_1", Target: "background_1"}}, map[string]runtimeNodeOutput{
@@ -1741,7 +1741,7 @@ func TestRuntimeGlobalSlotsCoordinateInstancesAndRecoverExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, releaseA, err := runtimeA.acquireNodeExecutionSlot(context.Background(), runA, nodeA, "image", runtimeA.imageSlots, 1)
+	_, releaseA, err := runtimeA.acquireNodeExecutionSlot(context.Background(), runA, nodeA, "image", runtimeA.imageSlots)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1751,7 +1751,7 @@ func TestRuntimeGlobalSlotsCoordinateInstancesAndRecoverExpiry(t *testing.T) {
 	}
 	acquired := make(chan acquiredSlot, 1)
 	go func() {
-		_, release, err := runtimeB.acquireNodeExecutionSlot(context.Background(), runB, nodeB, "image", runtimeB.imageSlots, 1)
+		_, release, err := runtimeB.acquireNodeExecutionSlot(context.Background(), runB, nodeB, "image", runtimeB.imageSlots)
 		acquired <- acquiredSlot{release: release, err: err}
 	}()
 	select {
@@ -1789,10 +1789,82 @@ func TestRuntimeGlobalSlotsCoordinateInstancesAndRecoverExpiry(t *testing.T) {
 	}
 }
 
+func TestRuntimeTextNodeUsesConfiguredGlobalSlot(t *testing.T) {
+	store := newMemoryRuntimeStore()
+	lease := time.Now().Add(time.Minute)
+	runA := &Run{ID: "text-slot-run-a", UserID: 7, Status: RunRunning, LeaseOwner: "worker-a", LeaseExpiresAt: &lease}
+	runB := &Run{ID: "text-slot-run-b", UserID: 7, Status: RunRunning, LeaseOwner: "worker-b", LeaseExpiresAt: &lease}
+	nodeA := &NodeRun{ID: "text-slot-node-a", RunID: runA.ID, NodeID: "script", Status: NodeRunRunning}
+	nodeB := &NodeRun{ID: "text-slot-node-b", RunID: runB.ID, NodeID: "script", Status: NodeRunRunning}
+	store.runs[runA.ID], store.runs[runB.ID] = runA, runB
+	store.nodes[nodeA.ID], store.nodes[nodeB.ID] = nodeA, nodeB
+	textGen := &fakeRuntimeTextGenerator{output: json.RawMessage(`{"scenes":[{"title":"ok"}]}`), cost: 3}
+	runtimeA, err := NewRuntime(RuntimeConfig{Store: store, WorkerID: "worker-a", EstimateSecret: "secret", TextConcurrency: 1, TextGenerator: textGen})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeB, err := NewRuntime(RuntimeConfig{Store: store, WorkerID: "worker-b", EstimateSecret: "secret", TextConcurrency: 1, TextGenerator: textGen})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, releaseA, err := runtimeA.acquireNodeExecutionSlot(context.Background(), runA, nodeA, "text", runtimeA.textSlots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blockedCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := runtimeB.executeScriptNode(blockedCtx, runB, Node{ID: "script", Type: NodeScript}, nodeB, nil, nil); !errors.Is(err, context.DeadlineExceeded) {
+		releaseA()
+		t.Fatalf("script node did not wait for text slot: %v", err)
+	}
+	if calls := textGen.callCount(); calls != 0 {
+		releaseA()
+		t.Fatalf("text generator was called while text slot was unavailable: %d", calls)
+	}
+	releaseA()
+	result, err := runtimeB.executeScriptNode(context.Background(), runB, Node{ID: "script", Type: NodeScript}, nodeB, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls := textGen.callCount(); calls != 1 {
+		t.Fatalf("text generator calls=%d", calls)
+	}
+	if result.CreditCost != 3 || !json.Valid(result.Output) {
+		t.Fatalf("unexpected script result: %+v", result)
+	}
+}
+
 type fakeRuntimeImageGenerator struct {
 	mu    sync.Mutex
 	calls int
 	data  []byte
+}
+
+type fakeRuntimeTextGenerator struct {
+	mu     sync.Mutex
+	calls  int
+	output json.RawMessage
+	cost   int64
+}
+
+func (f *fakeRuntimeTextGenerator) GenerateText(ctx context.Context, _ TextGenerationRequest) (json.RawMessage, int64, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
+	f.mu.Lock()
+	f.calls++
+	f.mu.Unlock()
+	output := f.output
+	if len(output) == 0 {
+		output = json.RawMessage(`{"scenes":[]}`)
+	}
+	return output, f.cost, nil
+}
+
+func (f *fakeRuntimeTextGenerator) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
 }
 
 type fakeRuntimeVideoGenerator struct {

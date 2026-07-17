@@ -198,6 +198,8 @@ func New(d *Deps) *gin.Engine {
 				{
 					vg.GET("/templates", d.VideoWorkflowH.ListTemplates)
 					vg.GET("/models", d.VideoWorkflowH.ListWorkflowModels)
+					vg.GET("/runtime-settings", d.VideoWorkflowH.GetRuntimeSettings)
+					vg.PUT("/runtime-settings", d.VideoWorkflowH.UpdateRuntimeSettings)
 					vg.POST("", d.VideoWorkflowH.CreateWorkflow)
 					vg.GET("", d.VideoWorkflowH.ListWorkflows)
 					vg.GET("/:id", d.VideoWorkflowH.GetWorkflow)

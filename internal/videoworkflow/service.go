@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
+
+	systemsettings "github.com/432539/gpt2api/internal/settings"
 )
 
 type RunDispatcher interface {
@@ -67,6 +70,7 @@ type Service struct {
 	store         Store
 	dispatcher    RunDispatcher
 	runtime       RunRuntime
+	settings      *systemsettings.Service
 	assetRoot     string
 	mediaSigner   *MediaSigner
 	composer      *Composer
@@ -83,11 +87,42 @@ func (s *Service) SetAcceptNewRuns(accept bool) { s.acceptNewRuns.Store(accept) 
 
 func (s *Service) AcceptNewRuns() bool { return s.acceptNewRuns.Load() }
 
+func (s *Service) SetSettings(settingsSvc *systemsettings.Service) { s.settings = settingsSvc }
+
 func (s *Service) SetDispatcher(dispatcher RunDispatcher) { s.dispatcher = dispatcher }
 
 func (s *Service) SetRuntime(runtime RunRuntime) {
 	s.runtime = runtime
 	s.dispatcher = runtime
+}
+
+func (s *Service) RuntimeSettings() RuntimeConcurrency {
+	if runtime, ok := s.runtime.(interface{ Concurrency() RuntimeConcurrency }); ok {
+		return runtime.Concurrency()
+	}
+	return NormalizeRuntimeConcurrency(RuntimeConcurrency{})
+}
+
+func (s *Service) UpdateRuntimeSettings(ctx context.Context, next RuntimeConcurrency) (RuntimeConcurrency, error) {
+	next = NormalizeRuntimeConcurrency(next)
+	if s.settings != nil {
+		updates := map[string]string{
+			systemsettings.VideoWorkflowWorkerConcurrency:  strconv.Itoa(next.WorkerConcurrency),
+			systemsettings.VideoWorkflowTextConcurrency:    strconv.Itoa(next.TextConcurrency),
+			systemsettings.VideoWorkflowImageConcurrency:   strconv.Itoa(next.ImageConcurrency),
+			systemsettings.VideoWorkflowVideoConcurrency:   strconv.Itoa(next.VideoConcurrency),
+			systemsettings.VideoWorkflowComposeConcurrency: strconv.Itoa(next.ComposeConcurrency),
+		}
+		if err := s.settings.Set(ctx, updates); err != nil {
+			return RuntimeConcurrency{}, err
+		}
+	}
+	if runtime, ok := s.runtime.(interface {
+		UpdateConcurrency(RuntimeConcurrency) RuntimeConcurrency
+	}); ok {
+		return runtime.UpdateConcurrency(next), nil
+	}
+	return next, nil
 }
 
 func (s *Service) EnsureBuiltinTemplate(ctx context.Context) error {

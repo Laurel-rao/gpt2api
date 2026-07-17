@@ -249,6 +249,14 @@ export interface VideoWorkflowModelOption {
   label: string
 }
 
+export interface VideoWorkflowRuntimeSettings {
+  worker_concurrency: number
+  text_concurrency: number
+  image_concurrency: number
+  video_concurrency: number
+  compose_concurrency: number
+}
+
 export interface VideoAssetVersion {
   id: string
   version: number
@@ -303,6 +311,14 @@ export async function listVideoWorkflowTemplates(): Promise<VideoWorkflowTemplat
 
 export async function listVideoWorkflowModels(): Promise<VideoWorkflowModelOption[]> {
   return unwrapItems<VideoWorkflowModelOption>(await http.get('/api/me/video-workflows/models', { silent: true } as any))
+}
+
+export function getVideoWorkflowRuntimeSettings(): Promise<VideoWorkflowRuntimeSettings> {
+  return http.get('/api/me/video-workflows/runtime-settings', { silent: true } as any)
+}
+
+export function updateVideoWorkflowRuntimeSettings(settings: VideoWorkflowRuntimeSettings): Promise<VideoWorkflowRuntimeSettings> {
+  return http.put('/api/me/video-workflows/runtime-settings', settings)
 }
 
 export async function listVideoWorkflows(): Promise<VideoWorkflow[]> {

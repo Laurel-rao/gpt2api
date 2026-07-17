@@ -270,10 +270,19 @@ type RuntimeConfig struct {
 	ImageCredits       int64
 	TextCredits        int64
 	VideoCredits       int64
+	TextConcurrency    int
 	ImageConcurrency   int
 	VideoConcurrency   int
 	ComposeConcurrency int
 	WorkerConcurrency  int
+}
+
+type RuntimeConcurrency struct {
+	WorkerConcurrency  int `json:"worker_concurrency"`
+	TextConcurrency    int `json:"text_concurrency"`
+	ImageConcurrency   int `json:"image_concurrency"`
+	VideoConcurrency   int `json:"video_concurrency"`
+	ComposeConcurrency int `json:"compose_concurrency"`
 }
 
 type Runtime struct {
@@ -282,14 +291,81 @@ type Runtime struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	wg           sync.WaitGroup
-	imageSlots   chan struct{}
-	videoSlots   chan struct{}
-	composeSlots chan struct{}
-	runSlots     chan struct{}
+	textSlots    *runtimeLimiter
+	imageSlots   *runtimeLimiter
+	videoSlots   *runtimeLimiter
+	composeSlots *runtimeLimiter
+	runSlots     *runtimeLimiter
 	mu           sync.Mutex
 	runCancels   map[string]context.CancelFunc
 	started      bool
 	closed       bool
+}
+
+type runtimeLimiter struct {
+	mu       sync.Mutex
+	capacity int
+	used     int
+	notify   chan struct{}
+}
+
+func newRuntimeLimiter(capacity int) *runtimeLimiter {
+	return &runtimeLimiter{capacity: defaultPositive(capacity, 1), notify: make(chan struct{})}
+}
+
+func (l *runtimeLimiter) Acquire(ctx context.Context) error {
+	for {
+		l.mu.Lock()
+		if l.used < l.capacity {
+			l.used++
+			l.mu.Unlock()
+			return nil
+		}
+		notify := l.notify
+		l.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-notify:
+		}
+	}
+}
+
+func (l *runtimeLimiter) TryAcquire() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.used >= l.capacity {
+		return false
+	}
+	l.used++
+	return true
+}
+
+func (l *runtimeLimiter) Release() {
+	l.mu.Lock()
+	if l.used > 0 {
+		l.used--
+	}
+	l.broadcastLocked()
+	l.mu.Unlock()
+}
+
+func (l *runtimeLimiter) Resize(capacity int) {
+	l.mu.Lock()
+	l.capacity = defaultPositive(capacity, 1)
+	l.broadcastLocked()
+	l.mu.Unlock()
+}
+
+func (l *runtimeLimiter) Capacity() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.capacity
+}
+
+func (l *runtimeLimiter) broadcastLocked() {
+	close(l.notify)
+	l.notify = make(chan struct{})
 }
 
 func NewRuntime(config RuntimeConfig) (*Runtime, error) {
@@ -323,6 +399,7 @@ func NewRuntime(config RuntimeConfig) (*Runtime, error) {
 	if config.VideoCredits <= 0 {
 		config.VideoCredits = 10
 	}
+	config.TextConcurrency = defaultPositive(config.TextConcurrency, 2)
 	config.ImageConcurrency = defaultPositive(config.ImageConcurrency, 2)
 	config.VideoConcurrency = defaultPositive(config.VideoConcurrency, 2)
 	config.ComposeConcurrency = defaultPositive(config.ComposeConcurrency, 1)
@@ -330,8 +407,8 @@ func NewRuntime(config RuntimeConfig) (*Runtime, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Runtime{
 		config: config, wake: make(chan struct{}, 1), ctx: ctx, cancel: cancel,
-		imageSlots: make(chan struct{}, config.ImageConcurrency), videoSlots: make(chan struct{}, config.VideoConcurrency),
-		composeSlots: make(chan struct{}, config.ComposeConcurrency), runSlots: make(chan struct{}, config.WorkerConcurrency),
+		textSlots: newRuntimeLimiter(config.TextConcurrency), imageSlots: newRuntimeLimiter(config.ImageConcurrency), videoSlots: newRuntimeLimiter(config.VideoConcurrency),
+		composeSlots: newRuntimeLimiter(config.ComposeConcurrency), runSlots: newRuntimeLimiter(config.WorkerConcurrency),
 		runCancels: make(map[string]context.CancelFunc),
 	}, nil
 }
@@ -423,16 +500,15 @@ func (r *Runtime) loop() {
 
 func (r *Runtime) claimAvailable() {
 	for {
-		select {
-		case r.runSlots <- struct{}{}:
-		case <-r.ctx.Done():
+		if r.ctx.Err() != nil {
 			return
-		default:
+		}
+		if !r.runSlots.TryAcquire() {
 			return
 		}
 		run, err := r.config.Store.ClaimNextRun(r.ctx, r.config.WorkerID, RuntimeLeaseDuration)
 		if err != nil {
-			<-r.runSlots
+			r.runSlots.Release()
 			if errors.Is(err, ErrNotFound) {
 				return
 			}
@@ -441,7 +517,7 @@ func (r *Runtime) claimAvailable() {
 		r.wg.Add(1)
 		go func(run *Run) {
 			defer r.wg.Done()
-			defer func() { <-r.runSlots; r.notify() }()
+			defer func() { r.runSlots.Release(); r.notify() }()
 			r.executeClaimed(run)
 		}(run)
 	}
@@ -867,25 +943,45 @@ func topologicalNodes(graph Graph, selected map[string]bool) ([]Node, error) {
 	return out, nil
 }
 
-func acquireSlot(ctx context.Context, slot chan struct{}) error {
-	select {
-	case slot <- struct{}{}:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+func (r *Runtime) Concurrency() RuntimeConcurrency {
+	return RuntimeConcurrency{
+		WorkerConcurrency:  r.runSlots.Capacity(),
+		TextConcurrency:    r.textSlots.Capacity(),
+		ImageConcurrency:   r.imageSlots.Capacity(),
+		VideoConcurrency:   r.videoSlots.Capacity(),
+		ComposeConcurrency: r.composeSlots.Capacity(),
 	}
 }
 
-func releaseSlot(slot chan struct{}) { <-slot }
+func (r *Runtime) UpdateConcurrency(next RuntimeConcurrency) RuntimeConcurrency {
+	next = NormalizeRuntimeConcurrency(next)
+	r.runSlots.Resize(next.WorkerConcurrency)
+	r.textSlots.Resize(next.TextConcurrency)
+	r.imageSlots.Resize(next.ImageConcurrency)
+	r.videoSlots.Resize(next.VideoConcurrency)
+	r.composeSlots.Resize(next.ComposeConcurrency)
+	r.notify()
+	return r.Concurrency()
+}
 
-func (r *Runtime) acquireNodeExecutionSlot(ctx context.Context, run *Run, state *NodeRun, kind string, local chan struct{}, capacity int) (context.Context, func(), error) {
-	if err := acquireSlot(ctx, local); err != nil {
+func NormalizeRuntimeConcurrency(value RuntimeConcurrency) RuntimeConcurrency {
+	value.WorkerConcurrency = defaultPositive(value.WorkerConcurrency, 4)
+	value.TextConcurrency = defaultPositive(value.TextConcurrency, 2)
+	value.ImageConcurrency = defaultPositive(value.ImageConcurrency, 2)
+	value.VideoConcurrency = defaultPositive(value.VideoConcurrency, 2)
+	value.ComposeConcurrency = defaultPositive(value.ComposeConcurrency, 1)
+	return value
+}
+
+func (r *Runtime) acquireNodeExecutionSlot(ctx context.Context, run *Run, state *NodeRun, kind string, local *runtimeLimiter) (context.Context, func(), error) {
+	if err := local.Acquire(ctx); err != nil {
 		return nil, nil, err
 	}
+	capacity := local.Capacity()
 	releaseLocal := true
 	defer func() {
 		if releaseLocal {
-			releaseSlot(local)
+			local.Release()
 		}
 	}()
 	token := strings.Join([]string{r.config.WorkerID, run.ID, state.ID, NewRunID()}, ":")
@@ -937,7 +1033,7 @@ func (r *Runtime) acquireNodeExecutionSlot(ctx context.Context, run *Run, state 
 			releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer releaseCancel()
 			_ = r.config.Store.ReleaseRuntimeSlot(releaseCtx, kind, index, token)
-			releaseSlot(local)
+			local.Release()
 		})
 	}
 	return slotCtx, release, nil

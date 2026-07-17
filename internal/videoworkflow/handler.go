@@ -47,6 +47,24 @@ func (h *Handler) ListWorkflowModels(c *gin.Context) {
 	resp.OK(c, gin.H{"items": items})
 }
 
+func (h *Handler) GetRuntimeSettings(c *gin.Context) {
+	resp.OK(c, h.service.RuntimeSettings())
+}
+
+func (h *Handler) UpdateRuntimeSettings(c *gin.Context) {
+	var request RuntimeConcurrency
+	if err := c.ShouldBindJSON(&request); err != nil {
+		abortBadRequest(c, err.Error())
+		return
+	}
+	current, err := h.service.UpdateRuntimeSettings(c.Request.Context(), request)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	resp.OK(c, current)
+}
+
 func (h *Handler) CreateWorkflow(c *gin.Context) {
 	var request struct {
 		TemplateID uint64 `json:"template_id" binding:"required"`

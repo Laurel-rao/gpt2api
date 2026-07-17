@@ -17,9 +17,10 @@ import (
 // Service 带内存缓存的只读/可写访问层。
 // 所有读走本地 map,写走 DB + 原子替换缓存。
 type Service struct {
-	dao   *DAO
-	mu    sync.RWMutex
-	cache map[string]string // 最新快照;不直接暴露,通过 GetXxx 读
+	dao       *DAO
+	mu        sync.RWMutex
+	cache     map[string]string // 最新快照;不直接暴露,通过 GetXxx 读
+	persisted map[string]bool
 }
 
 var _ videogen.ConfigProvider = (*Service)(nil)
@@ -36,6 +37,10 @@ func (s *Service) Reload(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	persisted := make(map[string]bool, len(m))
+	for key := range m {
+		persisted[key] = true
+	}
 	// 补齐 Defs 默认值(DB 里缺某个 key 时)
 	for _, d := range Defs {
 		if _, ok := m[d.Key]; !ok {
@@ -44,6 +49,7 @@ func (s *Service) Reload(ctx context.Context) error {
 	}
 	s.mu.Lock()
 	s.cache = m
+	s.persisted = persisted
 	s.mu.Unlock()
 	return nil
 }
@@ -107,12 +113,22 @@ func (s *Service) Set(ctx context.Context, in map[string]string) error {
 	s.mu.Lock()
 	for k, v := range filtered {
 		s.cache[k] = v
+		if s.persisted == nil {
+			s.persisted = map[string]bool{}
+		}
+		s.persisted[k] = true
 	}
 	s.mu.Unlock()
 	return nil
 }
 
 // --- typed getters ---
+
+func (s *Service) Has(key string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.persisted[key]
+}
 
 func (s *Service) GetString(key string) string {
 	s.mu.RLock()

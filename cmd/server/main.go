@@ -320,10 +320,12 @@ func main() {
 		videoWorkflowDAO := videoworkflow.NewDAO(sqldb)
 		videoWorkflowSvc := videoworkflow.NewService(videoWorkflowDAO)
 		videoWorkflowSvc.SetAcceptNewRuns(cfg.VideoWorkflow.AcceptNewRuns)
+		videoWorkflowSvc.SetSettings(settingsSvc)
 		videoWorkflowSvc.ConfigureMedia(cfg.VideoWorkflow.AssetDir, workflowSecret, composer)
 		if err := videoWorkflowSvc.EnsureBuiltinTemplate(context.Background()); err != nil {
 			log.Fatal("video workflow template init", zap.Error(err))
 		}
+		workflowConcurrency := videoWorkflowConcurrencyFromSettings(settingsSvc, cfg.VideoWorkflow)
 		videoWorkflowRuntime, err = videoworkflow.NewRuntime(videoworkflow.RuntimeConfig{
 			Store: videoWorkflowDAO, WorkerID: "video-workflow-" + uuid.NewString(),
 			EstimateSecret: workflowSecret, AssetRoot: cfg.VideoWorkflow.AssetDir, PublicBaseURL: cfg.VideoWorkflow.PublicBaseURL,
@@ -334,8 +336,8 @@ func main() {
 			Billing:        billEngine, Usage: videoWorkflowUsageLogger{logger: usageLogger},
 			ImageCredits: cfg.VideoWorkflow.ImageCredits, TextCredits: cfg.VideoWorkflow.TextCredits,
 			VideoCredits:      cfg.VideoWorkflow.VideoCredits,
-			WorkerConcurrency: cfg.VideoWorkflow.WorkerConcurrency, ImageConcurrency: cfg.VideoWorkflow.ImageConcurrency,
-			VideoConcurrency: cfg.VideoWorkflow.VideoConcurrency, ComposeConcurrency: cfg.VideoWorkflow.ComposeConcurrency,
+			WorkerConcurrency: workflowConcurrency.WorkerConcurrency, TextConcurrency: workflowConcurrency.TextConcurrency, ImageConcurrency: workflowConcurrency.ImageConcurrency,
+			VideoConcurrency: workflowConcurrency.VideoConcurrency, ComposeConcurrency: workflowConcurrency.ComposeConcurrency,
 		})
 		if err != nil {
 			log.Fatal("video workflow runtime init", zap.Error(err))
@@ -345,11 +347,13 @@ func main() {
 		videoWorkflowH.SetWorkflowModels(settingsSvc.VideoGenWorkflowModels)
 		videoWorkflowRuntime.Start()
 		defer videoWorkflowRuntime.Close()
+		workflowConcurrency = videoWorkflowRuntime.Concurrency()
 		log.Info("video workflow runtime ready",
-			zap.Int("workers", cfg.VideoWorkflow.WorkerConcurrency),
-			zap.Int("image_concurrency", cfg.VideoWorkflow.ImageConcurrency),
-			zap.Int("video_concurrency", cfg.VideoWorkflow.VideoConcurrency),
-			zap.Int("compose_concurrency", cfg.VideoWorkflow.ComposeConcurrency))
+			zap.Int("workers", workflowConcurrency.WorkerConcurrency),
+			zap.Int("text_concurrency", workflowConcurrency.TextConcurrency),
+			zap.Int("image_concurrency", workflowConcurrency.ImageConcurrency),
+			zap.Int("video_concurrency", workflowConcurrency.VideoConcurrency),
+			zap.Int("compose_concurrency", workflowConcurrency.ComposeConcurrency))
 	}
 
 	// 把 settings 注入到其它受控业务(可热更)
@@ -568,4 +572,31 @@ func (r *accountProxyResolver) AuthToken(ctx context.Context, accountID uint64) 
 // ProxyURL 给图片代理端点用:等价于 ProxyURLForAccount。
 func (r *accountProxyResolver) ProxyURL(ctx context.Context, accountID uint64) string {
 	return r.ProxyURLForAccount(ctx, accountID)
+}
+
+func videoWorkflowConcurrencyFromSettings(settingsSvc *settings.Service, cfg config.VideoWorkflowConfig) videoworkflow.RuntimeConcurrency {
+	concurrency := videoworkflow.RuntimeConcurrency{
+		WorkerConcurrency:  cfg.WorkerConcurrency,
+		TextConcurrency:    cfg.TextConcurrency,
+		ImageConcurrency:   cfg.ImageConcurrency,
+		VideoConcurrency:   cfg.VideoConcurrency,
+		ComposeConcurrency: cfg.ComposeConcurrency,
+	}
+	if settingsSvc == nil {
+		return videoworkflow.NormalizeRuntimeConcurrency(concurrency)
+	}
+	apply := func(key string, target *int) {
+		if !settingsSvc.Has(key) {
+			return
+		}
+		if value := int(settingsSvc.GetInt(key)); value > 0 {
+			*target = value
+		}
+	}
+	apply(settings.VideoWorkflowWorkerConcurrency, &concurrency.WorkerConcurrency)
+	apply(settings.VideoWorkflowTextConcurrency, &concurrency.TextConcurrency)
+	apply(settings.VideoWorkflowImageConcurrency, &concurrency.ImageConcurrency)
+	apply(settings.VideoWorkflowVideoConcurrency, &concurrency.VideoConcurrency)
+	apply(settings.VideoWorkflowComposeConcurrency, &concurrency.ComposeConcurrency)
+	return videoworkflow.NormalizeRuntimeConcurrency(concurrency)
 }

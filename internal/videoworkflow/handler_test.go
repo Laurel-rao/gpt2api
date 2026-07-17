@@ -29,6 +29,8 @@ func TestHandler_WorkflowAndRunEndpoints(t *testing.T) {
 	router := gin.New()
 	router.Use(func(c *gin.Context) { c.Set(middleware.CtxUserID, uint64(7)); c.Next() })
 	router.GET("/templates", handler.ListTemplates)
+	router.GET("/runtime-settings", handler.GetRuntimeSettings)
+	router.PUT("/runtime-settings", handler.UpdateRuntimeSettings)
 	router.POST("/workflows", handler.CreateWorkflow)
 	router.GET("/workflows", handler.ListWorkflows)
 	router.GET("/workflows/:id", handler.GetWorkflow)
@@ -45,6 +47,8 @@ func TestHandler_WorkflowAndRunEndpoints(t *testing.T) {
 	router.POST("/runs/:run_id/approve", handler.ApproveRun)
 
 	assertHTTP(t, router, http.MethodGet, "/templates", nil, http.StatusOK)
+	assertHTTP(t, router, http.MethodGet, "/runtime-settings", nil, http.StatusOK)
+	assertHTTP(t, router, http.MethodPut, "/runtime-settings", RuntimeConcurrency{WorkerConcurrency: 5, TextConcurrency: 3, ImageConcurrency: 4, VideoConcurrency: 2, ComposeConcurrency: 1}, http.StatusOK)
 	assertHTTP(t, router, http.MethodGet, "/workflows", nil, http.StatusOK)
 	assertHTTP(t, router, http.MethodGet, "/workflows/"+workflow.ID, nil, http.StatusOK)
 	assertHTTP(t, router, http.MethodPost, "/workflows/"+workflow.ID+"/validate", nil, http.StatusOK)

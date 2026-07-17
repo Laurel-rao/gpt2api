@@ -107,6 +107,7 @@ video_workflow:
   signing_secret: ""                 # 生产环境用 GPT2API_VIDEO_WORKFLOW_SIGNING_SECRET 注入至少 32 字节随机值
   public_base_url: ""                 # 生产必填：上游可访问的真实公网 http(s) 源；example.com/localhost 会被拒绝
   worker_concurrency: 4
+  text_concurrency: 2
   image_concurrency: 2
   video_concurrency: 2
   compose_concurrency: 1

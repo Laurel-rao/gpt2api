@@ -45,6 +45,28 @@ func TestService_EnsureTemplateAndEstimate(t *testing.T) {
 	}
 }
 
+func TestService_UpdateRuntimeSettingsAppliesRuntimeConcurrency(t *testing.T) {
+	service := NewService(newFakeStore(t))
+	runtime := &fakeRuntime{}
+	service.SetRuntime(runtime)
+	next, err := service.UpdateRuntimeSettings(context.Background(), RuntimeConcurrency{
+		WorkerConcurrency:  6,
+		TextConcurrency:    3,
+		ImageConcurrency:   4,
+		VideoConcurrency:   5,
+		ComposeConcurrency: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.TextConcurrency != 3 || next.ImageConcurrency != 4 || next.VideoConcurrency != 5 || next.ComposeConcurrency != 2 || next.WorkerConcurrency != 6 {
+		t.Fatalf("unexpected concurrency: %+v", next)
+	}
+	if runtime.concurrency != next {
+		t.Fatalf("runtime concurrency not updated: %+v", runtime.concurrency)
+	}
+}
+
 func TestService_ReadDeleteAndValidationWrappers(t *testing.T) {
 	store := newFakeStore(t)
 	service := NewService(store)
@@ -717,10 +739,11 @@ func (f *fakeStore) UpdateRunStatus(_ context.Context, id string, from, to RunSt
 }
 
 type fakeRuntime struct {
-	dispatched *Run
-	canceled   *Run
-	characters CharacterApproval
-	storyboard StoryboardApproval
+	dispatched  *Run
+	canceled    *Run
+	characters  CharacterApproval
+	storyboard  StoryboardApproval
+	concurrency RuntimeConcurrency
 }
 
 func (f *fakeRuntime) Dispatch(_ context.Context, run *Run) error {
@@ -745,6 +768,18 @@ func (f *fakeRuntime) ApproveCharacters(_ context.Context, _ *Run, approval Char
 func (f *fakeRuntime) ApproveStoryboard(_ context.Context, _ *Run, approval StoryboardApproval) error {
 	f.storyboard = approval
 	return nil
+}
+
+func (f *fakeRuntime) Concurrency() RuntimeConcurrency {
+	if f.concurrency == (RuntimeConcurrency{}) {
+		return NormalizeRuntimeConcurrency(RuntimeConcurrency{})
+	}
+	return f.concurrency
+}
+
+func (f *fakeRuntime) UpdateConcurrency(next RuntimeConcurrency) RuntimeConcurrency {
+	f.concurrency = NormalizeRuntimeConcurrency(next)
+	return f.concurrency
 }
 
 type errorDispatcher struct{}

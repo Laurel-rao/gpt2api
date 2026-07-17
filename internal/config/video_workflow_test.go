@@ -17,7 +17,7 @@ func TestNormalizeVideoWorkflowConfig(t *testing.T) {
 	if cfg.PublicBaseURL != "" {
 		t.Fatalf("unexpected public base URL: %q", cfg.PublicBaseURL)
 	}
-	if cfg.WorkerConcurrency != 4 || cfg.ImageConcurrency != 2 || cfg.VideoConcurrency != 2 || cfg.ComposeConcurrency != 1 {
+	if cfg.WorkerConcurrency != 4 || cfg.TextConcurrency != 2 || cfg.ImageConcurrency != 2 || cfg.VideoConcurrency != 2 || cfg.ComposeConcurrency != 1 {
 		t.Fatalf("unexpected concurrency defaults: %+v", cfg)
 	}
 	if cfg.HeartbeatSec != 10 || cfg.LeaseTTLSec != 60 || cfg.RecoveryScanSec != 30 {
@@ -42,6 +42,7 @@ func TestNormalizeVideoWorkflowConfigPreservesOverrides(t *testing.T) {
 		AssetDir:           "/tmp/assets",
 		PublicBaseURL:      "https://media.acme.cn/",
 		WorkerConcurrency:  8,
+		TextConcurrency:    5,
 		ImageConcurrency:   3,
 		VideoConcurrency:   4,
 		ComposeConcurrency: 2,
@@ -64,12 +65,13 @@ func TestNormalizeVideoWorkflowConfigPreservesOverrides(t *testing.T) {
 	}
 	normalizeVideoWorkflowConfig(&cfg)
 
-	if cfg.AssetDir != "/tmp/assets" || cfg.PublicBaseURL != "https://media.acme.cn" || cfg.WorkerConcurrency != 8 || cfg.UserQuotaBytes != 1000 || cfg.ImageCredits != 11 || cfg.TextCredits != 12 || cfg.VideoCredits != 13 || cfg.FFmpegBin != "/bin/ffmpeg" {
+	if cfg.AssetDir != "/tmp/assets" || cfg.PublicBaseURL != "https://media.acme.cn" || cfg.WorkerConcurrency != 8 || cfg.TextConcurrency != 5 || cfg.UserQuotaBytes != 1000 || cfg.ImageCredits != 11 || cfg.TextCredits != 12 || cfg.VideoCredits != 13 || cfg.FFmpegBin != "/bin/ffmpeg" {
 		t.Fatalf("overrides were replaced: %+v", cfg)
 	}
 }
 
 func TestVideoWorkflowEnvironmentOverrides(t *testing.T) {
+	t.Setenv("GPT2API_VIDEO_WORKFLOW_TEXT_CONCURRENCY", "4")
 	t.Setenv("GPT2API_VIDEO_WORKFLOW_IMAGE_CONCURRENCY", "6")
 	t.Setenv("GPT2API_VIDEO_WORKFLOW_ASSET_DIR", "/env/assets")
 	t.Setenv("GPT2API_VIDEO_WORKFLOW_SIGNING_SECRET", "env-only-signing-secret-32-bytes!")
@@ -84,7 +86,7 @@ func TestVideoWorkflowEnvironmentOverrides(t *testing.T) {
 	if err := v.Unmarshal(&cfg); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.VideoWorkflow.ImageConcurrency != 6 || cfg.VideoWorkflow.AssetDir != "/env/assets" || cfg.VideoWorkflow.SigningSecret != "env-only-signing-secret-32-bytes!" || cfg.VideoWorkflow.PublicBaseURL != "https://media.acme.cn" {
+	if cfg.VideoWorkflow.TextConcurrency != 4 || cfg.VideoWorkflow.ImageConcurrency != 6 || cfg.VideoWorkflow.AssetDir != "/env/assets" || cfg.VideoWorkflow.SigningSecret != "env-only-signing-secret-32-bytes!" || cfg.VideoWorkflow.PublicBaseURL != "https://media.acme.cn" {
 		t.Fatalf("environment overrides were not decoded: %+v", cfg.VideoWorkflow)
 	}
 }

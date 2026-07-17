@@ -127,6 +127,13 @@ const (
 	VideoGenBillingRatio      = "videogen.billing_ratio"
 	VideoGenWorkflowModels    = "videogen.workflow_models"
 
+	// 视频工作流运行时
+	VideoWorkflowWorkerConcurrency  = "video_workflow.worker_concurrency"
+	VideoWorkflowTextConcurrency    = "video_workflow.text_concurrency"
+	VideoWorkflowImageConcurrency   = "video_workflow.image_concurrency"
+	VideoWorkflowVideoConcurrency   = "video_workflow.video_concurrency"
+	VideoWorkflowComposeConcurrency = "video_workflow.compose_concurrency"
+
 	// 计费与充值
 	BillingCreditPerCNY        = "billing.credit_per_cny"
 	BillingNotifyAdminOnAdjust = "billing.notify_admin_on_adjust"
@@ -243,6 +250,13 @@ var Defs = []KeyDef{
 	{Key: VideoGenGenerateAudio, Type: "bool", Category: "videogen", Default: "false", Label: "生成音频", Desc: "开启后请求视频模型同时生成音频，取决于模型支持"},
 	{Key: VideoGenBillingRatio, Type: "float", Category: "videogen", Default: "10", Label: "视频扣费倍率", Desc: "用户实际扣费 = 视频平台任务 cost_detail.price × 此倍率；单位按平台积分换算为站内积分，默认 10 倍"},
 	{Key: VideoGenWorkflowModels, Type: "string", Category: "videogen", Default: `[{"channel_type":"apiyi_wan27","value":"wan2.7-r2v","label":"API易 Wan2.7 参考图生视频"}]`, Label: "画布激活模型", Desc: "视频画布可选模型；后台页面以多选方式维护，保存时自动序列化"},
+
+	// ---------- 视频工作流运行时 ----------
+	{Key: VideoWorkflowWorkerConcurrency, Type: "int", Category: "video_workflow", Default: "4", Label: "工作流并发", Desc: "同时领取执行的视频工作流数量；保存后立即影响后续调度"},
+	{Key: VideoWorkflowTextConcurrency, Type: "int", Category: "video_workflow", Default: "2", Label: "文本生成并发", Desc: "脚本/分镜文本节点同时提交数量；保存后立即生效"},
+	{Key: VideoWorkflowImageConcurrency, Type: "int", Category: "video_workflow", Default: "2", Label: "图片生成并发", Desc: "角色图与背景图节点同时提交数量；保存后立即生效"},
+	{Key: VideoWorkflowVideoConcurrency, Type: "int", Category: "video_workflow", Default: "2", Label: "视频生成并发", Desc: "Seedance/视频节点同时提交与轮询数量；保存后立即生效"},
+	{Key: VideoWorkflowComposeConcurrency, Type: "int", Category: "video_workflow", Default: "1", Label: "成片合成并发", Desc: "ffmpeg 最终合成同时运行数量；建议保持较低"},
 
 	// ---------- 计费与充值 ----------
 	{Key: BillingCreditPerCNY, Type: "int", Category: "billing", Default: "10000", Label: "1 元 = N 积分·厘", Desc: "展示用换算;默认 10000"},

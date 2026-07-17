@@ -553,7 +553,7 @@ func (r *Runtime) executeImageNode(ctx context.Context, run *Run, node Node, sta
 	if r.config.ImageGenerator == nil {
 		return nil, errors.New("image generator is not configured")
 	}
-	slotCtx, release, err := r.acquireNodeExecutionSlot(ctx, run, state, "image", r.imageSlots, r.config.ImageConcurrency)
+	slotCtx, release, err := r.acquireNodeExecutionSlot(ctx, run, state, "image", r.imageSlots)
 	if err != nil {
 		return nil, err
 	}
@@ -623,6 +623,12 @@ func (r *Runtime) executeScriptNode(ctx context.Context, run *Run, node Node, st
 	if r.config.TextGenerator == nil {
 		return nil, errors.New("text generator is not configured")
 	}
+	slotCtx, release, err := r.acquireNodeExecutionSlot(ctx, run, state, "text", r.textSlots)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	ctx = slotCtx
 	if err := r.markProviderSubmitting(ctx, run, node, state); err != nil {
 		return nil, err
 	}
@@ -673,7 +679,7 @@ func (r *Runtime) executeVideoNode(ctx context.Context, run *Run, node Node, sta
 	if r.config.VideoGenerator == nil {
 		return nil, errors.New("video generator is not configured")
 	}
-	slotCtx, release, err := r.acquireNodeExecutionSlot(ctx, run, state, "video", r.videoSlots, r.config.VideoConcurrency)
+	slotCtx, release, err := r.acquireNodeExecutionSlot(ctx, run, state, "video", r.videoSlots)
 	if err != nil {
 		return nil, err
 	}
@@ -771,7 +777,7 @@ func executeTimelineNode(node Node, incoming []Edge, outputs map[string]runtimeN
 }
 
 func (r *Runtime) executeComposeNode(ctx context.Context, run *Run, node Node, incoming []Edge, outputs map[string]runtimeNodeOutput, state *NodeRun) (*nodeExecutionResult, error) {
-	slotCtx, release, err := r.acquireNodeExecutionSlot(ctx, run, state, "compose", r.composeSlots, r.config.ComposeConcurrency)
+	slotCtx, release, err := r.acquireNodeExecutionSlot(ctx, run, state, "compose", r.composeSlots)
 	if err != nil {
 		return nil, err
 	}
