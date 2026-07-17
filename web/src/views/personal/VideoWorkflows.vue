@@ -171,6 +171,7 @@ const RUN_STORAGE_KEY = 'gpt2api.video-workflow-runs'
 const LAYOUT_STORAGE_KEY = 'gpt2api.video-workflow-layout.v2'
 const LOCAL_DRAFT_PREFIX = 'gpt2api.video-workflow-draft.'
 const PENDING_RUN_PREFIX = 'gpt2api.video-workflow-pending-run.'
+const MEDIA_NODE_TYPES = new Set(['character', 'background', 'image', 'video'])
 const DEFAULT_RUNTIME_SETTINGS: VideoWorkflowRuntimeSettings = {
   worker_concurrency: 4,
   text_concurrency: 2,
@@ -343,6 +344,33 @@ const activeRunMatchesWorkflow = computed(() => Boolean(
 const activeRunNodeMap = computed(() => new Map(
   (activeRun.value?.node_runs || []).map((item) => [item.node_id, item]),
 ))
+const previousMediaNodeRunMap = computed(() => {
+  const currentRunID = activeRun.value?.id || ''
+  const runsByID = new Map<string, VideoWorkflowRun>()
+  const mergeRun = (run: VideoWorkflowRun | null | undefined) => {
+    if (!run || run.id === currentRunID) return
+    const existing = runsByID.get(run.id)
+    runsByID.set(run.id, {
+      ...(existing || run),
+      ...run,
+      node_runs: run.node_runs?.length ? run.node_runs : existing?.node_runs,
+      graph_snapshot: run.graph_snapshot || existing?.graph_snapshot,
+    })
+  }
+  runHistoryItems.value.forEach(mergeRun)
+  Object.values(runDetailCache.value).forEach(mergeRun)
+  return [...runsByID.values()]
+    .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
+    .reduce((result, run) => {
+      for (const nodeRun of run.node_runs || []) {
+        if (result.has(nodeRun.node_id)) continue
+        const nodeType = nodeRun.node_type || graph.value.nodes.find((node) => node.id === nodeRun.node_id)?.type
+        if (!isMediaNodeType(nodeType) || !nodeRunHasMediaOutput(nodeRun)) continue
+        result.set(nodeRun.node_id, nodeRun)
+      }
+      return result
+    }, new Map<string, VideoWorkflowNodeRun>())
+})
 const selectedNodeRun = computed(() => activeRunNodeMap.value.get(selectedNodeID.value) || null)
 const selectedComposePlaybackSignature = computed(() => {
   if (selectedNode.value?.type !== 'compose') return ''
@@ -636,8 +664,31 @@ function nodeRunOutputVersionID(nodeID: string) {
   return videoWorkflowNodeRunOutputVersionID(activeRunNodeMap.value.get(nodeID))
 }
 
+function isMediaNodeType(type?: string | null) {
+  return MEDIA_NODE_TYPES.has(String(type || ''))
+}
+
+function nodeRunHasMediaOutput(nodeRun?: VideoWorkflowNodeRun | null) {
+  if (!nodeRun) return false
+  if (videoWorkflowNodeRunOutputVersionID(nodeRun)) return true
+  return Boolean(videoWorkflowNodePreviewURL({
+    id: nodeRun.node_id,
+    type: nodeRun.node_type || 'image',
+    position: { x: 0, y: 0 },
+    config: {},
+    output: nodeRun.output,
+  } as VideoWorkflowNode))
+}
+
+function fallbackMediaNodeRunForNode(node: VideoWorkflowNode | null) {
+  if (!node || !isMediaNodeType(node.type)) return null
+  return previousMediaNodeRunMap.value.get(node.id) || null
+}
+
 function assetBindingForNode(node: VideoWorkflowNode | null) {
-  return resolveVideoWorkflowAssetBinding(node, node ? activeRunNodeMap.value.get(node.id) : null, assets.value)
+  if (!node) return null
+  return resolveVideoWorkflowAssetBinding(node, activeRunNodeMap.value.get(node.id), assets.value)
+    || resolveVideoWorkflowAssetBinding(node, fallbackMediaNodeRunForNode(node), assets.value)
 }
 
 function invalidateImageTransformContext() { imageTransformContextGeneration += 1 }
@@ -798,7 +849,7 @@ function mediaBindingForNode(node: VideoWorkflowNode) {
 async function openMediaPreview(sourceNode: VideoWorkflowNode) {
   const graphNode = graph.value.nodes.find((node) => node.id === sourceNode.id)
   const node = graphNode ? displayNode(graphNode) : sourceNode
-  if (!['character', 'background', 'image', 'video'].includes(node.type)) return
+  if (!isMediaNodeType(node.type)) return
 
   const requestGeneration = ++mediaPreviewGeneration
   const openingWorkspaceGeneration = workspaceGeneration
@@ -873,10 +924,11 @@ function displayNode(node: VideoWorkflowNode): VideoWorkflowNode {
     ? { ...node, config: { ...node.config, model: currentVideoModel(node) } }
     : node
   const runNode = activeRunNodeMap.value.get(node.id)
+  const previewRunNode = nodeRunHasMediaOutput(runNode) ? runNode : fallbackMediaNodeRunForNode(node)
   const binding = assetBindingForNode(node)
   const runPreview = videoWorkflowNodePreviewURL({
     ...displayed,
-    output: runNode?.output || displayed.output,
+    output: previewRunNode?.output || displayed.output,
   })
   const bakedPreview = binding?.version?.preview_url || runPreview || displayed.config.preview_url
   const enriched = {
@@ -960,7 +1012,7 @@ function syncFlow() {
         },
         selected: selectedNodeIDs.value.includes(node.id),
         draggable: !node.locked,
-        style: { width: `${['character', 'background', 'image', 'video'].includes(node.type) ? 208 : 188}px`, zIndex: 2 },
+        style: { width: `${isMediaNodeType(node.type) ? 208 : 188}px`, zIndex: 2 },
       } as Node<FlowData>
     }),
     ...(bus ? [{
@@ -1235,6 +1287,12 @@ function upsertRunHistory(run: VideoWorkflowRun) {
   runHistoryItems.value = [run, ...runHistoryItems.value.filter((item) => item.id !== run.id)]
     .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
   if (!existed) runHistoryTotal.value = Math.max(runHistoryTotal.value + 1, runHistoryItems.value.length)
+}
+
+function rememberRunDetailForPreview(run: VideoWorkflowRun | null | undefined) {
+  if (!run?.node_runs?.some(nodeRunHasMediaOutput)) return
+  runDetailCache.value = { ...runDetailCache.value, [run.id]: run }
+  upsertRunHistory(run)
 }
 
 async function loadRunHistory(reset = true) {
@@ -2939,6 +2997,7 @@ async function startRun(
   if (!workflow) return
   const startNodeID = mode === 'full' ? undefined : (nodeID || selectedNodeID.value)
   if (!startNodeID && mode !== 'full') return ElMessage.warning('请先选择起始节点')
+  const previousRunForPreview = activeRun.value
   runningAction.value = true
   try {
     if (dirty.value && !await flushSave()) return ElMessage.error('画布尚未保存，已阻止运行旧修订')
@@ -3014,9 +3073,11 @@ async function startRun(
           await flushSave()
         },
       })
+      rememberRunDetailForPreview(previousRunForPreview)
       activeRun.value = run
     } else {
       await confirmEstimate(estimate)
+      rememberRunDetailForPreview(previousRunForPreview)
       activeRun.value = await submit(estimate)
     }
     // 记录运行启动时的 stale 世代：之后由编辑产生的 stale 不会被本轮轮询清掉
