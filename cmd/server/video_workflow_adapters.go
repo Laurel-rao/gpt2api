@@ -74,7 +74,7 @@ func (g videoWorkflowTextGenerator) GenerateText(ctx context.Context, request vi
 			{Role: "system", Content: "你是视频分镜引擎。只输出合法 JSON，不要 Markdown；四幕工作流必须返回包含 scenes 数组的对象。"},
 			{Role: "user", Content: request.Prompt},
 		},
-		MaxTokens: 8192,
+		MaxTokens: 100000,
 	})
 	if err != nil {
 		return nil, 0, err

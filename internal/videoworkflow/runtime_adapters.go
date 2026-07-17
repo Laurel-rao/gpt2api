@@ -68,7 +68,7 @@ func (a TextClientAdapter) GenerateText(ctx context.Context, request TextGenerat
 	}
 	stream, err := a.Client.Chat(ctx, textgen.Options{
 		Model: request.Model, Messages: []chatgpt.ChatMessage{{Role: "system", Content: "只输出严格 JSON，不要使用 Markdown 代码块。"}, {Role: "user", Content: request.Prompt}},
-		MaxTokens: 8192,
+		MaxTokens: 100000,
 	})
 	if err != nil {
 		return nil, 0, err
