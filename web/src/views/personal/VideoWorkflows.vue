@@ -1262,14 +1262,24 @@ async function loadWorkspace(workflow?: VideoWorkflow | null) {
   refreshRunFailCount = 0
   refreshRunFailWarned = false
   if (next) {
-    const latestPage = await listVideoWorkflowRuns(next.id, { limit: 1, offset: 0 }).catch(() => null)
+    const latestPage = await listVideoWorkflowRuns(next.id, { limit: RUN_HISTORY_PAGE_SIZE, offset: 0 }).catch(() => null)
     if (componentUnmounted || generation !== workspaceGeneration) return
     if (latestPage) {
       runHistoryItems.value = latestPage.items
       runHistoryTotal.value = latestPage.total
     }
     const runID = latestPage?.items[0]?.id || next.latest_run?.id || storedRunIDs()[next.id]
-    if (runID) activeRun.value = await getVideoWorkflowRun(runID, true).catch(() => next.latest_run || null)
+    if (runID) {
+      activeRun.value = await getVideoWorkflowRun(runID, true).catch(() => next.latest_run || null)
+      if (activeRun.value) {
+        runDetailCache.value = { ...runDetailCache.value, [activeRun.value.id]: activeRun.value }
+        runHistoryItems.value = runHistoryItems.value.map((run) => (
+          run.id === activeRun.value?.id
+            ? { ...run, node_runs: activeRun.value.node_runs || run.node_runs, graph_snapshot: run.graph_snapshot || activeRun.value.graph_snapshot }
+            : run
+        ))
+      }
+    }
   }
   if (componentUnmounted || generation !== workspaceGeneration) return
   graph.value = restoreLocalDraft(next, next?.graph || createEmptyVideoWorkflowGraph())
@@ -1287,6 +1297,10 @@ async function loadWorkspace(workflow?: VideoWorkflow | null) {
   await nextTick()
   fitView({ padding: .14, duration: 280 })
   autosaveReady.value = true
+  if (next) {
+    const missing = runHistoryItems.value.filter((run) => !run.node_runs?.length && !runDetailCache.value[run.id]?.node_runs?.length)
+    if (missing.length) void hydrateRunHistoryNodeRuns(missing.slice(0, RUN_HISTORY_PAGE_SIZE))
+  }
   if (activeRun.value && isRunActive.value) startPolling()
 }
 
